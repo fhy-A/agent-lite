@@ -1,0 +1,23 @@
+# Data (user sessions, backups, attachments — runtime state)
+data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+_connectivity_test.txt

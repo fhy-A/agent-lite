@@ -16,6 +16,7 @@ cmd = [
     sys.executable, "-m", "PyInstaller",
     "--onefile",
     "--name", "AgentLite",
+    "--icon", str(APP_DIR / "agent-lite-icon.ico"),
     "--add-data", f"{APP_DIR / 'app.js'}{';'}.",
     "--add-data", f"{APP_DIR / 'index.html'}{';'}.",
     "--add-data", f"{APP_DIR / 'styles.css'}{';'}.",

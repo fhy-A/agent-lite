@@ -326,6 +326,14 @@ input:focus, select:focus, textarea:focus {
   font-size: 12px;
 }
 
+.session-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-left: auto;
+  background: var(--accent);
+}
+.session-dot.unread { background: #22c55e; box-shadow: 0 0 5px #22c55e; }
+.session-dot.streaming { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); animation: dot-pulse 1.2s ease-in-out infinite; }
+@keyframes dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
 .session-more-wrap {
   position: absolute;
   right: 4px;
@@ -724,7 +732,7 @@ input:focus, select:focus, textarea:focus {
 
 .kv {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 42px;
+  grid-template-columns: 60px minmax(0, 1fr) 42px;
   align-items: center;
   gap: 8px;
   min-height: 26px;
@@ -2798,28 +2806,22 @@ body.theme-dark .syn-fn { color: #61afef; }
 .settings-theme-row {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
-  gap: 4px;
-  padding: 6px 8px;
+  gap: 8px;
+  max-width: 320px;
 }
 .theme-opt {
-  height: 28px;
+  height: 48px;
   padding: 0;
   border: 1px solid var(--line);
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--muted);
-  background: transparent;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--panel-3);
   cursor: pointer;
 }
-.theme-opt:hover {
-  background: var(--panel-2);
-  color: var(--text);
-}
-.theme-opt.active {
-  background: var(--accent-bg);
-  border-color: var(--accent);
-  color: var(--accent);
-  font-weight: 700;
+.theme-opt:hover { background: var(--panel-2); }
+.theme-opt.active { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }
 }
 
 .model-list-header {
@@ -3154,9 +3156,29 @@ body.theme-dark .syn-fn { color: #61afef; }
   background: var(--panel-3); color: var(--text); font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px;
 }
 
+/* Memory suggestions */
+.memory-suggestions { margin: 8px 0; }
+.memory-suggest-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 10px; margin: 4px 0; border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line));
+  background: color-mix(in srgb, var(--accent) 4%, var(--panel));
+}
+.memory-suggest-item span { font-size: 13px; color: var(--text); }
+.save-mem-btn { min-width: 52px; height: 24px; font-size: 12px; }
+
+/* Skill output in chat */
+.skill-msg-banner {
+  margin: 4px 0 8px; padding: 6px 10px; border-radius: 6px;
+  background: color-mix(in srgb, var(--yellow) 8%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--yellow) 25%, var(--line));
+  font-size: 12px; font-weight: 700; color: var(--yellow);
+}
+
 /* Skills inside settings page */
 .skills-layout-inner { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 0; height: 560px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.skills-sidebar-inner { border-right: 1px solid var(--line); background: var(--panel); overflow: auto; }
+.skills-sidebar-inner { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; }
+.skills-sidebar-inner > :first-child { flex: 1; overflow: auto; }
 .skills-detail-inner { padding: 16px; overflow: auto; background: var(--panel-3); }
 
 /* Language options */

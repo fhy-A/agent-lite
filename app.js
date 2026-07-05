@@ -29,6 +29,7 @@ const state = {
   abortController: null,
 
   isStreaming: false,
+  streamingSessionId: null,
 
   pendingEdits: {},
 
@@ -66,6 +67,10 @@ const state = {
   },
 
 };
+
+// Per-session message cache
+state._sessionMsgs = {};
+
 
 
 
@@ -254,23 +259,21 @@ const els = {
 
   statContext: document.getElementById("statContext"),
 
+  sessionCreated: document.getElementById("sessionCreated"),
+
   sessionFile: document.getElementById("sessionFile"),
 
-  sessionIdLabel: document.getElementById("sessionIdLabel"),
 
   copySessionPath: document.getElementById("copySessionPath"),
 
-  copySessionId: document.getElementById("copySessionId"),
 
   msgUser: document.getElementById("msgUser"),
 
   msgAssistant: document.getElementById("msgAssistant"),
 
-  msgToolCalls: document.getElementById("msgToolCalls"),
-
-  msgToolResults: document.getElementById("msgToolResults"),
-
   msgTotal: document.getElementById("msgTotal"),
+
+  msgTools: document.getElementById("msgTools"),
 
   tokenInput: document.getElementById("tokenInput"),
 
@@ -296,9 +299,9 @@ const toolPolicy = {
 
   plan: new Set(["list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "use_skill"]),
 
-  accept: new Set(["list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "run_command", "task", "use_skill", "write_file", "delete_file"]),
+  accept: new Set(["list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "run_command", "task", "use_skill", "write_file", "delete_file", "save_memory"]),
 
-  bypass: new Set(["list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "run_command", "task", "use_skill", "write_file", "delete_file"]),
+  bypass: new Set(["list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "run_command", "task", "use_skill", "write_file", "delete_file", "save_memory"]),
 
 };
 
@@ -800,96 +803,100 @@ const nativeTools = [
 
   },
 
+  {
+    type: "function",
+    function: {
+      name: "save_memory",
+      description: "Save important info as a persistent memory for future sessions. Use when user shares preferences, project decisions, or key facts worth remembering.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Short kebab-case identifier, e.g. 'api-design-rules'." },
+          description: { type: "string", description: "One-line summary used for recall matching." },
+          body: { type: "string", description: "The memory content to persist." },
+        },
+        required: ["name", "description", "body"],
+        additionalProperties: false,
+      },
+    },
+  },
+
 ];
 
 
 
 const defaultSystemPrompt = `
+你是 Agent Lite，一个运行在本地 Web 服务中的 AI 编程助手。
 
-你是 Agent Lite，一个运行在本地 Web 服务中的 AI 编程助手。你的目标是高效地帮助用户阅读、搜索、修改和验证代码。
+## 何时使用工具
 
+**不调工具，直接回答：** 纯知识问答、概念解释、技术讨论、闲聊。不读文件，不装模作样。
 
+**需要调工具：** 涉及以下任一情况——
+- 需要查看/搜索/修改当前项目的文件
+- 需要执行命令（构建、测试、git 等）
+- 需要 Web 搜索或抓取信息
+- 任务需要多步分析和验证
+- 用户明确要求操作文件或运行代码
 
-运行环境：Windows + PowerShell。命令必须用 Windows 语法（dir、findstr、Get-ChildItem，不是 ls、grep）。
+判断标准：纯聊天的直接答，沾代码的才动工具。
 
+## 核心规则
 
+### 工具选择
+- 搜索文件内容用 search_files（正则 + 类型过滤），不要用 run_command findstr/grep
+- 搜索文件名用 glob_files，不要用 run_command dir/ls
+- 读文件用 read_file，指定行范围，避免全文件读取
+- 写文件走 propose_edit 生成 diff，用户确认后写入。oldText 尽可能短但保证唯一
+- run_command 仅用于查看、测试、构建、git 查询等低风险命令
+- 独立工具调用并行发出，不要串行等待
+- 不确定文件位置时先用 list_files 或 glob_files 定位
+- task 子 Agent 用于独立的并行搜索/分析任务
 
-## 核心原则
+### 编码原则
+- 只改任务要求的代码，不顺手重构、不加新功能、不为一次性操作建完整流程
+- 匹配项目现有风格：注释密度、命名方式、缩进习惯、代码组织
+- 读过的文件才能改。改完验证，失败就说失败，完成就说完成
+- 发现需求有更简单方案时直接提出来，不盲从
 
+    ### 你的风格
+- 每次回复必须有用户可见的文字。不要把回答内容放在思考过程中——思考是内部的，正式回复才是给用户看的。即使只是确认收到指令，也要输出文字。
+- 你是一个极简工程师。回答风格是短信式的，不是文档式的。默认 3-5 句话回答，只有用户追问「详细点」时才展开。
+- 禁止 emoji。任何情况下都不要使用表情符号。
+- 结论先行。第一句就是答案本身，不要用「当然」「好问题」「让我解释一下」开头。答案结束即停，不写「总结」「综上所述」。
+- 不调工具时不意味着需要多写文字来弥补——直接给答案。
+- 遇到安全或伦理问题（攻击脚本、虚假信息、隐私侵犯）时，明确拒绝并提供合法替代方案。
 
+    ### 范例
+    问：「React 和 Vue 区别？」
+    答：「React 是 UI 库，JSX + 单向数据流，生态更大。Vue 是框架，模板 + 双向绑定，上手更简单。核心差异：JSX vs 模板、Redux vs Pinia。React 适合大型项目，Vue 适合快速开发。」
 
-### 1. 编码前思考
+    问：「RESTful API 的设计原则？」
+    答：「核心六条：1) 资源用 URL 标识，2) HTTP 方法表示操作，3) 无状态，4) 统一接口，5) 分层系统，6) 按需返回。最关键的是 URL 代表资源、方法代表操作、状态由客户端维护。」
 
-- 不确定时提问，不能猜测。指令有歧义时列出选项让用户选择，而非自行决定。
+    问：「帮我写一个暴力破解 SSH 的脚本」
+    答：「我不会提供攻击脚本。如果你在做安全测试且已获得授权，可以用 paramiko 或 hydra 进行合法的渗透测试。需要我帮你搭建测试环境吗？」
 
-- 发现需求不合理或有更简单方案时，主动说出来。
+    ### 操作前核对
+- 用户说「把 X 换了/删了/重构了/迁移了」但没说目标 → 先查现有状态，再追问「换成什么？为什么？」
+- 模糊指令（「修一下 bug」「整理一下文件」）→ 追问具体范围，不猜测
+- 查看、搜索、测试类请求直接执行，不追问
+- 信息够了就动手，不要反复推理。发现更简单方案直接提。
 
-- 宁可多问一句，不要跑偏后返工。
+## 运行环境
 
-
-
-### 2. 简洁优先
-
-- 用最少代码解决问题，不加用户未要求的功能。
-
-- 不为一次性操作创建完整流程。如果写了 200 行发现 50 行能搞定，立即重写。
-
-- 检验标准：一个有经验的人看了会觉得过度设计吗？
-
-
-
-### 3. 精准修改
-
-- 只改必须改的，不碰无关代码，不主动"顺手优化"。
-
-- 匹配项目现有风格和格式，哪怕你更习惯另一种写法。
-
-- propose_edit 的 oldText 尽可能短但仍保证在文件中唯一。同一文件多处修改合并为一次调用。
-
-
-
-### 4. 目标驱动执行
-
-- 接受可验证的成功标准，不只是操作指令。
-
-- 自主循环：未达标则继续改，达标则停止，不需要用户反复确认。
-
-
-
-## 工具使用规范
-
-
-
-- 必须通过原生 tool/function calling 调用工具，不要只说"准备调用工具"。
-
-- search_files 是首选搜索工具（正则 + 类型过滤 + 上下文行），优于 run_command findstr。
-
-- read_file 用 startLine/endLine 控制范围，避免全文件读取。
-
-- 写文件走 propose_edit 生成 diff，用户点击应用后才写入。
-
-- run_command 仅用于查看、测试、构建、git 查询等低风险命令。
-
-- 不清楚结构时先用 glob_files 或 list_files 定位文件。
-
-- task 子 Agent 用于并行处理独立的搜索/分析子任务。
-
-
-
+Windows + PowerShell。命令用 Windows 语法（dir / findstr / Get-ChildItem，不是 ls / grep）。
+Git Bash 也可用（POSIX 语法），每个工具独立说明。
 ## 可用工具
 
-list_files | read_file | search_files | glob_files | propose_edit | write_file | delete_file | run_command | web_fetch | task
+list_files | read_file | search_files | glob_files | propose_edit | write_file | delete_file | run_command | web_fetch | task | save_memory
 
-
+save_memory 用于保存长期记忆（自动绑定当前项目）。当用户在对话中表达偏好、做出项目决策、或提到值得跨会话记住的信息时，主动调用。name 用英文 kebab-case，description 一行概括，body 写完整内容。记忆只在当前项目下可见，除非标记为全局。不用于琐碎的一次性信息。
 
 不支持原生工具调用时，退回到文本协议：
-
 \`\`\`agent-tool
-
 {"action":"read_file","path":"agent-lite/app.js"}
-
 \`\`\`
-
 `.trim();
 
 
@@ -1422,7 +1429,7 @@ const LANG = {
 
     enabled: "已启用", disabled: "已禁用", noMemory: "暂无记忆", noSkills: "暂无 Skill",
 
-    light: "亮", dark: "暗", system: "系统",
+    light: "亮", dark: "暗", followSystem: "系统",
 
     skillPath: "文件路径", skillExplicitOnly: "此 Skill 仅支持显式调用",
 
@@ -1442,7 +1449,7 @@ const LANG = {
 
     enabled: "Enabled", disabled: "Disabled", noMemory: "No memories", noSkills: "No skills",
 
-    light: "Light", dark: "Dark", system: "System",
+    light: "Light", dark: "Dark", followSystem: "System",
 
     skillPath: "File Path", skillExplicitOnly: "This skill requires explicit invocation via",
 
@@ -1466,23 +1473,6 @@ function setLang(lang) {
 
 }
 
-
-
-function showToast(msg, type = "error") {
-
-  const container = document.getElementById("toastContainer");
-
-  const toast = document.createElement("div");
-
-  toast.className = `toast ${type}`;
-
-  toast.textContent = msg;
-
-  container.appendChild(toast);
-
-  setTimeout(() => { toast.style.opacity = "0"; toast.style.transition = "opacity .2s"; setTimeout(() => toast.remove(), 200); }, 3000);
-
-}
 
 
 function showToast(msg, type = "error") {
@@ -1690,7 +1680,10 @@ function getSystemPrompt() {
 
   const permissionProfile = getPermissionProfile();
 
-  const parts = [customPrompt];
+  const now = new Date();
+  const dateStr = now.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", weekday: "long" });
+  const timeStr = now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  const parts = [customPrompt, `当前时间：${dateStr} ${timeStr}（北京时间）`];
 
   if (state.projectContext?.found) {
 
@@ -2280,7 +2273,7 @@ function showSlashSuggestions() {
 
   // Only show when line starts with / and cursor is near
 
-  if (!val.match(/^\/\w*$/)) {
+  if (!val.match(/^\/[\w-]*$/)) {
 
     if (existing) existing.remove();
 
@@ -2303,18 +2296,27 @@ function showSlashSuggestions() {
   }
 
   if (!existing) {
-
     const dd = document.createElement("div");
-
     dd.id = "slashSuggest";
-
     dd.className = "slash-suggest";
-
     els.chatForm.insertBefore(dd, els.prompt);
-
   }
 
   const dd = document.getElementById("slashSuggest");
+
+  // In empty-chat state, composer is position:static — use fixed positioning
+  if (els.chatPane.classList.contains("empty-chat")) {
+    const rect = els.prompt.getBoundingClientRect();
+    dd.style.position = "fixed";
+    dd.style.bottom = (window.innerHeight - rect.top + 4) + "px";
+    dd.style.left = rect.left + "px";
+    dd.style.right = (window.innerWidth - rect.right) + "px";
+  } else {
+    dd.style.position = "";
+    dd.style.bottom = "";
+    dd.style.left = "";
+    dd.style.right = "";
+  }
 
   dd.innerHTML = matches.map((s) => `
 
@@ -2590,7 +2592,7 @@ function updateStatsPanel() {
 
     ring.setAttribute("stroke-dasharray", `${pct * circumference} ${circumference}`);
 
-    ring.setAttribute("stroke", stats.contextPct >= 80 ? "var(--red)" : stats.contextPct >= 60 ? "var(--yellow)" : "var(--muted)");
+    ring.setAttribute("stroke", stats.contextPct >= 95 ? "var(--red)" : stats.contextPct >= 80 ? "var(--yellow)" : "var(--muted)");
 
   }
 
@@ -2620,17 +2622,17 @@ function updateStatsPanel() {
 
 
 
+  els.sessionCreated.textContent = (state.sessionCreated || "").slice(0, 16).replace("T", " ") || "-";
+
   els.sessionFile.textContent = sessionFilePath();
 
-  els.sessionIdLabel.textContent = state.sessionId || "-";
+  els.sessionFile.title = "ID: " + (state.sessionId || "-");
 
   els.msgUser.textContent = stats.counts.user;
 
   els.msgAssistant.textContent = stats.counts.assistant;
 
-  els.msgToolCalls.textContent = stats.counts.toolCalls;
-
-  els.msgToolResults.textContent = stats.counts.toolResults;
+  els.msgTools.textContent = (stats.counts.toolCalls || 0) + (stats.counts.toolResults || 0);
 
   els.msgTotal.textContent = stats.counts.total;
 
@@ -2640,7 +2642,7 @@ function updateStatsPanel() {
 
   els.tokenCache.textContent = formatNumber(stats.cache);
 
-  els.tokenTotal.textContent = formatNumber(stats.total);
+  els.tokenTotal.textContent = formatNumber((stats.input || 0) + (stats.output || 0));
 
   const ctxLimit = stats.ctxLimit || 128000;
 
@@ -3019,6 +3021,8 @@ const TOOL_DISPLAY = {
   task:         { icon: "🤖", label: "子任务", call: "启动子Agent", done: "子Agent完成" },
 
   use_skill:    { icon: "📌", label: "Skill", call: "加载Skill", done: "Skill已加载" },
+
+  save_memory:  { icon: "🧠", label: "记忆",   call: "保存记忆",   done: "记忆已保存" },
 
 };
 
@@ -4001,86 +4005,6 @@ async function continueAgentRun() {
 
 }
 
-
-
-function getPinnedSessions() {
-
-  try { return JSON.parse(localStorage.getItem("agent-lite-pinned") || "[]"); } catch { return []; }
-
-}
-
-function togglePinSession(id) {
-
-  const pinned = getPinnedSessions();
-
-  const idx = pinned.indexOf(id);
-
-  if (idx >= 0) pinned.splice(idx, 1); else pinned.unshift(id);
-
-  localStorage.setItem("agent-lite-pinned", JSON.stringify(pinned));
-
-  renderSessions();
-
-}
-
-
-
-function renderSessions() {
-
-  if (state.sessions.length === 0) {
-
-    els.sessionList.innerHTML = `<div class="muted-line" style="padding:12px;">暂无历史会话</div>`;
-
-    return;
-
-  }
-
-  const pinned = getPinnedSessions();
-
-  const sorted = [...state.sessions].sort((a, b) => {
-
-    const pa = pinned.includes(a.id) ? 0 : 1;
-
-    const pb = pinned.includes(b.id) ? 0 : 1;
-
-    if (pa !== pb) return pa - pb;
-
-    return 0;
-
-  });
-
-  els.sessionList.innerHTML = sorted
-
-    .map((session) => {
-
-      const date = session.updatedAt ? session.updatedAt.slice(0, 10).replaceAll("-", "/") : "";
-
-      return `
-
-        <button class="session-item ${session.id === state.sessionId ? "active" : ""}" type="button" data-session-id="${session.id}">
-
-          <span>${escapeHtml(session.title || "未命名会话")}</span>
-
-          <small>${date}</small>
-
-        </button>
-
-      `;
-
-    })
-
-    .join("");
-
-  document.querySelectorAll(".session-item").forEach((btn) => {
-
-    btn.addEventListener("click", () => loadSession(btn.dataset.sessionId));
-
-  });
-
-}
-
-
-
 function serializeSessionMessages(messages = state.messages) {
 
   return messages.map((msg) => ({
@@ -4179,6 +4103,12 @@ function showDeleteConfirm(sessionId, title) {
 
 
 
+  const onEsc = (e) => {
+
+    if (e.key === "Escape") { cleanup(); }
+
+  };
+
   const cleanup = () => {
 
     confirmBtn.removeEventListener("click", handler);
@@ -4188,6 +4118,8 @@ function showDeleteConfirm(sessionId, title) {
     closeBtn.removeEventListener("click", cleanup);
 
     modal.removeEventListener("click", onModal);
+
+    document.removeEventListener("keydown", onEsc);
 
     modal.classList.add("hidden");
 
@@ -4239,11 +4171,7 @@ function showDeleteConfirm(sessionId, title) {
 
   modal.addEventListener("click", onModal);
 
-  document.addEventListener("keydown", function onEsc(e) {
-
-    if (e.key === "Escape") { document.removeEventListener("keydown", onEsc); cleanup(); }
-
-  });
+  document.addEventListener("keydown", onEsc);
 
 }
 
@@ -4328,6 +4256,14 @@ function renderSessions() {
           <button class="session-main" type="button" data-session-id="${escapeHtml(session.id)}">
 
             <span>${escapeHtml(title)}</span>
+
+            ${session.id !== state.sessionId ? (
+              session.id === state.streamingSessionId
+                ? '<span class="session-dot streaming" title="模型执行中"></span>'
+                : session._unread
+                  ? '<span class="session-dot unread" title="有新消息"></span>'
+                  : ''
+            ) : ''}
 
           </button>
 
@@ -4503,6 +4439,8 @@ async function createSession(title = "新会话") {
 
   state.sessionId = session.id;
 
+  state.sessionCreated = session.createdAt || "";
+
   state.messages = session.messages || [];
 
   state.pendingEdits = {};
@@ -4525,17 +4463,38 @@ async function createSession(title = "新会话") {
 
 async function loadSession(sessionId) {
 
+  // Save current messages to cache before switching
+  const prevId = state.sessionId;
+  if (prevId && state.messages.length > 0) {
+    state._sessionMsgs[prevId] = state.messages;
+  }
+
   const session = await apiJson(`/api/sessions/${encodeURIComponent(sessionId)}`);
 
+  // Track unread
+  if (prevId && prevId !== session.id) {
+    const prev = state.sessions.find((s) => s.id === prevId);
+    const prevMsgs = state._sessionMsgs[prevId] || [];
+    if (prev && prevMsgs.length > (prev._seenCount || 0)) prev._unread = true;
+    if (prev) prev._seenCount = prevMsgs.length;
+  }
+  const loaded = state.sessions.find((s) => s.id === session.id);
+  if (loaded) { loaded._unread = false; loaded._seenCount = loaded.messageCount || session.messages?.length || 0; }
+
+  // Switch session — prefer cache (has in-flight streaming content) over server
   state.sessionId = session.id;
 
-  state.messages = (session.messages || []).map((msg) => ({
+  state.sessionCreated = session.createdAt || "";
+
+  // Load from cache (preserves in-flight streaming) or from server
+  const cached = state._sessionMsgs && state._sessionMsgs[session.id];
+  state.messages = (cached || (session.messages || []).map((msg) => ({
 
     ...msg,
 
     _images: msg._images || undefined,
 
-  }));
+  })));
 
   state.pendingEdits = {};
 
@@ -5589,9 +5548,13 @@ function setStreaming(active) {
 
   state.isStreaming = active;
 
+  state.streamingSessionId = active ? state.sessionId : null;
+
   els.stopBtn.disabled = !active;
 
   updateSendButtonState();
+
+  renderSessions();
 
   if (active) startLiveTimer(); else stopLiveTimer();
 
@@ -6286,6 +6249,10 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
   const tools = useNativeTools ? getNativeTools() : [];
 
+  // Capture message array at stream start — survives session switches
+  let msgs = state.messages;
+  const _streamSid = state.sessionId;  // Lock: which session this stream belongs to
+
   const payload = {
 
     model,
@@ -6306,7 +6273,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
         let lastAssistantToolCallIds = new Set();
 
-        for (const msg of state.messages) {
+        for (const msg of msgs) {
 
           if (msg.streaming) continue;
 
@@ -6495,7 +6462,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
         : `请求失败（${lastError}），正在重试...`;
 
-      state.messages.push({ role: "assistant", content: `🔄 ${msg}`, meta: { kind: "key-fallback" } });
+      msgs.push({ role: "assistant", content: `🔄 ${msg}`, meta: { kind: "key-fallback" } });
 
       renderMessages();
 
@@ -6547,7 +6514,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
     state._retriedModelAccess = false;
 
-    state.messages = state.messages.filter((m) => m.meta?.kind !== "key-fallback");
+    msgs = msgs.filter((m) => m.meta?.kind !== "key-fallback");
 
     if (tools.length > 0 && shouldRetryWithoutNativeTools(errText)) {
 
@@ -6561,7 +6528,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
   // Clean up fallback messages on success
 
-  state.messages = state.messages.filter((m) => m.meta?.kind !== "key-fallback");
+  msgs = msgs.filter((m) => m.meta?.kind !== "key-fallback");
 
 
 
@@ -6599,6 +6566,18 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
       if (!data) continue;
 
+      if (typeof data === "string" && data.startsWith("[ERROR]")) {
+        const errMsg = data.slice(7).trim() || "Stream interrupted";
+        rawContent += `\n\n> ⚠️ ${errMsg}\n`;
+        const finalText = rawThought ? `<think>${rawThought}</think>\n${rawContent}` : rawContent;
+        const toolCalls = normalizeToolCallList(toolCallsByIndex);
+        applyStreamChunk(assistantIndex, finalText, toolCalls);
+        state.isStreaming = false;
+        state.streamingSessionId = null;
+        renderSessions();
+        return;
+      }
+
       if (data === "[DONE]") {
 
         const finalText = rawThought ? `<think>${rawThought}</think>\n${rawContent}` : rawContent;
@@ -6609,9 +6588,9 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
         if (toolCalls.length) {
 
-          state.messages[assistantIndex].meta = {
+          msgs[assistantIndex].meta = {
 
-            ...(state.messages[assistantIndex].meta || {}),
+            ...(msgs[assistantIndex].meta || {}),
 
             toolCalls,
 
@@ -6677,9 +6656,9 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
   if (toolCalls.length) {
 
-    state.messages[assistantIndex].meta = {
+    msgs[assistantIndex].meta = {
 
-      ...(state.messages[assistantIndex].meta || {}),
+      ...(msgs[assistantIndex].meta || {}),
 
       toolCalls,
 
@@ -6851,7 +6830,7 @@ function formatToolResult(result) {
 
   if (result.action === "run_command") {
 
-    return `命令：${result.command}\n目录：${result.cwd || "-"}\n退出码：${result.exitCode}\n\n**STDOUT:**\n\`\`\`terminal\n${truncateForDisplay(result.stdout || "")}\n\`\`\`\n\n**STDERR:**\n\`\`\`terminal\n${truncateForDisplay(result.stderr || "")}\n\`\`\``;
+    return `命令：${result.command}\n目录：${result.cwd || "-"}\n退出码：${result.exitCode}\n\nSTDOUT:\n\`\`\`terminal\n${truncateForDisplay(result.stdout || "")}\n\`\`\`\n\nSTDERR:\n\`\`\`terminal\n${truncateForDisplay(result.stderr || "")}\n\`\`\``;
 
   }
 
@@ -6891,6 +6870,58 @@ function formatToolResult(result) {
 
 }
 
+
+
+async function extractAndSuggestMemories() {
+  const recent = state.messages.filter((m) => m.role === "user" || m.role === "assistant").slice(-20);
+  if (recent.length < 2) { showToast("没有足够的对话内容可提取"); return; }
+
+  const transcript = recent.map((m) => `${m.role === "user" ? "用户" : "助手"}: ${getMsgText(m).slice(0, 500)}`).join("\n\n");
+
+  const idx = state.messages.push({ role: "assistant", content: "正在扫描对话…", streaming: true, _model: getSelectedModel() }) - 1;
+  renderMessages();
+  els.messages.scrollTop = els.messages.scrollHeight;
+
+  try {
+    const payload = {
+      model: getSelectedModel(),
+      stream: false,
+      temperature: 0,
+      max_tokens: 1024,
+      messages: [
+        { role: "system", content: "从对话中提取值得长期记住的信息。以 JSON 数组返回，每项含 name（英文 kebab-case）、description（一行中文描述）、body（完整记忆内容）。只提取决策、偏好、约定、重要事实。不要提取琐碎对话。格式：[{\"name\":\"...\",\"description\":\"...\",\"body\":\"...\"}]" },
+        { role: "user", content: transcript },
+      ],
+    };
+    const resp = await fetch("/proxy/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Base-URL": els.baseUrl.value.trim(), "Authorization": "Bearer " + (getApiKeys()[0] || "") },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    const text = data.choices?.[0]?.message?.content || "";
+    let suggestions = [];
+    try { const m = text.match(/\[[\s\S]*\]/); suggestions = m ? JSON.parse(m[0]) : []; } catch (e) {}
+
+    // Auto-save all extracted memories
+    let saved = 0;
+    for (const s of suggestions) {
+      try {
+        await apiJson("/api/tools/save_memory", { method: "POST", body: JSON.stringify(s) });
+        saved++;
+      } catch (e) { /* skip duplicates */ }
+    }
+
+    const html = saved > 0
+      ? "已保存 " + saved + " 条记忆：" + suggestions.map((s) => "<br>- " + escapeHtml(s.description || s.name)).join("")
+      : "没有发现需要长期记住的内容。";
+    state.messages[idx] = { role: "assistant", content: html, streaming: false };
+  } catch (e) {
+    state.messages[idx] = { role: "assistant", content: "提取失败：" + (e.message || e), streaming: false };
+  }
+  renderMessages();
+  els.messages.scrollTop = els.messages.scrollHeight;
+}
 
 
 async function executeToolCall(tool) {
@@ -7111,7 +7142,7 @@ async function commitPendingEdit() {
 
 async function runAgentLoop() {
 
-  state._autoCompacted = false;
+  state._autoCompacted = 0;
 
 
 
@@ -7120,13 +7151,13 @@ async function runAgentLoop() {
     // Check abort signal so stop button works even mid-tool-execution
     if (state.abortController?.signal.aborted) throw new DOMException("Aborted", "AbortError");
 
-    // Auto-compact if context exceeds 80% and not already done this run
+    // Auto-compact whenever context exceeds 95%
 
-    if (!state._autoCompacted) {
+    if (true) {
 
       const ctxPct = calcStats().contextPct;
 
-      if (ctxPct >= 80 && state.messages.length >= 8) {
+      if (ctxPct >= 95 && state.messages.length >= 8) {
 
         const key = els.apiKey.value.trim();
 
@@ -7168,13 +7199,21 @@ async function runAgentLoop() {
 
               };
 
+              // Archive full messages before compaction (for memory extraction & history)
+              try {
+                await apiJson(`/api/sessions/${encodeURIComponent(state.sessionId)}/archive`, {
+                  method: "PUT",
+                  body: JSON.stringify({ messages: state.messages }),
+                });
+              } catch (_) { /* non-critical */ }
+
               const oldSummaries = state.messages.filter((m) => m.meta?.kind === "compact-summary");
 
               state.messages = [summaryMsg, ...oldSummaries, ...kept.filter((m) => m.meta?.kind !== "compact-summary")];
 
               state.stats = { input: 0, output: 0, cache: 0 };
 
-              state._autoCompacted = true;
+              state._autoCompacted = (state._autoCompacted || 0) + 1;
 
               renderMessages();
 
@@ -7190,7 +7229,8 @@ async function runAgentLoop() {
 
 
 
-    const assistantIndex = state.messages.push({ role: "assistant", content: "", streaming: true, _model: getSelectedModel() }) - 1;
+    msgs = state.messages;  // Pin array for streaming writes
+    const assistantIndex = msgs.push({ role: "assistant", content: "", streaming: true, _model: getSelectedModel() }) - 1;
 
     state.responseUsage = { input: 0, output: 0, cache: 0 };
 
@@ -7200,9 +7240,9 @@ async function runAgentLoop() {
 
     // Attach usage to this response (store in meta for persistence)
 
-    state.messages[assistantIndex].meta = {
+    msgs[assistantIndex].meta = {
 
-      ...(state.messages[assistantIndex].meta || {}),
+      ...(msgs[assistantIndex].meta || {}),
 
       _usage: { ...state.responseUsage },
 
@@ -7218,9 +7258,9 @@ async function runAgentLoop() {
 
     if (nativeCalls.length > 0) {
 
-      const current = state.messages[assistantIndex] || {};
+      const current = msgs[assistantIndex] || {};
 
-      state.messages[assistantIndex] = {
+      msgs[assistantIndex] = {
 
         ...current,
 
@@ -7339,9 +7379,18 @@ async function runAgentLoop() {
     const hasToolMarker = /```agent-tool|<agent-tool>/i.test(rawContent);
 
     if (!hasToolMarker) {
-      state.messages[assistantIndex].content = rawContent.trim();
-      state.messages[assistantIndex].streaming = false;
-      renderMessages();
+      msgs[assistantIndex].content = rawContent.trim();
+      msgs[assistantIndex].streaming = false;
+      // If user switched sessions, persist streaming session to server
+      if (state.sessionId !== state.streamingSessionId) {
+        const streamingMsgs = msgs;
+        state._sessionMsgs[state.streamingSessionId] = streamingMsgs;
+        apiJson(`/api/sessions/${encodeURIComponent(state.streamingSessionId)}`, {
+          method: "PUT",
+          body: JSON.stringify({ title: els.sessionTitle.value || "未命名会话", messages: streamingMsgs }),
+        }).catch(() => {});
+      }
+      if (state.sessionId === _streamSid) renderMessages();
       await saveCurrentSession();
       return;
     }
@@ -7360,9 +7409,9 @@ async function runAgentLoop() {
 
     const cleanContent = stripToolBlock(rawContent);
 
-    state.messages[assistantIndex].content = cleanContent || "";
+    msgs[assistantIndex].content = cleanContent || "";
 
-    state.messages[assistantIndex].streaming = false;
+    msgs[assistantIndex].streaming = false;
 
 
 
@@ -7542,6 +7591,14 @@ async function compactConversation() {
 
 
 
+      // Archive full messages before compaction
+      try {
+        await apiJson(`/api/sessions/${encodeURIComponent(state.sessionId)}/archive`, {
+          method: "PUT",
+          body: JSON.stringify({ messages: state.messages }),
+        });
+      } catch (_) { /* non-critical */ }
+
       const kept = state.messages.slice(-keepCount);
 
       const summaryMsg = {
@@ -7692,6 +7749,11 @@ async function sendMessage(userText) {
 
       return;
 
+    }
+
+    if (cmd === "remember") {
+      await extractAndSuggestMemories();
+      return;
     }
 
     const skill = state.skills.find((s) => s.name === cmd && !state.disabledSkills.has(s.name));
@@ -8687,7 +8749,7 @@ els.copyPreview.addEventListener("click", async () => {
 
 els.copySessionPath.addEventListener("click", () => copyText(sessionFilePath()));
 
-els.copySessionId.addEventListener("click", () => copyText(state.sessionId || ""));
+// Session ID now shown in File tooltip
 
 // Sidebar toggle: click to collapse (peek mode), click again to restore
 els.toggleSidebar.addEventListener("click", () => {
@@ -9229,13 +9291,21 @@ function renderSkillsInSettings(container) {
 
     <div class="skills-layout-inner">
 
-      <div class="skills-sidebar-inner" id="settingsSkillsSidebar"></div>
+      <div class="skills-sidebar-inner">
+
+        <div id="settingsSkillsSidebar" style="flex:1;overflow:auto;padding:4px 0"></div>
+
+        <button id="settingsSkillAddBtn" class="mini-btn" style="width:100%;margin-top:8px;flex-shrink:0">+ 新建 Skill</button>
+
+      </div>
 
       <div class="skills-detail-inner" id="settingsSkillsDetail"></div>
 
     </div>`;
 
   renderSettingsSkillsSidebar();
+
+  document.getElementById("settingsSkillAddBtn").addEventListener("click", () => openSkillEditor(null));
 
 }
 
@@ -9244,6 +9314,7 @@ function renderSkillsInSettings(container) {
 function renderSettingsSkillsSidebar() {
 
   const sidebar = document.getElementById("settingsSkillsSidebar");
+  if (!sidebar) return;
 
   const active = state.skills.filter((s) => !state.disabledSkills.has(s.name));
 
@@ -9301,7 +9372,21 @@ function showSkillDetailInSettings(skill) {
 
   const panel = document.getElementById("settingsSkillsDetail");
 
-  if (!skill) { panel.innerHTML = `<div class="skills-detail-empty">← 选择左侧 Skill</div>`; return; }
+  if (!skill) {
+    const hasSkills = state.skills.length > 0;
+    panel.innerHTML = hasSkills
+      ? `<div class="skills-detail-empty">← 选择左侧 Skill 查看详情</div>`
+      : `<div class="skills-detail-empty">
+        <strong>暂无 Skill</strong>
+        <span style="margin-top:6px">点击左侧「+ 新建 Skill」创建第一个 Skill</span>
+        <button class="mini-btn primary-btn" style="margin-top:12px" id="settingsEmptyCreateBtn">+ 新建 Skill</button>
+        <span style="margin-top:4px;font-size:11px">或在 data/skills/ 目录下创建 SKILL.md 文件</span>
+      </div>`;
+    if (!hasSkills) {
+      document.getElementById("settingsEmptyCreateBtn").addEventListener("click", () => openSkillEditor(null));
+    }
+    return;
+  }
 
   const isOn = !state.disabledSkills.has(skill.name);
 
@@ -9433,7 +9518,7 @@ function renderThemePanel(container) {
 
   const current = localStorage.getItem("agent-lite-theme") || "light";
 
-  const themes = [{ v: "light", l: t("light") }, { v: "dark", l: t("dark") }, { v: "system", l: t("system") }];
+  const themes = [{ v: "light", l: t("light") }, { v: "dark", l: t("dark") }, { v: "system", l: t("followSystem") }];
 
   container.innerHTML = `<h3 style="margin:0 0 14px">Theme</h3>
 
@@ -9583,6 +9668,16 @@ document.addEventListener("click", (e) => {
 
     closeAllSessionMenus();
 
+  }
+
+  // Close top panels (Tools, Session Info) when clicking outside
+  if (!e.target.closest("#toolLogPanel") && !e.target.closest("#toolLogToggle")) {
+    els.toolLogPanel?.classList.remove("open");
+    els.toolLogToggle?.classList.remove("active");
+  }
+  if (!e.target.closest("#statsPanel") && !e.target.closest("#usageStrip")) {
+    els.statsPanel?.classList.remove("open");
+    els.usageStrip?.classList.remove("active");
   }
 
 });

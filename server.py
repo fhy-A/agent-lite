@@ -69,6 +69,7 @@ SKIP_DIRS = {
 }
 
 SAFE_COMMAND_PREFIXES = (
+    # 文件查看
     "dir",
     "dir ",
     "ls",
@@ -78,6 +79,7 @@ SAFE_COMMAND_PREFIXES = (
     "get-childitem",
     "get-content ",
     "where ",
+    # 解释器 + 包管理（只放行运行/构建，-c/-e 被 DENIED_RUNTIME_PATTERN 拦截）
     "python ",
     "python -m ",
     "py ",
@@ -86,13 +88,25 @@ SAFE_COMMAND_PREFIXES = (
     "npx ",
     "pnpm ",
     "yarn ",
+    # 版本控制
     "git status",
     "git diff",
     "git log",
     "git show",
+    # 容器
     "docker compose ps",
     "docker compose logs",
     "docker compose config",
+    # 系统信息（纯查看，只读）
+    "echo",
+    "echo ",
+    "date ",
+    "time ",
+    "get-date",
+    "ver",
+    "whoami",
+    "hostname",
+    "systeminfo",
 )
 
 DENIED_COMMAND_PATTERN = re.compile(
@@ -411,21 +425,26 @@ def _rebuild_memory_index():
 
 
 def load_memory_context():
-    """Return all memory contents for system prompt injection."""
+    """Return memory contents for system prompt injection, filtered by current project."""
     memories = list_memories()
     if not memories:
         return {"found": False, "content": None, "memories": []}
+    current_project = load_config().get("projectRoot", "")
     parts = []
     for mem in memories:
         try:
             full = read_memory(mem["name"])
+            mem_project = (full.get("meta") or {}).get("project", "")
+            # Include if same project OR if memory has no project (legacy) OR project is "*"
+            if mem_project and current_project and mem_project != current_project and mem_project != "*":
+                continue
             desc = mem.get("description", "") or ""
             parts.append(f"### {mem['name']}\n{desc}\n\n{full['body']}")
         except Exception:
             pass
     if not parts:
         return {"found": False, "content": None, "memories": []}
-    content = "以下是跨会话保留的持久记忆，请始终参考这些信息：\n\n" + "\n\n---\n\n".join(parts)
+    content = "以下是本项目相关的持久记忆，请始终参考这些信息：\n\n" + "\n\n---\n\n".join(parts)
     return {"found": True, "content": content, "count": len(parts)}
 
 
@@ -1063,6 +1082,9 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             if self.path == "/api/tools/web_fetch":
                 self.tool_web_fetch()
                 return
+            if self.path == "/api/tools/save_memory":
+                self.tool_save_memory()
+                return
             if self.path == "/api/mkdir":
                 self.create_directory()
                 return
@@ -1077,6 +1099,9 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         try:
+            if self.path.startswith("/api/sessions/") and self.path.endswith("/archive"):
+                self.archive_session(self.path.rsplit("/", 2)[-2])
+                return
             if self.path.startswith("/api/sessions/"):
                 self.save_session(self.path.rsplit("/", 1)[-1])
                 return
@@ -1205,6 +1230,20 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         session["updatedAt"] = now_iso()
         write_json(path, session)
         self.send_json(session)
+
+    def archive_session(self, session_id):
+        """Save a full-history backup before compaction."""
+        body = self.read_body_json()
+        messages = body.get("messages") or []
+        if not messages:
+            self.send_json({"ok": False, "error": "no messages to archive"}, 400)
+            return
+        archive_dir = SESSIONS_DIR / "archive"
+        archive_dir.mkdir(exist_ok=True)
+        ts = now_iso().replace(":", "-")
+        path = archive_dir / f"{safe_session_id(session_id)}_{ts}.json"
+        write_json(path, {"id": session_id, "archivedAt": now_iso(), "messageCount": len(messages), "messages": messages})
+        self.send_json({"ok": True, "path": str(path)})
 
     def delete_session(self, session_id):
         path = session_path(session_id)
@@ -2050,6 +2089,23 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
                 "error": str(exc),
             }, 400)
 
+    def tool_save_memory(self):
+        body = self.read_body_json()
+        name = (body.get("name") or "").strip()
+        description = (body.get("description") or "").strip()
+        content = (body.get("body") or "").strip()
+        if not name or not content:
+            raise ValueError("name and body are required")
+        safe = re.sub(r"[^a-zA-Z0-9_-]", "", name)[:32]
+        if not safe:
+            raise ValueError("invalid memory name")
+        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+        project = load_config().get("projectRoot", "")
+        ts = time.strftime("%Y-%m-%dT%H:%M:%S")
+        md = f"---\nname: {safe}\ndescription: {description}\nproject: {project}\ncreated: {ts}\n---\n\n{content}"
+        (MEMORY_DIR / f"{safe}.md").write_text(md, encoding="utf-8")
+        self.send_json({"ok": True, "name": safe, "path": str(mem_dir / "MEMORY.md")}, 201)
+
     def create_directory(self):
         body = self.read_body_json()
         name = (body.get("name") or "").strip()
@@ -2170,6 +2226,9 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         headers_sent = False
         try:
             with request.urlopen(upstream, timeout=180) as resp:
+                # Set a read timeout so readline() doesn't hang forever on stale connections
+                import socket
+                resp.fp._sock.settimeout(30)
                 if is_stream:
                     self.send_response(resp.status)
                     self.send_header("Content-Type", resp.headers.get("Content-Type", "text/event-stream"))
@@ -2177,8 +2236,22 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
                     self.send_header("Connection", "close")
                     self.end_headers()
                     headers_sent = True
+                    idle_ticks = 0
                     while True:
-                        chunk = resp.readline()
+                        try:
+                            chunk = resp.readline()
+                        except socket.timeout:
+                            idle_ticks += 1
+                            if idle_ticks >= 2:  # 60s total idle — treat as dead
+                                err_line = "data: [ERROR] Stream stalled (no data for 60s)\n\n".encode("utf-8")
+                                try: self.wfile.write(err_line); self.wfile.flush()
+                                except: pass
+                                break
+                            # Send keepalive comment
+                            try: self.wfile.write(b": keepalive\n\n"); self.wfile.flush()
+                            except: break
+                            continue
+                        idle_ticks = 0
                         if not chunk:
                             break
                         self.wfile.write(chunk)

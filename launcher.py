@@ -4,18 +4,12 @@ Agent Lite launcher — entry point for PyInstaller bundle.
 import os
 import sys
 import webbrowser
-import zipfile
-import tempfile
-import shutil
 import tkinter as tk
 from pathlib import Path
 
 GITHUB_REPO = "fhy-A/agent-lite"
 VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/master/VERSION"
-REPO_ZIP_URL = f"https://github.com/{GITHUB_REPO}/archive/refs/heads/master.zip"
-
-# Files to update (NOT data directory)
-APP_FILES = ["app.js", "index.html", "styles.css", "server.py", "launcher.py", "VERSION"]
+RELEASE_EXE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest/download/AgentLite.exe"
 
 
 def get_base_dir():
@@ -23,13 +17,6 @@ def get_base_dir():
     if getattr(sys, 'frozen', False):
         return Path(sys._MEIPASS)
     return Path(__file__).resolve().parent
-
-
-def get_update_dir():
-    """Get writable directory for updates (separate from bundled data)."""
-    if getattr(sys, 'frozen', False):
-        return Path.home() / ".agent-lite" / "app"
-    return get_base_dir()
 
 
 def ensure_dirs():
@@ -91,35 +78,20 @@ def check_and_update():
 
     try:
         import urllib.request
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-        urllib.request.urlretrieve(REPO_ZIP_URL, tmp.name)
+        target_dir = get_base_dir() / "dist"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        new_exe = target_dir / "AgentLite.exe.new"
 
-        target = get_update_dir()
-        target.mkdir(parents=True, exist_ok=True)
+        lbl.config(text=f"Downloading AgentLite v{remote}...")
+        pw.update()
+        urllib.request.urlretrieve(RELEASE_EXE_URL, str(new_exe))
 
-        with zipfile.ZipFile(tmp.name) as zf:
-            # GitHub zip contains a top-level folder: agent-lite-master/
-            prefix = zf.namelist()[0].split("/")[0] + "/"
-            for name in zf.namelist():
-                rel = name[len(prefix):]
-                if rel in APP_FILES:
-                    print(f"  Updating: {rel}")
-                    zf.extract(name, target)
-                    # Move from subfolder to target
-                    extracted = target / name
-                    if extracted.exists():
-                        shutil.move(str(extracted), str(target / rel))
-            # Clean up extracted subfolder
-            subfolder = target / prefix.rstrip("/")
-            if subfolder.exists():
-                shutil.rmtree(str(subfolder), ignore_errors=True)
-
-        os.unlink(tmp.name)
         pw.destroy()
         root.destroy()
-        # Write new version
-        (target / "VERSION").write_text(remote, encoding="utf-8")
-        mb.showinfo("Update Complete", f"Updated to v{remote}. Agent Lite will now restart.")
+
+        # Write new version marker
+        (target_dir / "VERSION").write_text(remote, encoding="utf-8")
+        mb.showinfo("Update Ready", f"AgentLite v{remote} downloaded.\n\nRestart the application to apply the update.")
         root.destroy()
     except Exception as e:
         print(f"Update failed: {e}")

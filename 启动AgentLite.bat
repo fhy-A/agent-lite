@@ -1,6 +1,15 @@
 @echo off
 cd /d "%~dp0"
 
+REM Replace exe if update was downloaded
+if exist "dist\AgentLite.exe.new" (
+  echo Applying update...
+  del /f "dist\AgentLite.exe.old" 2>nul
+  move /y "dist\AgentLite.exe" "dist\AgentLite.exe.old" 2>nul
+  move /y "dist\AgentLite.exe.new" "dist\AgentLite.exe"
+  echo Update applied.
+)
+
 REM Check if port 3010 already in use
 netstat -ano 2>nul | find ":3010 " | find "LISTENING" >nul
 if %errorlevel%==0 (

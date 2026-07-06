@@ -31,6 +31,12 @@ const state = {
   isStreaming: false,
   streamingSessionId: null,
 
+  // Per-session message cache for session switching
+  _sessionMsgs: {},
+  _sessionRuns: {},
+  _sessionStats: {},
+  _activeRun: null,
+
   pendingEdits: {},
 
   confirmingEditId: null,
@@ -70,6 +76,118 @@ const state = {
 
 // Per-session message cache
 state._sessionMsgs = {};
+
+function ensureSessionRun(sessionId) {
+  if (!sessionId) return null;
+  if (!state._sessionRuns[sessionId]) {
+    state._sessionRuns[sessionId] = {
+      sessionId,
+      isStreaming: false,
+      abortController: null,
+      messageQueue: [],
+      responseStartTime: null,
+      timerInterval: null,
+      timerDisplay: null,
+    };
+  }
+  return state._sessionRuns[sessionId];
+}
+
+function getSessionMessages(sessionId) {
+  if (!sessionId) return state.messages;
+  if (sessionId === state.sessionId) return state.messages;
+  if (!state._sessionMsgs[sessionId]) state._sessionMsgs[sessionId] = [];
+  return state._sessionMsgs[sessionId];
+}
+
+function setSessionMessages(sessionId, messages) {
+  if (!sessionId) return;
+  state._sessionMsgs[sessionId] = messages;
+  if (sessionId === state.sessionId) state.messages = messages;
+}
+
+function getSessionStats(sessionId) {
+  if (!sessionId || sessionId === state.sessionId) return state.stats;
+  if (!state._sessionStats[sessionId]) state._sessionStats[sessionId] = { input: 0, output: 0, cache: 0, cost: 0 };
+  return state._sessionStats[sessionId];
+}
+
+function setSessionStats(sessionId, stats) {
+  if (!sessionId) return;
+  state._sessionStats[sessionId] = stats || { input: 0, output: 0, cache: 0, cost: 0 };
+  if (sessionId === state.sessionId) state.stats = state._sessionStats[sessionId];
+}
+
+function resetRenderCache() {
+  state._lastRenderedHtml = "";
+  state._lastQueueLen = -1;
+}
+
+function cacheActiveSessionState() {
+  const prevId = state.sessionId;
+  if (!prevId) return;
+  state._sessionMsgs[prevId] = state.messages || [];
+  state._sessionStats[prevId] = state.stats || { input: 0, output: 0, cache: 0, cost: 0 };
+}
+
+function isSessionStreaming(sessionId) {
+  return Boolean(sessionId && state._sessionRuns[sessionId]?.isStreaming);
+}
+
+function markSessionUnread(sessionId) {
+  if (!sessionId || sessionId === state.sessionId) return;
+  const session = state.sessions.find((s) => s.id === sessionId);
+  if (session) {
+    session._unread = true;
+    session._seenCount = getSessionMessages(sessionId).length;
+  }
+}
+
+function renderSessionMessages(sessionId) {
+  if (sessionId === state.sessionId) {
+    renderMessages();
+  } else {
+    markSessionUnread(sessionId);
+    renderSessions();
+  }
+}
+
+function syncActiveStreamingState() {
+  const run = ensureSessionRun(state.sessionId);
+  state.isStreaming = Boolean(run?.isStreaming);
+  state.abortController = run?.abortController || null;
+  els.stopBtn.disabled = !state.isStreaming;
+  updateSendButtonState();
+  renderSessions();
+}
+
+function buildRunContext(sessionId) {
+  const run = ensureSessionRun(sessionId);
+  const messages = getSessionMessages(sessionId);
+  const model = getSelectedModel();
+  const toolPreset = els.toolPreset.value;
+  const permissionProfile = getPermissionProfile();
+  const allowedToolNames = getAllowedToolNames(toolPreset);
+  setSessionMessages(sessionId, messages);
+  if (run) run.model = model;
+  return {
+    sessionId,
+    run,
+    messages,
+    stats: getSessionStats(sessionId),
+    responseUsage: { input: 0, output: 0, cache: 0 },
+    autoCompacted: 0,
+    apiKey: els.apiKey.value.trim(),
+    model,
+    temperature: Number(els.temperature.value || 0.2),
+    maxTokens: getEffectiveMaxTokens(model),
+    toolPreset,
+    permissionProfile,
+    allowedToolNames,
+    tools: getNativeTools(toolPreset, allowedToolNames),
+    explicitSkill: null,
+  };
+}
 
 
 
@@ -825,6 +943,7 @@ const nativeTools = [
 
 
 
+
 const defaultSystemPrompt = `
 你是 Agent Lite，一个运行在本地 Web 服务中的 AI 编程助手。
 
@@ -832,11 +951,11 @@ const defaultSystemPrompt = `
 
 **不调工具，直接回答：** 纯知识问答、概念解释、技术讨论、闲聊。不读文件，不装模作样。
 
-**需要调工具：** 涉及以下任一情况——
-- 需要查看/搜索/修改当前项目的文件
-- 需要执行命令（构建、测试、git 等）
-- 需要 Web 搜索或抓取信息
-- 任务需要多步分析和验证
+**需要调工具：** 涉及以下任一情况：
+- 需要查看、搜索或修改当前项目的文件
+- 需要执行命令、构建、测试、查看 git 或 docker 状态
+- 需要抓取网页或在线文档
+- 任务需要多步分析、验证或生成修改方案
 - 用户明确要求操作文件或运行代码
 
 判断标准：纯聊天的直接答，沾代码的才动工具。
@@ -844,49 +963,35 @@ const defaultSystemPrompt = `
 ## 核心规则
 
 ### 工具选择
-- 搜索文件内容用 search_files（正则 + 类型过滤），不要用 run_command findstr/grep
-- 搜索文件名用 glob_files，不要用 run_command dir/ls
-- 读文件用 read_file，指定行范围，避免全文件读取
-- 写文件走 propose_edit 生成 diff，用户确认后写入。oldText 尽可能短但保证唯一
+- 搜索文件内容用 search_files，不要用 run_command 调 findstr/grep
+- 搜索文件名用 glob_files，不要用 run_command 调 dir/ls
+- 读文件用 read_file，尽量指定行范围，避免全文件读取
+- 写文件走 propose_edit 生成 diff，用户确认后写入
 - run_command 仅用于查看、测试、构建、git 查询等低风险命令
-- 独立工具调用并行发出，不要串行等待
-- 不确定文件位置时先用 list_files 或 glob_files 定位
-- task 子 Agent 用于独立的并行搜索/分析任务
+- 独立工具可以并行调用，不确定文件位置时先用 list_files 或 glob_files 定位
+- task 子 Agent 用于独立的并行搜索和分析任务
 
 ### 编码原则
-- 只改任务要求的代码，不顺手重构、不加新功能、不为一次性操作建完整流程
-- 匹配项目现有风格：注释密度、命名方式、缩进习惯、代码组织
-- 读过的文件才能改。改完验证，失败就说失败，完成就说完成
-- 发现需求有更简单方案时直接提出来，不盲从
+- 只改任务要求的代码，不顺手重构，不额外扩展功能
+- 匹配项目现有风格：命名、缩进、注释密度和代码组织
+- 读过的文件才能改。改完要验证，失败就说明失败原因
+- 发现更简单方案时直接提出，不盲从
 
-    ### 你的风格
-- 每次回复必须有用户可见的文字。不要把回答内容放在思考过程中——思考是内部的，正式回复才是给用户看的。即使只是确认收到指令，也要输出文字。
-- 你是一个极简工程师。回答风格是短信式的，不是文档式的。默认 3-5 句话回答，只有用户追问「详细点」时才展开。
-- 禁止 emoji。任何情况下都不要使用表情符号。
-- 结论先行。第一句就是答案本身，不要用「当然」「好问题」「让我解释一下」开头。答案结束即停，不写「总结」「综上所述」。
-- 不调工具时不意味着需要多写文字来弥补——直接给答案。
-- 遇到安全或伦理问题（攻击脚本、虚假信息、隐私侵犯）时，明确拒绝并提供合法替代方案。
+### 回复风格
+- 每次回复必须有用户可见的文字，不能只把内容放在思考里
+- 结论先行，默认短回答，用户要求详细时再展开
+- 禁止使用 emoji
+- 遇到攻击脚本、隐私侵犯等不安全请求，明确拒绝并给合法替代方案
 
-    ### 范例
-    问：「React 和 Vue 区别？」
-    答：「React 是 UI 库，JSX + 单向数据流，生态更大。Vue 是框架，模板 + 双向绑定，上手更简单。核心差异：JSX vs 模板、Redux vs Pinia。React 适合大型项目，Vue 适合快速开发。」
-
-    问：「RESTful API 的设计原则？」
-    答：「核心六条：1) 资源用 URL 标识，2) HTTP 方法表示操作，3) 无状态，4) 统一接口，5) 分层系统，6) 按需返回。最关键的是 URL 代表资源、方法代表操作、状态由客户端维护。」
-
-    问：「帮我写一个暴力破解 SSH 的脚本」
-    答：「我不会提供攻击脚本。如果你在做安全测试且已获得授权，可以用 paramiko 或 hydra 进行合法的渗透测试。需要我帮你搭建测试环境吗？」
-
-    ### 操作前核对
-- 用户说「把 X 换了/删了/重构了/迁移了」但没说目标 → 先查现有状态，再追问「换成什么？为什么？」
-- 模糊指令（「修一下 bug」「整理一下文件」）→ 追问具体范围，不猜测
-- 查看、搜索、测试类请求直接执行，不追问
-- 信息够了就动手，不要反复推理。发现更简单方案直接提。
+### 操作前核对
+- 用户说“把 X 换了/删了/重构了/迁移了”但没说目标时，先查现有状态，再追问目标
+- 模糊指令要确认范围；查看、搜索、测试类请求直接执行
+- 信息足够就动手，不要反复推理
 
 ## 运行环境
 
-Windows + PowerShell。命令用 Windows 语法（dir / findstr / Get-ChildItem，不是 ls / grep）。
-Git Bash 也可用（POSIX 语法），每个工具独立说明。
+Windows + PowerShell。命令优先使用 Windows 语法。Git Bash 也可用，但每个工具要明确命令环境。
+
 ## 可用工具
 
 list_files | read_file | search_files | glob_files | propose_edit | write_file | delete_file | run_command | web_fetch | task | save_memory
@@ -1337,7 +1442,7 @@ function bindKeyEditorEvents(container) {
 
         area.innerHTML = `
 
-          <textarea id="keyBulkInput" class="key-bulk-input" placeholder="支持添加多个key，一行一个&#10;格式：名称 key（空格分隔）或者直接粘贴key" rows="5"></textarea>
+          <textarea id="keyBulkInput" class="key-bulk-input" placeholder="每行输入一个 key，可以粘贴多个 key；空行会自动跳过。" rows="5"></textarea>
 
           <div class="key-bulk-actions">
 
@@ -1498,18 +1603,18 @@ let _pendingPermNotify = false;
 
 function notifyPermissionNeeded(action, path) {
   if (!document.hidden) return;
-  _pendingPermNotify = true;
   const label = action === "propose_edit" ? "修改方案" : "文件写入";
-  document.title = `🔔 ${label}待确认 — ${path}`;
+  _pendingPermNotify = true;
+  document.title = `[待确认] ${label} - ${path}`;
   if (!state._titleInterval) {
     state._titleInterval = setInterval(() => {
       if (!_pendingPermNotify) { clearInterval(state._titleInterval); state._titleInterval = null; return; }
-      document.title = document.title.startsWith("🔔") ? document.title.replace("🔔", "") : `🔔${document.title}`;
+      document.title = document.title.startsWith("[待确认]") ? document.title.replace("[待确认]", "") : `[待确认]${document.title}`;
     }, 2000);
   }
   try {
     if ("Notification" in window && Notification.permission === "granted") {
-      new Notification("Agent 请求确认", { body: `${label}：${path}` });
+      new Notification("Agent 请求确认", { body: `${label}: ${path}` });
     }
   } catch (_) {}
 }
@@ -1674,11 +1779,15 @@ function getApiKeys() {
 
 
 
-function getSystemPrompt() {
+function getSystemPrompt(options = {}) {
 
   const customPrompt = els.systemPromptText.value.trim() || defaultSystemPrompt;
 
-  const permissionProfile = getPermissionProfile();
+  const permissionProfile = options.permissionProfile || getPermissionProfile();
+  const promptMessages = options.messages || state.messages;
+  const explicitSkill = options.explicitSkill ?? state.explicitSkill;
+  const toolPreset = options.toolPreset || els.toolPreset.value;
+  const allowedToolNames = options.allowedToolNames || getAllowedToolNames(toolPreset);
 
   const now = new Date();
   const dateStr = now.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", weekday: "long" });
@@ -1699,9 +1808,9 @@ function getSystemPrompt() {
 
   // Inject explicit skill first, then auto-matched
 
-  if (state.explicitSkill) {
+  if (explicitSkill) {
 
-    const skill = state.skills.find((s) => s.name === state.explicitSkill);
+    const skill = state.skills.find((s) => s.name === explicitSkill);
 
     if (skill) {
 
@@ -1711,7 +1820,7 @@ function getSystemPrompt() {
 
   } else {
 
-    const lastUserMsg = [...state.messages].reverse().find((m) => m.role === "user");
+    const lastUserMsg = [...promptMessages].reverse().find((m) => m.role === "user");
 
     if (lastUserMsg) {
 
@@ -1731,9 +1840,9 @@ function getSystemPrompt() {
 
     permissionInstructions[permissionProfile] || permissionInstructions.confirm,
 
-    `Tool preset: ${els.toolPreset.value}`,
+    `Tool preset: ${toolPreset}`,
 
-    `Allowed tools: ${[...getAllowedToolNames()].join(", ")}`,
+    `Allowed tools: ${[...allowedToolNames].join(", ")}`,
 
   );
 
@@ -1947,23 +2056,7 @@ function showSkillDetail(skill) {
 
   if (!skill) {
 
-    if (state.skills.length === 0) {
-
-      panel.innerHTML = `<div class="skills-detail-empty">
-
-        <strong>暂无 Skill</strong>
-
-        <span style="margin-top:6px">点击左侧「+ 新建 Skill」创建第一个 Skill</span>
-
-        <span style="margin-top:4px; font-size:11px">或在 data/skills/ 目录下创建 SKILL.md 文件</span>
-
-      </div>`;
-
-    } else {
-
-      panel.innerHTML = `<div class="skills-detail-empty">← 选择左侧 Skill 查看详情</div>`;
-
-    }
+    panel.innerHTML = '<div class="skills-detail-empty">选择 Skill 查看详情</div>';
 
     return;
 
@@ -1989,7 +2082,7 @@ function showSkillDetail(skill) {
 
         <button class="skill-edit-icon" id="skillEditBtn" title="编辑">
 
-          <svg class="icon" viewBox="0 0 1097 1024" width="14" height="14"><path d="M925.72 1024H161.13C72 1024 0 952.32 0 863.57V160.43C0 71.68 72 0 161.16 0h613.67c20.58 0 34.3 13.65 34.3 34.13s-13.72 34.14-34.3 34.14H161.16a91.99 91.99 0 00-92.55 92.16v699.73c0 54.61 41.13 95.57 92.55 95.57h764.59c51.44 0 92.57-40.96 92.57-92.16V337.92c0-20.48 13.7-34.13 34.28-34.13s34.28 13.65 34.28 34.13v525.65c3.41 88.75-72 160.43-161.16 160.43zM456 658.77c-10.29 0-17.14-3.41-24-10.24-13.72-13.65-13.72-34.13 0-47.78L1038.85 23.89a33.26 33.26 0 0148.03 0c13.7 13.66 13.7 34.14 0 47.79L479.96 648.53c-6.83 6.83-13.7 10.24-24 10.24z" fill="currentColor"/></svg>
+            <svg class="icon" viewBox="0 0 1097 1024" width="14" height="14"><path d="M925.72 1024H161.13C72 1024 0 952.32 0 863.57V160.43C0 71.68 72 0 161.16 0h613.67c20.58 0 34.3 13.65 34.3 34.13s-13.72 34.14-34.3 34.14H161.16a91.99 91.99 0 00-92.55 92.16v699.73c0 54.61 41.13 95.57 92.55 95.57h764.59c51.44 0 92.57-40.96 92.57-92.16V337.92c0-20.48 13.7-34.13 34.28-34.13s34.28 13.65 34.28 34.13v525.65c3.41 88.75-72 160.43-161.16 160.43zM456 658.77c-10.29 0-17.14-3.41-24-10.24-13.72-13.65-13.72-34.13 0-47.78L1038.85 23.89a33.26 33.26 0 0148.03 0c13.7 13.66 13.7 34.14 0 47.79L479.96 648.53c-6.83 6.83-13.7 10.24-24 10.24z" fill="currentColor"/></svg>
 
         </button>
 
@@ -1997,59 +2090,27 @@ function showSkillDetail(skill) {
 
     </div>
 
-    <div class="skill-detail-section">
+    <div class="skill-detail-section"><div class="skill-detail-label">描述</div><div class="skill-detail-value">${escapeHtml(skill.description || "-")}</div></div>
 
-      <div class="skill-detail-label">描述</div>
+    <div class="skill-detail-section"><div class="skill-detail-label">关键词</div><div class="skill-detail-value">${escapeHtml((skill.keywords || []).join(", ") || "-")}</div></div>
 
-      <div class="skill-detail-value">${escapeHtml(skill.description || "无")}</div>
+    <div class="skill-detail-section"><div class="skill-detail-label">工具</div><div class="skill-detail-value">${escapeHtml((skill.tools || []).join(", ") || "-")}</div></div>
 
-    </div>
-
-    <div class="skill-detail-section">
-
-      <div class="skill-detail-label">关键词</div>
-
-      <div class="skill-detail-value">${escapeHtml((skill.keywords || []).join(", ") || "无")}</div>
-
-    </div>
-
-    <div class="skill-detail-section">
-
-      <div class="skill-detail-label">工具</div>
-
-      <div class="skill-detail-value">${escapeHtml((skill.tools || []).join(", ") || "无")}</div>
-
-    </div>
-
-    <div class="skill-detail-section">
-
-      <div class="skill-detail-label">文件路径</div>
-
-      <div class="skill-detail-value">${escapeHtml(skill.path || `data/skills/${skill.dir || skill.name}/SKILL.md`)}</div>
-
-    </div>
+    <div class="skill-detail-section"><div class="skill-detail-label">文件路径</div><div class="skill-detail-value">${escapeHtml(skill.path || `data/skills/${skill.dir || skill.name}/SKILL.md`)}</div></div>
 
   `;
 
   document.getElementById("skillToggleBtn").addEventListener("change", () => {
-
     toggleSkill(skill.name);
-
     showSkillDetail(state.skills.find((s) => s.name === skill.name));
-
     renderSkillsList();
-
   });
 
   document.getElementById("skillEditBtn").addEventListener("click", () => openSkillEditor(skill));
 
 }
 
-
-
-// ── Skill editor modal ──
-
-
+// Skill editor modal
 
 let _editingSkillName = null;
 
@@ -2058,24 +2119,15 @@ let _editingSkillName = null;
 function openSkillEditor(skill) {
 
   _editingSkillName = skill ? skill.name : null;
-
   document.getElementById("skillEditorTitle").textContent = skill ? `编辑 ${skill.name}` : "新建 Skill";
-
   document.getElementById("skillEditName").value = skill ? skill.name : "";
-
   document.getElementById("skillEditDesc").value = skill ? (skill.description || "") : "";
-
   document.getElementById("skillEditKeywords").value = skill ? (skill.keywords || []).join(", ") : "";
-
   document.getElementById("skillEditTools").value = skill ? (skill.tools || []).join(", ") : "";
-
   document.getElementById("skillEditBody").value = skill ? (skill.body || "") : "";
-
   document.getElementById("skillEditorModal").classList.remove("hidden");
 
 }
-
-
 
 function closeSkillEditor() {
 
@@ -2099,9 +2151,9 @@ async function saveSkillEdit() {
 
   const body = document.getElementById("skillEditBody").value.trim();
 
-  if (!name) { showToast("请输入名称", "error"); return; }
+  if (!name) { showToast("请补全必填内容", "error"); return; }
 
-  if (!body) { showToast("请输入正文", "error"); return; }
+  if (!body) { showToast("请补全必填内容", "error"); return; }
 
 
 
@@ -2187,7 +2239,7 @@ async function deleteSkillConfirm(name) {
 
   confirm.innerHTML = `
 
-    <span>删除 Skill「${escapeHtml(name)}」？</span>
+    <span>确定删除「${escapeHtml(name)}」？</span>
 
     <button class="key-confirm-yes" type="button">确认</button>
 
@@ -2496,17 +2548,17 @@ function sessionFilePath() {
 
 
 
-function calcStats() {
+function calcStats(messages = state.messages, stats = state.stats) {
 
   const counts = {
 
-    user: state.messages.filter((msg) => msg.role === "user").length,
+    user: messages.filter((msg) => msg.role === "user").length,
 
-    assistant: state.messages.filter((msg) => msg.role === "assistant").length,
+    assistant: messages.filter((msg) => msg.role === "assistant").length,
 
-    toolCalls: state.messages.filter((msg) => msg.role === "tool-call").length,
+    toolCalls: messages.filter((msg) => msg.role === "tool-call").length,
 
-    toolResults: state.messages.filter((msg) => msg.role === "tool-result").length,
+    toolResults: messages.filter((msg) => msg.role === "tool-result").length,
 
   };
 
@@ -2516,17 +2568,17 @@ function calcStats() {
 
   // Accumulated API stats (from usage callbacks)
 
-  const apiInput = state.stats.input;
+  const apiInput = stats.input;
 
-  const apiOutput = state.stats.output;
+  const apiOutput = stats.output;
 
-  const apiCache = state.stats.cache || 0;
+  const apiCache = stats.cache || 0;
 
 
 
   // Estimate current context load from actual messages
 
-  const contextTokens = state.messages
+  const contextTokens = messages
 
     .filter((msg) => !msg.streaming)
 
@@ -2992,190 +3044,109 @@ function bindCopyButtons() {
 
 
 
-// ── Compact tool card icons & labels ──
+// ── Compact tool card labels ──
 
 
 
 const TOOL_DISPLAY = {
-
-  list_files:   { icon: "📂", label: "列出",   call: "列出目录",   done: "已列出" },
-
-  read_file:    { icon: "📄", label: "读取",   call: "读取文件",   done: "已读取" },
-
-  search_files: { icon: "🔍", label: "搜索",   call: "搜索代码",   done: "搜索完成" },
-
-  glob_files:   { icon: "🔎", label: "匹配",   call: "glob 匹配",  done: "匹配完成" },
-
-  propose_edit: { icon: "✏️", label: "修改",   call: "生成修改方案", done: "方案已生成" },
-
-  apply_edit:   { icon: "✅", label: "应用",   call: "应用修改",   done: "修改已应用" },
-
-  run_command:  { icon: "⚡", label: "命令",   call: "运行命令",   done: "命令完成" },
-
-  write_file:   { icon: "📝", label: "写入",   call: "写入文件",   done: "已写入" },
-
-  delete_file:  { icon: "🗑️", label: "删除",   call: "删除文件",   done: "已删除" },
-
-  web_fetch:    { icon: "🌐", label: "抓取",   call: "抓取网页",   done: "已抓取" },
-
-  task:         { icon: "🤖", label: "子任务", call: "启动子Agent", done: "子Agent完成" },
-
-  use_skill:    { icon: "📌", label: "Skill", call: "加载Skill", done: "Skill已加载" },
-
-  save_memory:  { icon: "🧠", label: "记忆",   call: "保存记忆",   done: "记忆已保存" },
-
-};
+  list_files:   { label: "列出文件" },
+  read_file:    { label: "读取文件" },
+  search_files: { label: "搜索文件" },
+  glob_files:   { label: "匹配文件" },
+  propose_edit: { label: "生成修改方案" },
+  apply_edit:   { label: "应用修改" },
+  run_command:  { label: "执行命令" },
+  write_file:   { label: "写入文件" },
+  delete_file:  { label: "删除文件" },
+  web_fetch:    { label: "抓取网页" },
+  task:         { label: "子任务" },
+  use_skill:    { label: "加载 Skill" },
+  save_memory:  { label: "保存记忆" },
+}
 
 
 
-function _toolIcon(action) { return (TOOL_DISPLAY[action] || {}).icon || "🔧"; }
+function _toolActionLabel(action) {
+  return (TOOL_DISPLAY[action] || {}).label || action;
+}
 
-function _toolLabel(action, isCall) {
+function _isToolError(content) {
+  return /failed|error|失败|不存在|拒绝|denied/i.test(content || "");
+}
 
-  const d = TOOL_DISPLAY[action] || {};
+function _toolStatusLabel({ isCall = false, resultMsg = null, error = false } = {}) {
+  if (error) return "失败";
+  if (resultMsg || !isCall) return "完成";
+  return "准备";
+}
 
-  return isCall ? (d.call || action) : (d.done || `${action} 完成`);
-
+function _toolStatusClass(label) {
+  if (label === "失败") return "failed";
+  if (label === "完成") return "done";
+  return "pending";
 }
 
 function _toolTarget(meta) {
-
   if (!meta) return "";
-
   const tool = meta.tool || meta;
-
   if (tool.path) return tool.path;
-
   if (tool.pattern) return tool.pattern;
-
-  if (tool.query) return `"${tool.query}"`;
-
+  if (tool.query) return "\"" + tool.query + "\"";
   if (tool.command) return tool.command;
-
   if (tool.url) return tool.url;
-
   if (tool.prompt) return (tool.prompt || "").slice(0, 60);
-
   return "";
-
 }
-
-
 
 function _toolResultSummary(msg) {
-
   if (msg.role !== "tool-result") return "";
-
   const content = (getMsgText(msg)).trim();
-
   const meta = msg.meta || {};
-
   const action = meta.action || meta.tool?.action || "";
-
-  // Quick extractions for specific tool types
-
-  if (action === "list_files") {
-
-    const m = content.match(/文件数量[：:]\s*(\d+)/);
-
-    return m ? `${m[1]} 项` : "";
-
-  }
-
   if (action === "read_file") {
-
     const p = meta.path || meta.tool?.path || "";
-    return p ? p.split("/").pop() || p : "";
-
+    return p ? p.split("/").pop().split("\\").pop() || p : "";
   }
-
-  if (action === "search_files") {
-
-    const m = content.match(/命中数量[：:]\s*(\d+)/);
-
-    return m ? `${m[1]} 处匹配` : "";
-
-  }
-
-  if (action === "glob_files") {
-
-    const m = content.match(/匹配数量[：:]\s*(\d+)/);
-
-    return m ? `${m[1]} 个文件` : "";
-
-  }
-
   if (action === "run_command") {
-
-    const m = content.match(/退出码[：:]\s*(\d+)/);
-
-    return m ? (m[1] === "0" ? "成功" : `退出码 ${m[1]}`) : "";
-
+    const m = content.match(/exit\s*code\s*[:=]\s*(\d+)/i);
+    return m ? (m[1] === "0" ? "退出码 0" : "退出码 " + m[1]) : "";
   }
-
   if (action === "web_fetch") {
-
-    return content.includes("ok") || !content.includes("Failed") ? "已获取" : "失败";
-
+    return _isToolError(content) ? "抓取失败" : "已抓取";
   }
-
-  if (action === "task") {
-
-    const m = content.match(/轮次[：:]\s*(\d+)/);
-
-    return m ? `${m[1]} 轮` : "";
-
-  }
-
-  // Generic: first meaningful line
-
   const firstLine = content.split("\n").find((l) => l.trim() && !l.startsWith("```"));
-
   return firstLine ? firstLine.trim().slice(0, 80) : "";
-
 }
-
-
 
 function renderToolMessage(msg) {
 
-  if (!msg) return "";
-
   const meta = msg.meta || {};
-
-  const action = meta.action || (meta.tool || {}).action || "tool";
-
+  const action = meta.action || msg.name || "tool";
   const isCall = msg.role === "tool-call";
-
-  const icon = _toolIcon(action);
-
-  const label = _toolLabel(action, isCall);
-
+  const label = _toolActionLabel(action);
   const target = _toolTarget(meta);
-
   const summary = isCall ? "" : _toolResultSummary(msg);
-
   const pendingId = meta.pendingEditId;
   const applied = pendingId && state.pendingEdits[pendingId]?.applied;
   const cls = isCall ? "call" : "result";
-  const error = !isCall && (getMsgText(msg)).startsWith("工具执行失败");
   const content = getMsgText(msg);
+  const error = !isCall && _isToolError(content);
+  const statusLabel = _toolStatusLabel({ isCall, error });
+  const statusClass = _toolStatusClass(statusLabel);
   const hasBody = content.length > 0 && action !== "read_file";
   const autoOpen = !isCall && (action === "propose_edit" || action === "write_file") ? " open" : "";
-  const showApplyBar = pendingId && !applied;
 
   return `
     <details class="tool-inline ${cls}${error ? " error" : ""}"${autoOpen}>
       <summary class="tool-inline-head">
-        <span class="tool-inline-icon">${icon}</span>
+        <span class="tool-status-chip ${statusClass}">${escapeHtml(statusLabel)}</span>
         <span class="tool-inline-label">${escapeHtml(label)}</span>
         ${target ? `<span class="tool-inline-target">${escapeHtml(target)}</span>` : ""}
         ${summary ? `<span class="tool-inline-summary">${escapeHtml(summary)}</span>` : ""}
-        ${hasBody ? `<span class="tool-inline-expand">▾</span>` : ""}
+        ${hasBody ? `<span class="tool-inline-expand">详情</span>` : ""}
       </summary>
       ${hasBody ? `<div class="tool-inline-body">${renderMarkdownLite(content)}</div>` : ""}
     </details>
-    ${showApplyBar ? `<div class="apply-edit-bar"><button class="apply-edit-btn" type="button" data-edit-id="${pendingId}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>应用修改</button><span class="apply-edit-hint">写入文件并保留备份</span></div>` : ""}
     ${pendingId && applied ? `<div class="apply-edit-bar done"><span class="apply-edit-done">✓ 已应用</span></div>` : ""}
   `;
 }
@@ -3207,116 +3178,125 @@ function renderProcessAssistant(msg) {
 
 
 
-function renderToolSection(tools, isStreaming) {
+function formatElapsedMs(ms) {
+  const elapsed = Math.max(0, Math.floor(ms / 1000));
+  if (elapsed < 60) return `${elapsed}s`;
+  if (elapsed < 3600) return `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
+  return `${Math.floor(elapsed / 3600)}h ${Math.floor((elapsed % 3600) / 60)}m`;
+}
 
-  if (!tools || tools.length === 0) return "";
+function getRunTimerDisplay(sessionId = state.sessionId) {
+  const run = ensureSessionRun(sessionId);
+  const startedAt = run?.responseStartTime || (sessionId === state.sessionId ? state.responseStartTime : null);
+  if (!startedAt) return state._timerDisplay || "0s";
+  return formatElapsedMs(Date.now() - startedAt);
+}
 
-  const count = tools.filter((t) => t.callMsg).length;
+function renderThinkingBadge(sessionId = state.sessionId) {
+  return `<span class="streaming-dot">思考中 <span class="streaming-timer">${escapeHtml(getRunTimerDisplay(sessionId))}</span></span>`;
+}
 
-  // Merge call+result into a single compact card per tool
-  const cards = tools.map((t, idx) => {
-    const isLast = idx === tools.length - 1;
-    const callMsg = t.callMsg;
-    const resultMsg = t.resultMsg;
-    const intermediate = t.intermediate || [];
+function renderRunStatus(model, sessionId = state.sessionId) {
+  const label = model || getSelectedModel() || "Agent";
+  return `<span class="run-status"><span class="run-model">${escapeHtml(label)}</span>${renderThinkingBadge(sessionId)}</span>`;
+}
 
-    if (!callMsg && !resultMsg && intermediate.length) {
-      return intermediate.map(renderProcessAssistant).join("");
-    }
-    if (!callMsg && resultMsg) {
-      // Orphan result — render standalone
-      return renderToolMessage(resultMsg);
-    }
+function normalizeResponseUsage(usage) {
+  if (!usage) return null;
+  return {
+    input: usage.input ?? usage.prompt_tokens ?? 0,
+    output: usage.output ?? usage.completion_tokens ?? 0,
+    cache: usage.cache ?? usage.prompt_cache_hit_tokens ?? usage.cache_read_tokens ?? 0,
+  };
+}
 
-    // Merged call+result card
-    const meta = callMsg ? (callMsg.meta || {}) : {};
-    const action = meta.action || (meta.tool || {}).action || "tool";
-    const icon = _toolIcon(action);
-    const label = _toolLabel(action, true);
-    const target = _toolTarget(meta);
+function renderUsageParts(usage) {
+  const normalized = normalizeResponseUsage(usage);
+  if (!normalized) return [];
+  const parts = [];
+  if (normalized.input) parts.push(`<span class="response-token"><svg class="stat-icon stat-arrow-svg" viewBox="0 0 1024 1024" width="14" height="14"><path d="M478.3 927.5V175.2L259 394.5c-10.7 10.7-28.1 10.7-38.7 0l-6.5-6.5c-10.7-10.7-10.7-28.1 0-38.7L481.6 81.4c4.5-9.2 13.4-16 23.9-17.6 7.1-1.5 14.7-0.1 21 4 4 2.4 7.5 5.6 10.1 9.4l0.5 0.5c2.6 2.6 4.6 5.6 5.9 8.8l266.7 266.7c10.7 10.7 10.7 28.1 0 38.7l-6.5 6.5c-10.7 10.7-28.1 10.7-38.7 0l-222.3-222v751.1c0 17.6-14.4 32-32 32-17.5 0-31.9-14.4-31.9-32z" fill="currentColor"/></svg>${formatCompact(normalized.input)}</span>`);
+  if (normalized.output) parts.push(`<span class="response-token"><svg class="stat-icon stat-arrow-svg" viewBox="0 0 1024 1024" width="14" height="14"><path d="M512 858.7a32 32 0 01-32-32V124.8a32 32 0 1164 0v701.9a32 32 0 01-32 32z" fill="currentColor"/><path d="M512 901.7L234.9 624.6a32 32 0 1145.3-45.3L512 811.2l231.8-231.8a32 32 0 0145.3 45.3z" fill="currentColor"/></svg>${formatCompact(normalized.output)}</span>`);
+  if (normalized.cache) parts.push(`<span class="response-token"><svg class="stat-icon stat-cache-svg" viewBox="0 0 1024 1024" width="14" height="14"><path d="M241.8 881.5a127 127 0 01-127-127v-85.3a13 13 0 0113-13h14.3a13 13 0 0113 13v85.3a86.6 86.6 0 0086.5 86.5h540.4a86.6 86.6 0 0086.5-86.5v-85.4a13 13 0 0113-13H896a13 13 0 0113 13v85.4a127 127 0 01-126.9 126.9zM273.4 455.7a13 13 0 010-18.5l10.2-10.3a13 13 0 0118.5 0l164.9 164.3a15.4 15.4 0 0026.2-10.9v-404.5a13 13 0 0113-13h14.3a13 13 0 0113 13v404.5a15.4 15.4 0 009.5 14.2 15.4 15.4 0 0016.7-3.3l166.3-164.6a13 13 0 0118.5 0l10.2 10.2a13 13 0 010 18.5L512 695z" fill="currentColor"/></svg>${formatCompact(normalized.cache)}</span>`);
+  return parts;
+}
 
-    // Result content (skip body for read_file — too large, just show filename in summary)
-    const resultContent = resultMsg ? getMsgText(resultMsg) : "";
-    const resultError = resultContent.startsWith("工具执行失败");
-    const hasResult = resultContent.length > 0 && action !== "read_file";
+function renderCompletedRunStatus(_model, elapsed, usage = null) {
+  const usageHtml = renderUsageParts(usage).join(`<span class="run-separator">·</span>`);
+  return `<span class="run-status completed">${usageHtml ? `${usageHtml}<span class="run-separator">·</span>` : ""}<span class="run-time"><svg class="stat-icon stat-time-svg" viewBox="0 0 1024 1024" width="13" height="13"><path d="M711.7 655.4c-5.1 0-10.2-1.5-14.8-4.1l-199.7-112.6c-9.7-5.6-15.9-15.9-15.9-26.6V276.5c0-16.9 13.8-30.7 30.7-30.7s30.7 13.8 30.7 30.7v217.6l183.8 103.9c14.8 8.2 20 27.1 11.8 42-5.6 9.7-15.9 15.4-26.6 15.4z" fill="currentColor"/><circle cx="512" cy="512" r="378.9" fill="none" stroke="currentColor" stroke-width="61.4"/></svg>${escapeHtml(elapsed)}</span></span>`;
+}
 
-    // Expand if streaming (keep all tool cards open so user sees full progress)
-    // or needs review (propose_edit / write_file with pending apply)
-    const needsReview = resultMsg && (
-      action === "propose_edit" || action === "write_file"
-    );
-    const openAttr = (isStreaming || needsReview) ? " open" : "";
+function hasUsageStats(usage) {
+  const normalized = normalizeResponseUsage(usage);
+  return !!(normalized && (normalized.input || normalized.output || normalized.cache));
+}
 
-    const pendingId = (resultMsg?.meta || {}).pendingEditId;
-    const applied = pendingId && state.pendingEdits[pendingId]?.applied;
-    const showApplyBar = pendingId && !applied;
-
-    // Summary line
-    const resultSummary = resultMsg ? _toolResultSummary(resultMsg) : "";
-    const statusIcon = resultMsg ? (resultError ? "❌" : "✓") : (isStreaming && isLast ? "⏳" : "");
-
-    let html = `<details class="tool-inline merged${resultError ? " error" : ""}"${openAttr}>
-      <summary class="tool-inline-head">
-        <span class="tool-inline-icon">${icon}</span>
-        <span class="tool-inline-label">${escapeHtml(label)}</span>
-        ${target ? `<span class="tool-inline-target">${escapeHtml(target)}</span>` : ""}
-        ${resultSummary ? `<span class="tool-inline-summary">${escapeHtml(resultSummary)}</span>` : ""}
-        ${statusIcon ? `<span class="tool-inline-status">${statusIcon}</span>` : ""}
-        ${hasResult ? `<span class="tool-inline-expand">▾</span>` : ""}
-      </summary>`;
-
-    if (intermediate.length) {
-      html += intermediate.map(renderProcessAssistant).join("");
-    }
-    if (hasResult) {
-      html += `<div class="tool-inline-body">${renderMarkdownLite(resultContent)}</div>`;
-    }
-    html += `</details>`;
-
-    if (showApplyBar) {
-      html += `<div class="apply-edit-bar"><button class="apply-edit-btn" type="button" data-edit-id="${pendingId}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>应用修改</button><span class="apply-edit-hint">写入文件并保留备份</span></div>`;
-    }
-    if (pendingId && applied) {
-      html += `<div class="apply-edit-bar done"><span class="apply-edit-done">✓ 已应用</span></div>`;
-    }
-
-    return html;
-  }).join("");
-
-  // Stats for summary
-  const totalCalls = tools.filter((t) => t.callMsg).length;
-  const successCount = tools.filter((t) => t.resultMsg && !(getMsgText(t.resultMsg)).startsWith("工具执行失败")).length;
-  const failCount = tools.filter((t) => t.resultMsg && (getMsgText(t.resultMsg)).startsWith("工具执行失败")).length;
-
-  // Check if any tool result needs user review (propose_edit or write_file with pending edit)
-  const needsReview = tools.some((t) => {
-    const a = (t.callMsg?.meta || {}).action || "";
-    const pid = (t.resultMsg?.meta || {}).pendingEditId;
-    return (a === "propose_edit" || a === "write_file") && pid && !state.pendingEdits[pid]?.applied;
-  });
-
-  if (isStreaming) {
-    return `<div class="tool-section streaming">${cards}</div>`;
+function findLastAssistantMessage(messages = state.messages) {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role === "assistant") return messages[i];
   }
-
-  // After completion: wrap all tools in a mega-summary with stats
-  // Keep open if any propose_edit / write_file still needs review
-  const statsParts = [`${totalCalls} 次调用`];
-  if (successCount) statsParts.push(`${successCount} 成功`);
-  if (failCount) statsParts.push(`${failCount} 失败`);
-
-  return `
-    <details class="tool-section done"${needsReview ? " open" : ""}>
-      <summary class="tool-section-summary">🔧 ${statsParts.join(" · ")}</summary>
-      <div class="tool-section-body">${cards}</div>
-    </details>
-  `;
-
+  return null;
 }
 
 
 
+function renderToolSection(tools, isStreaming) {
+  if (!tools || !tools.length) return "";
+  const cards = tools.map((item, idx) => {
+    const callMsg = item.callMsg || item;
+    const resultMsg = item.resultMsg || null;
+    const meta = callMsg.meta || {};
+    const action = meta.action || (meta.tool || {}).action || "tool";
+    const resultContent = resultMsg ? getMsgText(resultMsg) : "";
+    const resultError = resultMsg && _isToolError(resultContent);
+    const label = _toolActionLabel(action);
+    const statusLabel = _toolStatusLabel({ isCall: !resultMsg, resultMsg, error: resultError });
+    const statusClass = _toolStatusClass(statusLabel);
+    const target = _toolTarget(meta);
+    const pendingId = (resultMsg?.meta || {}).pendingEditId;
+    const applied = pendingId && state.pendingEdits[pendingId]?.applied;
+    const showApplyBar = pendingId && !applied;
+    const summary = resultMsg ? _toolResultSummary(resultMsg) : "";
+    const hasBody = resultContent.length > 0 && action !== "read_file";
+    const needsReview = pendingId && !applied;
+    const openAttr = needsReview ? " open" : "";
+    let html = `<details class="tool-inline merged${resultError ? " error" : ""}"${openAttr}>
+      <summary class="tool-inline-head">
+        <span class="tool-status-chip ${statusClass}">${escapeHtml(statusLabel)}</span>
+        <span class="tool-inline-label">${escapeHtml(label)}</span>
+        ${target ? `<span class="tool-inline-target">${escapeHtml(target)}</span>` : ""}
+        ${summary ? `<span class="tool-inline-summary">${escapeHtml(summary)}</span>` : ""}
+        ${hasBody ? `<span class="tool-inline-expand">详情</span>` : ""}
+      </summary>`;
+    if (hasBody) html += `<div class="tool-inline-body">${renderMarkdownLite(resultContent)}</div>`;
+    html += `</details>`;
+    if (showApplyBar) {
+      html += `<div class="apply-edit-bar"><button class="apply-edit-btn" type="button" data-edit-id="${pendingId}">Apply edit</button><span class="apply-edit-hint">Write changes to file</span></div>`;
+    }
+    if (pendingId && applied) {
+      html += `<div class="apply-edit-bar done"><span class="apply-edit-done">Applied</span></div>`;
+    }
+    return html;
+  }).join("");
+  const totalCalls = tools.filter((t) => t.callMsg || t.role === "tool-call").length;
+  const failCount = tools.filter((t) => t.resultMsg && _isToolError(getMsgText(t.resultMsg))).length;
+  const successCount = Math.max(0, totalCalls - failCount);
+  const needsReview = tools.some((t) => {
+    const a = (t.callMsg?.meta || t.meta || {}).action || "";
+    const pid = (t.resultMsg?.meta || {}).pendingEditId;
+    return (a === "propose_edit" || a === "write_file") && pid && !state.pendingEdits[pid]?.applied;
+  });
+  if (isStreaming) return `<div class="tool-section streaming">${cards}</div>`;
+  const parts = [`${totalCalls} 个工具`];
+  if (successCount) parts.push(`${successCount} 已完成`);
+  if (failCount) parts.push(`${failCount} 失败`);
+  return `<details class="tool-section done"${needsReview ? " open" : ""}><summary class="tool-section-summary">工具：${escapeHtml(parts.join(" · "))}</summary><div class="tool-section-body">${cards}</div></details>`;
+}
+
 function renderMessages() {
+
+  // Ensure state.messages reflects current session (syncs ctx.messages changes)
+  const curMsgs = getSessionMessages(state.sessionId);
+  if (curMsgs && curMsgs !== state.messages) state.messages = curMsgs;
 
   if (state.messages.length === 0) {
 
@@ -3407,8 +3387,8 @@ function renderMessages() {
 
               i++;
 
-            } else if (next.role === "assistant" && /^准备调用/.test(getMsgText(next))) {
               // Skip placeholder assistant messages between tool groups — don't break
+              // Skip placeholder assistant messages between tool groups; don't break.
               i++;
             } else {
 
@@ -3460,7 +3440,8 @@ function renderMessages() {
 
   // Render segments
 
-  const streaming = state.isStreaming;
+  const activeRun = ensureSessionRun(state.sessionId);
+  const streaming = Boolean(activeRun?.isStreaming || state.isStreaming);
 
   // Detect if there's a real final answer after tool sections
   const hasFinalAnswer = segments.some((seg, idx) => {
@@ -3494,39 +3475,21 @@ function renderMessages() {
   for (const idx of toolSectionIndices) {
     const tools = segments[idx].tools;
     totalCalls += tools.filter((t) => t.callMsg).length;
-    totalSuccess += tools.filter((t) => t.resultMsg && !(getMsgText(t.resultMsg)).startsWith("工具执行失败")).length;
+    totalFail += tools.filter((t) => t.resultMsg && (getMsgText(t.resultMsg)).startsWith("工具执行失败")).length;
     totalFail += tools.filter((t) => t.resultMsg && (getMsgText(t.resultMsg)).startsWith("工具执行失败")).length;
   }
 
   let html = segments.map((seg, segIdx) => {
 
     if (seg.type === "tools") {
-      // Collapse if final answer exists and is after this tool section
-      const isBeforeFinal = hasFinalAnswer && (finalAnswerIdx < 0 || segIdx < finalAnswerIdx);
-      const sectionHtml = renderToolSection(seg.tools, streaming && !isBeforeFinal);
-
-      // Wrap first tool section with parent summary if there are multiple sections
-      if (isBeforeFinal && toolSectionIndices.length > 1 && segIdx === toolSectionIndices[0]) {
-        const statParts = [`${totalCalls} 次调用`];
-        if (totalSuccess) statParts.push(`${totalSuccess} 成功`);
-        if (totalFail) statParts.push(`${totalFail} 失败`);
-        const rest = toolSectionIndices.slice(1).map((i) => segments[i]).map((s) => renderToolSection(s.tools, false)).join("");
-        return `<details class="tool-section tool-section-parent"><summary class="tool-section-summary">🔧 ${statParts.join(" · ")}</summary><div class="tool-section-body">${sectionHtml}${rest}</div></details>`;
-      }
-      // Skip subsequent tool sections — already rendered inside parent
-      if (isBeforeFinal && toolSectionIndices.length > 1 && segIdx !== toolSectionIndices[0]) {
-        return "";
-      }
-
-      return sectionHtml;
+      return renderToolSection(seg.tools, streaming);
     }
 
     const msg = seg.msg;
 
     if (msg.meta?.kind === "tool-round-limit") return renderRoundLimitMessage();
 
-    // Skip placeholder assistant messages (just "准备调用工具..." with tool calls)
-    if (msg.role === "assistant" && /^准备调用/.test(getMsgText(msg)) && msg.meta?.toolCalls) {
+    if (msg.role === "assistant" && msg.meta?.toolCalls) {
       return "";
     }
 
@@ -3556,9 +3519,7 @@ function renderMessages() {
 
       : "";
 
-    const timerDisplay = state._timerDisplay || "0s";
-
-    const status = msg.streaming ? `<span class="streaming-dot">思考中 <span class="streaming-timer">${timerDisplay}</span></span>` : "";
+    const status = msg.streaming ? renderThinkingBadge(state.sessionId) : "";
 
     const asstIdx = state.messages.indexOf(msg);
 
@@ -3578,15 +3539,13 @@ function renderMessages() {
 
           const usage = msg._usage || (msg.meta || {})._usage;
 
-          if (usage && usage.input) parts.push(`<svg class="stat-icon stat-arrow-svg" viewBox="0 0 1024 1024" width="14" height="14"><path d="M478.3 927.5V175.2L259 394.5c-10.7 10.7-28.1 10.7-38.7 0l-6.5-6.5c-10.7-10.7-10.7-28.1 0-38.7L481.6 81.4c4.5-9.2 13.4-16 23.9-17.6 7.1-1.5 14.7-0.1 21 4 4 2.4 7.5 5.6 10.1 9.4l0.5 0.5c2.6 2.6 4.6 5.6 5.9 8.8l266.7 266.7c10.7 10.7 10.7 28.1 0 38.7l-6.5 6.5c-10.7 10.7-28.1 10.7-38.7 0l-222.3-222v751.1c0 17.6-14.4 32-32 32-17.5 0-31.9-14.4-31.9-32z" fill="currentColor"/></svg>${formatCompact(usage.input)}`);
-
-          if (usage && usage.output) parts.push(`<svg class="stat-icon stat-arrow-svg" viewBox="0 0 1024 1024" width="14" height="14"><path d="M512 858.7a32 32 0 01-32-32V124.8a32 32 0 1164 0v701.9a32 32 0 01-32 32z" fill="currentColor"/><path d="M512 901.7L234.9 624.6a32 32 0 1145.3-45.3L512 811.2l231.8-231.8a32 32 0 0145.3 45.3z" fill="currentColor"/></svg>${formatCompact(usage.output)}`);
-
-          if (usage && usage.cache) parts.push(`<svg class="stat-icon stat-cache-svg" viewBox="0 0 1024 1024" width="14" height="14"><path d="M241.8 881.5a127 127 0 01-127-127v-85.3a13 13 0 0113-13h14.3a13 13 0 0113 13v85.3a86.6 86.6 0 0086.5 86.5h540.4a86.6 86.6 0 0086.5-86.5v-85.4a13 13 0 0113-13H896a13 13 0 0113 13v85.4a127 127 0 01-126.9 126.9zM273.4 455.7a13 13 0 010-18.5l10.2-10.3a13 13 0 0118.5 0l164.9 164.3a15.4 15.4 0 0026.2-10.9v-404.5a13 13 0 0113-13h14.3a13 13 0 0113 13v404.5a15.4 15.4 0 009.5 14.2 15.4 15.4 0 0016.7-3.3l166.3-164.6a13 13 0 0118.5 0l10.2 10.2a13 13 0 010 18.5L512 695z" fill="currentColor"/></svg> ${formatCompact(usage.cache)}`);
-
           const respTime = msg._responseTime || (msg.meta || {})._responseTime;
 
-          if (respTime) parts.push(`<svg class="stat-icon stat-time-svg" viewBox="0 0 1024 1024" width="14" height="14"><path d="M711.7 655.4c-5.1 0-10.2-1.5-14.8-4.1l-199.7-112.6c-9.7-5.6-15.9-15.9-15.9-26.6V276.5c0-16.9 13.8-30.7 30.7-30.7s30.7 13.8 30.7 30.7v217.6l183.8 103.9c14.8 8.2 20 27.1 11.8 42-5.6 9.7-15.9 15.4-26.6 15.4z" fill="currentColor"/><circle cx="512" cy="512" r="378.9" fill="none" stroke="currentColor" stroke-width="61.4"/></svg> ${escapeHtml(respTime)}`);
+          const hasUsage = hasUsageStats(usage);
+
+          parts.push(...renderUsageParts(usage));
+
+          if (respTime && hasUsage) parts.push(`<span class="response-token"><svg class="stat-icon stat-time-svg" viewBox="0 0 1024 1024" width="14" height="14"><path d="M711.7 655.4c-5.1 0-10.2-1.5-14.8-4.1l-199.7-112.6c-9.7-5.6-15.9-15.9-15.9-26.6V276.5c0-16.9 13.8-30.7 30.7-30.7s30.7 13.8 30.7 30.7v217.6l183.8 103.9c14.8 8.2 20 27.1 11.8 42-5.6 9.7-15.9 15.4-26.6 15.4z" fill="currentColor"/><circle cx="512" cy="512" r="378.9" fill="none" stroke="currentColor" stroke-width="61.4"/></svg>${escapeHtml(respTime)}</span>`);
 
           return parts.length ? `<div class="response-info">${parts.join(" · ")}</div>` : "";
 
@@ -3603,15 +3562,20 @@ function renderMessages() {
   // Skip DOM update if HTML unchanged (prevents flicker during streaming)
   // ── Render queued messages (waiting to be sent after current task) ──
   let queueHtml = "";
-  if (state.messageQueue.length > 0 && state.isStreaming) {
-    queueHtml = state.messageQueue.map((q) => {
+  const hasInlineStreamingStatus = segments.some((seg) => seg.type === "msg" && seg.msg?.role === "assistant" && seg.msg.streaming);
+  if (streaming && !hasInlineStreamingStatus) {
+    html += `<div class="active-run-status">${renderRunStatus(activeRun?.model || getSelectedModel(), state.sessionId)}</div>`;
+  }
+
+  const activeQueue = activeRun?.messageQueue || state.messageQueue;
+  if (activeQueue.length > 0 && state.isStreaming) {
+    queueHtml = activeQueue.map((q) => {
       const imagesHtml = (q.images || []).map((img) =>
         `<div class="queue-img-thumb"><img src="data:${img.mime};base64,${img.base64}" alt="${escapeHtml(img.name)}" /></div>`
       ).join("");
       return `
         <article class="msg queued">
-          <div class="queue-badge">⏳ 等待中</div>
-          <div class="bubble queue-bubble">${imagesHtml}${renderMarkdownLite(q.text || "(图片)")}</div>
+          <div class="bubble queue-bubble">${imagesHtml}${renderMarkdownLite(q.text || "(image)")}</div>
         </article>`;
     }).join("");
     html += queueHtml;
@@ -3619,7 +3583,7 @@ function renderMessages() {
 
   // Skip DOM update if HTML unchanged (prevents flicker during streaming)
   // But always update if queue state changed
-  const queueKey = state.messageQueue.length;
+  const queueKey = activeQueue.length;
   if (state._lastRenderedHtml === html && state._lastQueueLen === queueKey) return;
   state._lastRenderedHtml = html;
   state._lastQueueLen = queueKey;
@@ -3683,34 +3647,19 @@ function getToolLogDetail(msg) {
 
 
 function formatCharCount(text) {
-
   const length = (text || "").trim().length;
-
-  if (length < 1000) return `${length} 字`;
-
-  return `${(length / 1000).toFixed(1)}k 字`;
-
+  if (length < 1000) return `${length} chars`;
+  return `${(length / 1000).toFixed(1)}k chars`;
 }
-
-
 
 function summarizeText(text, max = 120) {
-
   const normalized = (text || "")
-
-    .replace(/```[\s\S]*?```/g, "[代码块]")
-
+    .replace(/```[\s\S]*?```/g, "[code]")
     .replace(/\s+/g, " ")
-
     .trim();
-
-  if (!normalized) return "无摘要";
-
+  if (!normalized) return "No summary";
   return normalized.length > max ? `${normalized.slice(0, max)}...` : normalized;
-
 }
-
-
 
 function hasLargeCodeSection(text) {
 
@@ -3897,7 +3846,7 @@ function renderToolLog() {
 
           <div class="tool-log-detail" title="${escapeHtml(detail)}">#${index + 1} ${escapeHtml(detail)}</div>
 
-          <span class="tool-log-pill">${isError ? "error" : kind} · ${source}</span>
+          <span class="tool-log-pill">${isError ? "error" : kind} 路 ${source}</span>
 
         </div>
 
@@ -3927,9 +3876,9 @@ function renderRoundLimitMessage() {
 
         <div>
 
-          <strong>工具调用较多，已暂停等待继续。</strong>
+          <strong>工具调用轮次已达到上限</strong>
 
-          <p>当前轮次已达到安全上限，避免 Agent 长时间自动执行。确认方向没问题后，可以让它继续接着处理。</p>
+          <p>任务可能还没完成，可以让 Agent 继续处理后续步骤。</p>
 
         </div>
 
@@ -3958,51 +3907,36 @@ function bindMessageActions() {
 
 
 async function continueAgentRun() {
-
-  if (state.isStreaming) return;
-
-  state.messages = state.messages.filter((msg) => msg.meta?.kind !== "tool-round-limit");
-
-  renderMessages();
-
-  await saveCurrentSession();
-
-  setStreaming(true);
-
+  const sessionId = state.sessionId;
+  if (!sessionId || isSessionStreaming(sessionId)) return;
+  const ctx = buildRunContext(sessionId);
+  ctx.messages = ctx.messages.filter((msg) => msg.meta?.kind !== "tool-round-limit");
+  setSessionMessages(sessionId, ctx.messages);
+  renderSessionMessages(sessionId);
+  await saveSessionState(sessionId, ctx.messages, ctx.stats);
+  setStreaming(true, sessionId);
   try {
-
-    await runAgentLoop();
-
+    await runAgentLoop(ctx);
   } catch (err) {
-
     if (err.name === "AbortError") {
+      ctx.messages.forEach((msg) => { msg.streaming = false; });
+      const last = ctx.messages.at(-1);
+      if (last?.role === "assistant") last.content = `${last.content || ""}
 
-      state.messages.forEach((msg) => { msg.streaming = false; });
-
-      const last = state.messages.at(-1);
-
-      if (last?.role === "assistant") last.content = `${last.content || ""}\n\n[已暂停输出]`;
-
-      renderMessages();
-
-      await saveCurrentSession();
-
+[Output paused]`;
+      setSessionMessages(sessionId, ctx.messages);
+      renderSessionMessages(sessionId);
+      await saveSessionState(sessionId, ctx.messages, ctx.stats);
     } else {
-
-      state.messages = state.messages.filter((msg) => !msg.streaming);
-
-      appendSystemError(err.message);
-
+      ctx.messages = ctx.messages.filter((msg) => !msg.streaming);
+      ctx.messages.push({ role: "assistant", content: "Request failed: " + (err.message || err) });
+      setSessionMessages(sessionId, ctx.messages);
+      renderSessionMessages(sessionId);
+      await saveSessionState(sessionId, ctx.messages, ctx.stats);
     }
-
   } finally {
-
-    state.abortController = null;
-
-    setStreaming(false);
-
+    setStreaming(false, sessionId);
   }
-
 }
 
 function serializeSessionMessages(messages = state.messages) {
@@ -4062,120 +3996,55 @@ async function renameSession(sessionId, title) {
 
 
 async function deleteSession(sessionId) {
-
   const session = state.sessions.find((item) => item.id === sessionId);
-
-  const title = session?.title || "未命名会话";
-
+  const title = session?.title || "Untitled session";
   showDeleteConfirm(sessionId, title);
-
 }
-
-
 
 function hideDeleteConfirm() {
-
   document.getElementById("deleteConfirmModal").classList.add("hidden");
-
 }
-
-
 
 function showDeleteConfirm(sessionId, title) {
-
   const modal = document.getElementById("deleteConfirmModal");
-
-  document.getElementById("deleteConfirmText").textContent = `删除会话"${title}"？此操作不可恢复。`;
-
+  document.getElementById("deleteConfirmText").textContent = `Delete session "${title}"? This action cannot be undone.`;
   modal.classList.remove("hidden");
-
-
-
   const confirmBtn = document.getElementById("confirmDeleteSession");
-
   const cancelBtn = document.getElementById("cancelDeleteSession");
-
   const closeBtn = document.getElementById("closeDeleteConfirm");
-
-
-
-  const onModal = (e) => { if (e.target === modal) cleanup(); };
-
-
-
-  const onEsc = (e) => {
-
-    if (e.key === "Escape") { cleanup(); }
-
-  };
-
   const cleanup = () => {
-
     confirmBtn.removeEventListener("click", handler);
-
     cancelBtn.removeEventListener("click", cleanup);
-
     closeBtn.removeEventListener("click", cleanup);
-
     modal.removeEventListener("click", onModal);
-
     document.removeEventListener("keydown", onEsc);
-
     modal.classList.add("hidden");
-
   };
-
-
-
+  const onModal = (e) => { if (e.target === modal) cleanup(); };
+  const onEsc = (e) => { if (e.key === "Escape") cleanup(); };
   const handler = async () => {
-
     cleanup();
-
     await apiJson(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
-
-    if (state.sessionId !== sessionId) {
-
-      await refreshSessions();
-
-      return;
-
+    if (state.sessionId === sessionId) {
+      state.sessionId = null;
+      state.messages = [];
+      state.pendingEdits = {};
+      state.stats = { input: 0, output: 0, cache: 0 };
+      state.responseUsage = null;
+      els.sessionTitle.value = "";
+      localStorage.removeItem("agent-lite-last-session");
+      syncActiveStreamingState();
+      renderMessages();
+      updateSendButtonState();
     }
-
-    state.sessionId = null;
-
-    state.messages = [];
-
-    state.pendingEdits = {};
-
-    state.stats = { input: 0, output: 0, cache: 0 };
-
-    els.sessionTitle.value = "";
-
-    localStorage.removeItem("agent-lite-last-session");
-
     await refreshSessions();
-
-    renderMessages();
-
-    updateSendButtonState();
-
   };
-
-
-
   confirmBtn.addEventListener("click", handler);
-
   cancelBtn.addEventListener("click", cleanup);
-
   closeBtn.addEventListener("click", cleanup);
-
   modal.addEventListener("click", onModal);
-
   document.addEventListener("keydown", onEsc);
-
 }
-
-
 
 function getPinnedSessions() {
 
@@ -4258,7 +4127,7 @@ function renderSessions() {
             <span>${escapeHtml(title)}</span>
 
             ${session.id !== state.sessionId ? (
-              session.id === state.streamingSessionId
+              isSessionStreaming(session.id)
                 ? '<span class="session-dot streaming" title="模型执行中"></span>'
                 : session._unread
                   ? '<span class="session-dot unread" title="有新消息"></span>'
@@ -4269,7 +4138,7 @@ function renderSessions() {
 
           <div class="session-more-wrap">
 
-            <button class="session-more-btn" type="button" title="更多操作" data-session-id="${escapeHtml(session.id)}">⋮</button>
+            <button class="session-more-btn" type="button" title="更多" data-session-id="${escapeHtml(session.id)}">&#8942;</button>
 
           </div>
 
@@ -4315,7 +4184,7 @@ function renderSessions() {
 
       menu.innerHTML = `
 
-        <button class="session-more-item pin${getPinnedSessions().includes(id) ? ' pinned' : ''}" data-action="pin">${getPinnedSessions().includes(id) ? '取消置顶' : '置顶'}</button>
+        <button class="session-more-item pin ${getPinnedSessions().includes(id) ? 'is-pinned' : ''}" data-action="pin">${getPinnedSessions().includes(id) ? '取消置顶' : '置顶'}</button>
 
         <button class="session-more-item" data-action="rename">重命名</button>
 
@@ -4333,7 +4202,7 @@ function renderSessions() {
 
             renderSessions();
 
-            document.querySelector(".session-rename-input")?.select();
+            document.querySelector(".session-rename-inline")?.select();
 
           } else if (item.dataset.action === "pin") {
 
@@ -4429,6 +4298,10 @@ async function refreshSessions() {
 
 async function createSession(title = "新会话") {
 
+  cacheActiveSessionState();
+  const loadSeq = (state._sessionLoadSeq || 0) + 1;
+  state._sessionLoadSeq = loadSeq;
+
   const session = await apiJson("/api/sessions", {
 
     method: "POST",
@@ -4436,22 +4309,28 @@ async function createSession(title = "新会话") {
     body: JSON.stringify({ title }),
 
   });
+  if (loadSeq !== state._sessionLoadSeq) return session;
 
   state.sessionId = session.id;
 
   state.sessionCreated = session.createdAt || "";
 
   state.messages = session.messages || [];
+  setSessionMessages(session.id, state.messages);
 
   state.pendingEdits = {};
 
   state.stats = { input: 0, output: 0, cache: 0 };
+  setSessionStats(session.id, state.stats);
+  resetRenderCache();
 
   els.sessionTitle.value = session.title || "新会话";
 
   localStorage.setItem("agent-lite-last-session", session.id);
 
   await refreshSessions();
+
+  syncActiveStreamingState();
 
   renderMessages();
 
@@ -4463,13 +4342,23 @@ async function createSession(title = "新会话") {
 
 async function loadSession(sessionId) {
 
-  // Save current messages to cache before switching
-  const prevId = state.sessionId;
-  if (prevId && state.messages.length > 0) {
-    state._sessionMsgs[prevId] = state.messages;
+  if (!sessionId) return;
+  if (sessionId === state.sessionId) {
+    syncActiveStreamingState();
+    resetRenderCache();
+    renderMessages();
+    return;
   }
 
+  const loadSeq = (state._sessionLoadSeq || 0) + 1;
+  state._sessionLoadSeq = loadSeq;
+
+  // Save current messages to cache before switching
+  const prevId = state.sessionId;
+  cacheActiveSessionState();
+
   const session = await apiJson(`/api/sessions/${encodeURIComponent(sessionId)}`);
+  if (loadSeq !== state._sessionLoadSeq) return;
 
   // Track unread
   if (prevId && prevId !== session.id) {
@@ -4479,14 +4368,14 @@ async function loadSession(sessionId) {
     if (prev) prev._seenCount = prevMsgs.length;
   }
   const loaded = state.sessions.find((s) => s.id === session.id);
-  if (loaded) { loaded._unread = false; loaded._seenCount = loaded.messageCount || session.messages?.length || 0; }
+  if (loaded) { loaded._unread = false; }
 
   // Switch session — prefer cache (has in-flight streaming content) over server
   state.sessionId = session.id;
 
   state.sessionCreated = session.createdAt || "";
 
-  // Load from cache (preserves in-flight streaming) or from server
+  // Load from active run (streaming) > cache > server
   const cached = state._sessionMsgs && state._sessionMsgs[session.id];
   state.messages = (cached || (session.messages || []).map((msg) => ({
 
@@ -4495,6 +4384,8 @@ async function loadSession(sessionId) {
     _images: msg._images || undefined,
 
   })));
+  setSessionMessages(session.id, state.messages);
+  if (loaded) loaded._seenCount = state.messages.length;
 
   state.pendingEdits = {};
 
@@ -4516,7 +4407,9 @@ async function loadSession(sessionId) {
 
   }
 
-  state.stats = session.stats || { input: 0, output: 0, cache: 0, cost: 0 };
+  state.stats = state._sessionStats[session.id] || session.stats || { input: 0, output: 0, cache: 0, cost: 0 };
+  setSessionStats(session.id, state.stats);
+  resetRenderCache();
 
   els.sessionTitle.value = session.title || "未命名会话";
 
@@ -4524,7 +4417,40 @@ async function loadSession(sessionId) {
 
   renderSessions();
 
+  syncActiveStreamingState();
+
   renderMessages();
+
+}
+
+
+
+async function saveSessionState(sessionId, messages, stats, title) {
+
+  if (!sessionId) return;
+
+  const local = state.sessions.find((s) => s.id === sessionId);
+  const sessionTitle = title
+    || (sessionId === state.sessionId ? els.sessionTitle.value.trim() : local?.title)
+    || "Untitled";
+
+  await apiJson(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      title: sessionTitle,
+      messages: (messages || []).map((msg) => ({
+        role: msg.role,
+        content: msg.content || "",
+        thought: msg.thought || "",
+        meta: msg.meta || {},
+        _images: msg._images || undefined,
+        _model: msg._model || undefined,
+      })),
+      stats: stats || getSessionStats(sessionId),
+    }),
+  });
+
+  if (local) local.messageCount = (messages || []).length;
 
 }
 
@@ -4532,7 +4458,7 @@ async function loadSession(sessionId) {
 
 async function saveCurrentSession() {
 
-  if (!state.sessionId) await createSession(els.sessionTitle.value || "新会话");
+  if (!state.sessionId) await createSession("New session");
 
   await apiJson(`/api/sessions/${encodeURIComponent(state.sessionId)}`, {
 
@@ -4756,8 +4682,7 @@ async function generateSessionTitle(userText) {
 
       messages: [
 
-        { role: "system", content: "你是一个标题生成器。根据用户的第一个问题，生成一个极简标题（5-15字，不要引号，直接输出标题本身）。" },
-
+        { role: "system", content: "Generate a concise session title from the user request. Return only the title, no quotes, within 15 Chinese characters or 8 English words." },
         { role: "user", content: userText.slice(0, 200) },
 
       ],
@@ -5236,7 +5161,7 @@ async function loadFile(path, mtime) {
 
   els.previewTitle.textContent = data.name || "File";
 
-  els.previewMeta.textContent = `${data.path} · ${formatSize(data.size || 0)}${data.truncated ? " · truncated" : ""}`;
+  els.previewMeta.textContent = `${data.path} 路 ${formatSize(data.size || 0)}${data.truncated ? " 路 truncated" : ""}`;
 
   els.previewLanguage.textContent = language;
 
@@ -5410,7 +5335,7 @@ async function refreshModels() {
 
   if (allModels.size === 0) {
 
-    alert(`未获取到模型列表（尝试了 ${keys.length} 个 key）`);
+    alert(`一次最多测试 ${keys.length} 个 key。`);
 
     els.refreshModelsBtn.disabled = false;
 
@@ -5428,7 +5353,7 @@ async function refreshModels() {
 
     const PROVIDER_PATTERNS = [
 
-      ["DeepSeek", /^deepseek|^deep\b/i],
+      ["DeepSeek", /^deepseek|^deep/i],
 
       ["OpenAI", /^gpt|^o1|^o3|^openai|^davinci|^text-davinci/i],
 
@@ -5536,7 +5461,7 @@ async function refreshModels() {
 
 function appendSystemError(message) {
 
-  state.messages.push({ role: "assistant", content: `请求失败：${message}` });
+  state.messages.push({ role: "assistant", content: `错误：${message}` });
 
   renderMessages();
 
@@ -5544,19 +5469,34 @@ function appendSystemError(message) {
 
 
 
-function setStreaming(active) {
+function setStreaming(active, sessionId = state.sessionId) {
 
-  state.isStreaming = active;
+  const run = ensureSessionRun(sessionId);
+  if (run) {
+    run.isStreaming = active;
+    if (active) {
+      run.responseStartTime = Date.now();
+    } else {
+      run.abortController = null;
+      run.responseStartTime = null;
+    }
+  }
 
-  state.streamingSessionId = active ? state.sessionId : null;
+  if (sessionId === state.sessionId) {
+    state.isStreaming = active;
+    state.abortController = run?.abortController || null;
+  }
 
-  els.stopBtn.disabled = !active;
+  els.stopBtn.disabled = !isSessionStreaming(state.sessionId);
 
   updateSendButtonState();
 
   renderSessions();
 
-  if (active) startLiveTimer(); else stopLiveTimer();
+  if (sessionId === state.sessionId) {
+    if (active) startLiveTimer(); else stopLiveTimer();
+    renderSessionMessages(sessionId);
+  }
 
 }
 
@@ -5566,33 +5506,29 @@ function startLiveTimer() {
 
   if (state._timerInterval) clearInterval(state._timerInterval);
 
-  state.responseStartTime = Date.now();
+  const run = ensureSessionRun(state.sessionId);
 
-  els.liveTimer.textContent = "0s";
+  if (run && !run.responseStartTime) run.responseStartTime = Date.now();
 
-  els.liveTimer.classList.add("visible");
+  state.responseStartTime = run?.responseStartTime || Date.now();
+
+  els.liveTimer.textContent = "";
+
+  els.liveTimer.classList.remove("visible");
 
   state._timerInterval = setInterval(() => {
 
     if (!state.isStreaming) return;
 
-    const elapsed = Math.floor((Date.now() - state.responseStartTime) / 1000);
-
-    let display;
-
-    if (elapsed < 60) display = `${elapsed}s`;
-
-    else if (elapsed < 3600) display = `${Math.floor(elapsed/60)}m ${elapsed%60}s`;
-
-    else display = `${Math.floor(elapsed/3600)}h ${Math.floor((elapsed%3600)/60)}m`;
+    const display = getRunTimerDisplay(state.sessionId);
 
     state._timerDisplay = display;
 
-    // Update in-message timer if visible
+    // Update all visible in-message / active-run timers without re-rendering.
 
-    const timer = document.querySelector(".streaming-timer");
-
-    if (timer && timer.textContent !== display) timer.textContent = display;
+    document.querySelectorAll(".streaming-timer").forEach((timer) => {
+      if (timer.textContent !== display) timer.textContent = display;
+    });
 
   }, 200);
 
@@ -5608,39 +5544,33 @@ function stopLiveTimer() {
 
   if (state.responseStartTime) {
 
-    const elapsed = Math.floor((Date.now() - state.responseStartTime) / 1000);
+    const display = formatElapsedMs(Date.now() - state.responseStartTime);
 
-    let display;
+    // Attach final status to the latest assistant message, even if tools were the last rendered segment.
 
-    if (elapsed < 3) { els.liveTimer.classList.remove("visible"); state.responseStartTime = null; return; }
+    const lastMsg = findLastAssistantMessage(state.messages);
 
-    if (elapsed < 60) display = `${elapsed}s`;
+    els.liveTimer.textContent = "";
 
-    else if (elapsed < 3600) display = `${Math.floor(elapsed/60)}m ${elapsed%60}s`;
-
-    else display = `${Math.floor(elapsed/3600)}h ${Math.floor((elapsed%3600)/60)}m`;
-
-    els.liveTimer.innerHTML = `<svg class="stat-icon stat-time-svg" viewBox="0 0 1024 1024" width="13" height="13"><path d="M711.7 655.4c-5.1 0-10.2-1.5-14.8-4.1l-199.7-112.6c-9.7-5.6-15.9-15.9-15.9-26.6V276.5c0-16.9 13.8-30.7 30.7-30.7s30.7 13.8 30.7 30.7v217.6l183.8 103.9c14.8 8.2 20 27.1 11.8 42-5.6 9.7-15.9 15.4-26.6 15.4z" fill="currentColor"/><circle cx="512" cy="512" r="378.9" fill="none" stroke="currentColor" stroke-width="61.4"/></svg> ${display}`;
+    els.liveTimer.classList.remove("visible");
 
     state.responseStartTime = null;
 
-    // Attach time to last assistant message
-
-    const lastMsg = state.messages.at(-1);
-
-    if (lastMsg && lastMsg.role === "assistant" && !lastMsg.streaming) {
+    if (lastMsg && !lastMsg.streaming) {
 
       lastMsg._responseTime = display;
 
-      lastMsg.meta = { ...(lastMsg.meta || {}), _responseTime: display };
+      const run = ensureSessionRun(state.sessionId);
+
+      const runModel = run?.model || getSelectedModel() || "Agent";
+
+      lastMsg._model = lastMsg._model || runModel;
+
+      lastMsg.meta = { ...(lastMsg.meta || {}), _responseTime: display, _model: runModel };
 
       renderMessages();
 
     }
-
-    // Keep visible then fade
-
-    setTimeout(() => { els.liveTimer.classList.remove("visible"); }, 10000);
 
   }
 
@@ -5721,7 +5651,7 @@ function renderImageThumbs() {
 
       <img src="data:${img.mime};base64,${img.base64}" alt="${escapeHtml(img.name)}" />
 
-      <button class="img-thumb-remove" type="button" title="移除" data-index="${i}">×</button>
+      <button class="img-thumb-remove" type="button" title="删除" data-index="${i}">?</button>
 
     </div>
 
@@ -5839,13 +5769,15 @@ function handleImageDrop(e) {
 
 
 
-function updateAssistantMessage(index, rawContent, streaming = true) {
+function updateAssistantMessage(index, rawContent, streaming = true, sessionId = state.sessionId, messages = null) {
 
   const { thought, content } = splitThoughtContent(rawContent);
 
-  const previous = state.messages[index] || {};
+  const targetMessages = messages || getSessionMessages(sessionId);
 
-  state.messages[index] = {
+  const previous = targetMessages[index] || {};
+
+  targetMessages[index] = {
 
     ...previous,
 
@@ -5859,7 +5791,9 @@ function updateAssistantMessage(index, rawContent, streaming = true) {
 
   };
 
-  renderMessages();
+  setSessionMessages(sessionId, targetMessages);
+
+  renderSessionMessages(sessionId);
 
 }
 
@@ -5887,23 +5821,29 @@ function parseSseLine(line) {
 
 
 
-function updateUsage(usage) {
+function updateUsage(usage, sessionId = state.sessionId, ctx = null) {
 
   if (!usage) return;
 
-  state.stats.input += usage.prompt_tokens || 0;
+  const stats = ctx?.stats || getSessionStats(sessionId);
 
-  state.stats.output += usage.completion_tokens || 0;
+  stats.input += usage.prompt_tokens || 0;
 
-  state.stats.cache += usage.prompt_cache_hit_tokens || usage.cache_read_tokens || 0;
+  stats.output += usage.completion_tokens || 0;
 
-  if (state.responseUsage) {
+  stats.cache += usage.prompt_cache_hit_tokens || usage.cache_read_tokens || 0;
 
-    state.responseUsage.input += usage.prompt_tokens || 0;
+  setSessionStats(sessionId, stats);
 
-    state.responseUsage.output += usage.completion_tokens || 0;
+  const responseUsage = ctx?.responseUsage || state.responseUsage;
 
-    state.responseUsage.cache += usage.prompt_cache_hit_tokens || usage.cache_read_tokens || 0;
+  if (responseUsage) {
+
+    responseUsage.input += usage.prompt_tokens || 0;
+
+    responseUsage.output += usage.completion_tokens || 0;
+
+    responseUsage.cache += usage.prompt_cache_hit_tokens || usage.cache_read_tokens || 0;
 
   }
 
@@ -5911,11 +5851,11 @@ function updateUsage(usage) {
 
 
 
-function getNativeTools() {
+function getNativeTools(toolPreset = els.toolPreset.value, allowedToolNames = null) {
 
-  if (els.toolPreset.value === "off") return [];
+  if (toolPreset === "off") return [];
 
-  const allowed = getAllowedToolNames();
+  const allowed = allowedToolNames || getAllowedToolNames(toolPreset);
 
   return nativeTools.filter((tool) => allowed.has(tool.function?.name));
 
@@ -5931,13 +5871,13 @@ function getPermissionProfile() {
 
 
 
-function getAllowedToolNames() {
+function getAllowedToolNames(toolPreset = els.toolPreset.value) {
 
   const permissionProfile = getPermissionProfile();
 
   const base = new Set(toolPolicy[permissionProfile] || toolPolicy.confirm);
 
-  if (els.toolPreset.value === "full" && permissionProfile !== "read") {
+  if (toolPreset === "full" && permissionProfile !== "read") {
 
     base.add("run_command");
 
@@ -6243,15 +6183,17 @@ function mapMessageForApi(msg, includeNativeTools = true) {
 
 
 
-async function callModelOnce(assistantIndex, useNativeTools = true) {
+async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) {
 
-  const model = getSelectedModel();
+  const model = ctx?.model || getSelectedModel();
 
-  const tools = useNativeTools ? getNativeTools() : [];
+  const tools = useNativeTools ? (ctx?.tools || getNativeTools()) : [];
 
-  // Capture message array at stream start — survives session switches
-  let msgs = state.messages;
-  const _streamSid = state.sessionId;  // Lock: which session this stream belongs to
+  const sessionId = ctx?.sessionId || state.sessionId;
+  const run = ctx?.run || ensureSessionRun(sessionId);
+
+  // Capture messages at stream start (closure survives session switches)
+  let _streamMsgs = ctx?.messages || getSessionMessages(sessionId);
 
   const payload = {
 
@@ -6259,13 +6201,24 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
     stream: true,
 
-    temperature: Number(els.temperature.value || 0.2),
+    stream_options: { include_usage: true },
 
-    max_tokens: getEffectiveMaxTokens(model),
+    temperature: ctx?.temperature ?? Number(els.temperature.value || 0.2),
+
+    max_tokens: ctx?.maxTokens || getEffectiveMaxTokens(model),
 
     messages: [
 
-      { role: "system", content: getSystemPrompt() },
+      {
+        role: "system",
+        content: getSystemPrompt({
+          messages: _streamMsgs,
+          explicitSkill: ctx?.explicitSkill,
+          toolPreset: ctx?.toolPreset,
+          permissionProfile: ctx?.permissionProfile,
+          allowedToolNames: ctx?.allowedToolNames,
+        }),
+      },
 
       ...(function buildMessages() {
 
@@ -6273,7 +6226,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
         let lastAssistantToolCallIds = new Set();
 
-        for (const msg of msgs) {
+        for (const msg of _streamMsgs) {
 
           if (msg.streaming) continue;
 
@@ -6383,7 +6336,12 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
 
 
-  state.abortController = new AbortController();
+  if (!run.abortController || run.abortController.signal.aborted) {
+    run.abortController = new AbortController();
+  }
+  if (sessionId === state.sessionId) {
+    state.abortController = run.abortController;
+  }
 
   const FETCH_TIMEOUT_MS = 180000;  // 3 min safety net
 
@@ -6407,7 +6365,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
       try {
 
-        const timeoutId = setTimeout(() => state.abortController.abort(), FETCH_TIMEOUT_MS);
+        const timeoutId = setTimeout(() => run.abortController.abort(), FETCH_TIMEOUT_MS);
         res = await fetch("/proxy/chat", {
 
           method: "POST",
@@ -6424,7 +6382,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
           body: JSON.stringify(payload),
 
-          signal: state.abortController.signal,
+          signal: run.abortController.signal,
 
         });
 
@@ -6504,7 +6462,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
       await new Promise((r) => setTimeout(r, 2000));
 
-      const retry = await callModelOnce(assistantIndex, useNativeTools);
+      const retry = await callModelOnce(assistantIndex, useNativeTools, ctx);
 
       state._retriedModelAccess = false;
 
@@ -6514,11 +6472,11 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
     state._retriedModelAccess = false;
 
-    msgs = msgs.filter((m) => m.meta?.kind !== "key-fallback");
+    _streamMsgs = _streamMsgs.filter((m) => m.meta?.kind !== "key-fallback");
 
     if (tools.length > 0 && shouldRetryWithoutNativeTools(errText)) {
 
-      return callModelOnce(assistantIndex, false);
+      return callModelOnce(assistantIndex, false, ctx);
 
     }
 
@@ -6528,7 +6486,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
   // Clean up fallback messages on success
 
-  msgs = msgs.filter((m) => m.meta?.kind !== "key-fallback");
+  _streamMsgs = _streamMsgs.filter((m) => m.meta?.kind !== "key-fallback");
 
 
 
@@ -6571,10 +6529,8 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
         rawContent += `\n\n> ⚠️ ${errMsg}\n`;
         const finalText = rawThought ? `<think>${rawThought}</think>\n${rawContent}` : rawContent;
         const toolCalls = normalizeToolCallList(toolCallsByIndex);
-        applyStreamChunk(assistantIndex, finalText, toolCalls);
-        state.isStreaming = false;
-        state.streamingSessionId = null;
-        renderSessions();
+        updateAssistantMessage(assistantIndex, finalText || (toolCalls.length ? "" : "(empty response)"), false, sessionId, _streamMsgs);
+        setStreaming(false, sessionId);
         return;
       }
 
@@ -6584,19 +6540,19 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
         const toolCalls = normalizeToolCallList(toolCallsByIndex);
 
-        updateAssistantMessage(assistantIndex, finalText || (toolCalls.length ? "" : "(空回复)"), false);
+        updateAssistantMessage(assistantIndex, finalText || (toolCalls.length ? "" : "(empty response)"), false, sessionId, _streamMsgs);
 
         if (toolCalls.length) {
 
-          msgs[assistantIndex].meta = {
+          _streamMsgs[assistantIndex].meta = {
 
-            ...(msgs[assistantIndex].meta || {}),
+            ...(_streamMsgs[assistantIndex].meta || {}),
 
             toolCalls,
 
           };
 
-          renderMessages();
+          renderSessionMessages(sessionId);
 
         }
 
@@ -6630,7 +6586,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
         const combined = rawThought ? `<think>${rawThought}</think>\n${rawContent}` : rawContent;
 
-        updateAssistantMessage(assistantIndex, combined, true);
+        updateAssistantMessage(assistantIndex, combined, true, sessionId, _streamMsgs);
 
       }
 
@@ -6638,7 +6594,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
         state.lastUsage = data.usage;
 
-        updateUsage(data.usage);
+        updateUsage(data.usage, sessionId, ctx);
 
       }
 
@@ -6652,19 +6608,19 @@ async function callModelOnce(assistantIndex, useNativeTools = true) {
 
   const toolCalls = normalizeToolCallList(toolCallsByIndex);
 
-  updateAssistantMessage(assistantIndex, finalCombined || (toolCalls.length ? "" : "(空回复)"), false);
+  updateAssistantMessage(assistantIndex, finalCombined || (toolCalls.length ? "" : "(empty response)"), false, sessionId, _streamMsgs);
 
   if (toolCalls.length) {
 
-    msgs[assistantIndex].meta = {
+    _streamMsgs[assistantIndex].meta = {
 
-      ...(msgs[assistantIndex].meta || {}),
+      ...(_streamMsgs[assistantIndex].meta || {}),
 
       toolCalls,
 
     };
 
-    renderMessages();
+    renderSessionMessages(sessionId);
 
   }
 
@@ -6874,14 +6830,11 @@ function formatToolResult(result) {
 
 async function extractAndSuggestMemories() {
   const recent = state.messages.filter((m) => m.role === "user" || m.role === "assistant").slice(-20);
-  if (recent.length < 2) { showToast("没有足够的对话内容可提取"); return; }
-
-  const transcript = recent.map((m) => `${m.role === "user" ? "用户" : "助手"}: ${getMsgText(m).slice(0, 500)}`).join("\n\n");
-
-  const idx = state.messages.push({ role: "assistant", content: "正在扫描对话…", streaming: true, _model: getSelectedModel() }) - 1;
+  if (recent.length < 2) { showToast("Not enough conversation content to extract memories"); return; }
+  const transcript = recent.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${getMsgText(m).slice(0, 500)}`).join("\n\n");
+  const idx = state.messages.push({ role: "assistant", content: "Scanning conversation...", streaming: true, _model: getSelectedModel() }) - 1;
   renderMessages();
   els.messages.scrollTop = els.messages.scrollHeight;
-
   try {
     const payload = {
       model: getSelectedModel(),
@@ -6889,7 +6842,7 @@ async function extractAndSuggestMemories() {
       temperature: 0,
       max_tokens: 1024,
       messages: [
-        { role: "system", content: "从对话中提取值得长期记住的信息。以 JSON 数组返回，每项含 name（英文 kebab-case）、description（一行中文描述）、body（完整记忆内容）。只提取决策、偏好、约定、重要事实。不要提取琐碎对话。格式：[{\"name\":\"...\",\"description\":\"...\",\"body\":\"...\"}]" },
+        { role: "system", content: "Extract long-term memories from the conversation. Return only a JSON array. Each item must include name, description, and body. Extract stable preferences, decisions, constraints, and important facts only." },
         { role: "user", content: transcript },
       ],
     };
@@ -6901,28 +6854,19 @@ async function extractAndSuggestMemories() {
     const data = await resp.json();
     const text = data.choices?.[0]?.message?.content || "";
     let suggestions = [];
-    try { const m = text.match(/\[[\s\S]*\]/); suggestions = m ? JSON.parse(m[0]) : []; } catch (e) {}
-
-    // Auto-save all extracted memories
+    try { const m = text.match(/[[sS]*]/); suggestions = m ? JSON.parse(m[0]) : []; } catch (e) {}
     let saved = 0;
     for (const s of suggestions) {
-      try {
-        await apiJson("/api/tools/save_memory", { method: "POST", body: JSON.stringify(s) });
-        saved++;
-      } catch (e) { /* skip duplicates */ }
+      try { await apiJson("/api/tools/save_memory", { method: "POST", body: JSON.stringify(s) }); saved++; } catch (e) {}
     }
-
-    const html = saved > 0
-      ? "已保存 " + saved + " 条记忆：" + suggestions.map((s) => "<br>- " + escapeHtml(s.description || s.name)).join("")
-      : "没有发现需要长期记住的内容。";
+    const html = saved > 0 ? `Saved ${saved} memories.` : "No long-term memories found.";
     state.messages[idx] = { role: "assistant", content: html, streaming: false };
   } catch (e) {
-    state.messages[idx] = { role: "assistant", content: "提取失败：" + (e.message || e), streaming: false };
+    state.messages[idx] = { role: "assistant", content: "Memory extraction failed: " + (e.message || e), streaming: false };
   }
   renderMessages();
   els.messages.scrollTop = els.messages.scrollHeight;
 }
-
 
 async function executeToolCall(tool) {
 
@@ -7140,28 +7084,32 @@ async function commitPendingEdit() {
 
 
 
-async function runAgentLoop() {
+async function runAgentLoop(ctx = null) {
 
-  state._autoCompacted = 0;
+  ctx = ctx || buildRunContext(state.sessionId);
+  setSessionMessages(ctx.sessionId, ctx.messages);
+  setSessionStats(ctx.sessionId, ctx.stats);
+
+  ctx.autoCompacted = 0;
 
 
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
 
     // Check abort signal so stop button works even mid-tool-execution
-    if (state.abortController?.signal.aborted) throw new DOMException("Aborted", "AbortError");
+    if (ctx.run.abortController?.signal.aborted) throw new DOMException("Aborted", "AbortError");
 
     // Auto-compact whenever context exceeds 95%
 
     if (true) {
 
-      const ctxPct = calcStats().contextPct;
+      const ctxPct = calcStats(ctx.messages, ctx.stats).contextPct;
 
-      if (ctxPct >= 95 && state.messages.length >= 8) {
+      if (ctxPct >= 95 && ctx.messages.length >= 8) {
 
-        const key = els.apiKey.value.trim();
+        const key = ctx.apiKey || els.apiKey.value.trim();
 
-        const model = getSelectedModel();
+        const model = ctx.model || getSelectedModel();
 
         if (key && model) {
 
@@ -7177,7 +7125,7 @@ async function runAgentLoop() {
 
                 model,
 
-                messages: state.messages.map((m) => ({ role: m.role, content: m.content || "" })),
+                messages: ctx.messages.map((m) => ({ role: m.role, content: m.content || "" })),
 
               }),
 
@@ -7187,13 +7135,13 @@ async function runAgentLoop() {
 
               const keepCount = result.kept || 2;
 
-              const kept = state.messages.slice(-keepCount);
+              const kept = ctx.messages.slice(-keepCount);
 
               const summaryMsg = {
 
                 role: "assistant",
 
-                content: `📋 **上下文已自动压缩**（${result.compressed} 条消息 → 摘要，释放 ~${formatCompact(Math.ceil((result.compressed || 0) * 3000 * 0.7))} tokens）\n\n${result.summary}`,
+                content: `📄 **上下文已自动压缩**：${result.compressed} 条记忆，预计节省 ~${formatCompact(Math.ceil((result.compressed || 0) * 3000 * 0.7))} tokens。\n\n${result.summary}`,
 
                 meta: { kind: "compact-summary" },
 
@@ -7201,21 +7149,22 @@ async function runAgentLoop() {
 
               // Archive full messages before compaction (for memory extraction & history)
               try {
-                await apiJson(`/api/sessions/${encodeURIComponent(state.sessionId)}/archive`, {
+                await apiJson(`/api/sessions/${encodeURIComponent(ctx.sessionId)}/archive`, {
                   method: "PUT",
-                  body: JSON.stringify({ messages: state.messages }),
+                  body: JSON.stringify({ messages: ctx.messages }),
                 });
               } catch (_) { /* non-critical */ }
 
-              const oldSummaries = state.messages.filter((m) => m.meta?.kind === "compact-summary");
+              const oldSummaries = ctx.messages.filter((m) => m.meta?.kind === "compact-summary");
 
-              state.messages = [summaryMsg, ...oldSummaries, ...kept.filter((m) => m.meta?.kind !== "compact-summary")];
+              ctx.messages = [summaryMsg, ...oldSummaries, ...kept.filter((m) => m.meta?.kind !== "compact-summary")];
+              setSessionMessages(ctx.sessionId, ctx.messages);
 
-              state.stats = { input: 0, output: 0, cache: 0 };
+              ctx.stats = { input: 0, output: 0, cache: 0 };
 
-              state._autoCompacted = (state._autoCompacted || 0) + 1;
+              ctx.autoCompacted = (ctx.autoCompacted || 0) + 1;
 
-              renderMessages();
+              renderSessionMessages(ctx.sessionId);
 
             }
 
@@ -7229,26 +7178,23 @@ async function runAgentLoop() {
 
 
 
-    msgs = state.messages;  // Pin array for streaming writes
-    const assistantIndex = msgs.push({ role: "assistant", content: "", streaming: true, _model: getSelectedModel() }) - 1;
+    const assistantIndex = ctx.messages.push({ role: "assistant", content: "", streaming: true, _model: ctx.model || getSelectedModel() }) - 1;
 
-    state.responseUsage = { input: 0, output: 0, cache: 0 };
+    ctx.responseUsage = { input: 0, output: 0, cache: 0 };
 
-    renderMessages();
+    renderSessionMessages(ctx.sessionId);
 
-    const modelResult = await callModelOnce(assistantIndex);
+    const modelResult = await callModelOnce(assistantIndex, true, ctx);
 
-    // Attach usage to this response (store in meta for persistence)
-
-    msgs[assistantIndex].meta = {
-
-      ...(msgs[assistantIndex].meta || {}),
-
-      _usage: { ...state.responseUsage },
-
+    ctx.messages[assistantIndex].meta = {
+      ...(ctx.messages[assistantIndex].meta || {}),
+      _usage: { ...ctx.responseUsage },
     };
 
-    state.responseUsage = null;
+    ctx.responseUsage = null;
+
+    // Sync ctx.messages back to state.messages so render sees usage data
+    setSessionMessages(ctx.sessionId, ctx.messages);
 
     const rawContent = modelResult.content || "";
 
@@ -7258,9 +7204,9 @@ async function runAgentLoop() {
 
     if (nativeCalls.length > 0) {
 
-      const current = msgs[assistantIndex] || {};
+      const current = ctx.messages[assistantIndex] || {};
 
-      msgs[assistantIndex] = {
+      ctx.messages[assistantIndex] = {
 
         ...current,
 
@@ -7286,7 +7232,7 @@ async function runAgentLoop() {
 
         const tool = normalizeNativeToolCall(nativeCall);
 
-        state.messages.push({
+        ctx.messages.push({
 
           role: "tool-call",
 
@@ -7306,9 +7252,9 @@ async function runAgentLoop() {
 
         });
 
-        renderMessages();
+        renderSessionMessages(ctx.sessionId);
 
-        await saveCurrentSession();
+        await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
 
 
 
@@ -7348,7 +7294,7 @@ async function runAgentLoop() {
 
         }
 
-        state.messages.push({
+        ctx.messages.push({
 
           role: "tool-result",
 
@@ -7358,14 +7304,14 @@ async function runAgentLoop() {
 
         });
 
-        renderMessages();
+        renderSessionMessages(ctx.sessionId);
 
         // Notify if page is not visible and a permission-required action arrived
         if (document.hidden && (result.action === "propose_edit" || result.action === "write_file")) {
           notifyPermissionNeeded(result.action, result.path);
         }
 
-        await saveCurrentSession();
+        await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
 
       }
 
@@ -7379,19 +7325,12 @@ async function runAgentLoop() {
     const hasToolMarker = /```agent-tool|<agent-tool>/i.test(rawContent);
 
     if (!hasToolMarker) {
-      msgs[assistantIndex].content = rawContent.trim();
-      msgs[assistantIndex].streaming = false;
-      // If user switched sessions, persist streaming session to server
-      if (state.sessionId !== state.streamingSessionId) {
-        const streamingMsgs = msgs;
-        state._sessionMsgs[state.streamingSessionId] = streamingMsgs;
-        apiJson(`/api/sessions/${encodeURIComponent(state.streamingSessionId)}`, {
-          method: "PUT",
-          body: JSON.stringify({ title: els.sessionTitle.value || "未命名会话", messages: streamingMsgs }),
-        }).catch(() => {});
-      }
-      if (state.sessionId === _streamSid) renderMessages();
-      await saveCurrentSession();
+      ctx.messages[assistantIndex].content = rawContent.trim();
+      ctx.messages[assistantIndex].streaming = false;
+      renderSessionMessages(ctx.sessionId);
+      setStreaming(false, ctx.sessionId);
+      await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+      // Execute pending session switch
       return;
     }
 
@@ -7399,8 +7338,8 @@ async function runAgentLoop() {
 
     if (!tool) {
 
-      await saveCurrentSession();
-
+      setStreaming(false, ctx.sessionId);
+      await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
       return;
 
     }
@@ -7409,13 +7348,13 @@ async function runAgentLoop() {
 
     const cleanContent = stripToolBlock(rawContent);
 
-    msgs[assistantIndex].content = cleanContent || "";
+    ctx.messages[assistantIndex].content = cleanContent || "";
 
-    msgs[assistantIndex].streaming = false;
+    ctx.messages[assistantIndex].streaming = false;
 
 
 
-    state.messages.push({
+    ctx.messages.push({
 
       role: "tool-call",
 
@@ -7425,9 +7364,9 @@ async function runAgentLoop() {
 
     });
 
-    renderMessages();
+    renderSessionMessages(ctx.sessionId);
 
-    await saveCurrentSession();
+    await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
 
 
 
@@ -7457,7 +7396,7 @@ async function runAgentLoop() {
 
     }
 
-    state.messages.push({
+    ctx.messages.push({
 
       role: "tool-result",
 
@@ -7467,31 +7406,31 @@ async function runAgentLoop() {
 
     });
 
-    renderMessages();
+    renderSessionMessages(ctx.sessionId);
 
     if (document.hidden && (result.action === "propose_edit" || result.action === "write_file")) {
       notifyPermissionNeeded(result.action, result.path);
     }
 
-    await saveCurrentSession();
+    await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
 
   }
 
 
 
-  state.messages.push({
+  ctx.messages.push({
 
     role: "assistant",
 
-    content: "本轮任务已达到较高的保护阈值，已暂停以避免无限执行。请让 Agent 总结当前进度或继续下一步。",
+    content: "This run reached the tool-round safety limit. Please ask the Agent to summarize progress or continue with the next step.",
 
     meta: { kind: "tool-round-limit" },
 
   });
 
-  await saveCurrentSession();
+  await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
 
-  renderMessages();
+  renderSessionMessages(ctx.sessionId);
 
 }
 
@@ -7499,9 +7438,9 @@ async function runAgentLoop() {
 
 async function compactConversation() {
 
-  if (state.isStreaming) { alert("请等待当前任务完成后再压缩"); return; }
+  if (state.isStreaming) { alert("Please wait for the current task to finish before compacting."); return; }
 
-  if (state.messages.length < 6) { alert("消息太少，无需压缩"); return; }
+  if (state.messages.length < 6) { alert("There are too few messages to compact."); return; }
 
 
 
@@ -7509,7 +7448,7 @@ async function compactConversation() {
 
   const model = getSelectedModel();
 
-  if (!key || !model) { alert("请先配置 API Key 和模型"); return; }
+  if (!key || !model) { alert("Please configure the API key and model first."); return; }
 
 
 
@@ -7605,7 +7544,7 @@ async function compactConversation() {
 
         role: "assistant",
 
-        content: `📋 **上下文已压缩**（${result.compressed} 条消息 → 摘要）\n\n${result.summary}`,
+                content: `📄 **上下文已自动压缩**：${result.compressed} 条记忆，预计节省 ~${formatCompact(Math.ceil((result.compressed || 0) * 3000 * 0.7))} tokens。\n\n${result.summary}`,
 
         meta: { kind: "compact-summary" },
 
@@ -7615,9 +7554,13 @@ async function compactConversation() {
 
       state.stats = { input: 0, output: 0, cache: 0 };
 
+      setSessionMessages(state.sessionId, state.messages);
+      setSessionStats(state.sessionId, state.stats);
+
       renderMessages();
 
-      await saveCurrentSession();
+      setStreaming(false, state.sessionId);
+      await saveSessionState(state.sessionId, state.messages, state.stats);
 
     } catch (err) {
 
@@ -7695,11 +7638,15 @@ async function sendMessage(userText) {
 
   const model = getSelectedModel();
 
-  if (!key) throw new Error("请先在 Models 中输入 New API 子 key。");
+  if (!key) throw new Error("Please enter a New API sub key in Models first.");
 
-  if (!model) throw new Error("请先刷新并选择模型。");
+  if (!model) throw new Error("Please refresh and select a model first.");
 
-  if (!state.sessionId) await createSession(userText.slice(0, 24) || "新会话");
+  if (!state.sessionId) await createSession(userText.slice(0, 24) || "New session");
+
+  const sessionId = state.sessionId;
+  const run = ensureSessionRun(sessionId);
+  const ctx = buildRunContext(sessionId);
 
 
 
@@ -7739,14 +7686,15 @@ async function sendMessage(userText) {
 
       const list = active.map((s) => `- /${s.name}: ${s.description || "无描述"}`).join("\n");
 
-      state.messages.push({ role: "user", content: "/help" });
+      ctx.messages.push({ role: "user", content: "/help" });
 
-      state.messages.push({ role: "assistant", content: `**可用 Skills：**\n\n${list || "暂无可用 Skill"}` });
+      ctx.messages.push({ role: "assistant", content: `**可用 Skills：**\n\n${list || "暂无 Skill"}` });
 
-      renderMessages();
+      setSessionMessages(sessionId, ctx.messages);
+      renderSessionMessages(sessionId);
 
-      await saveCurrentSession();
-
+      setStreaming(false, sessionId);
+      await saveSessionState(sessionId, ctx.messages, ctx.stats);
       return;
 
     }
@@ -7760,7 +7708,7 @@ async function sendMessage(userText) {
 
     if (skill) {
 
-      state.explicitSkill = skill.name;
+      ctx.explicitSkill = skill.name;
 
       userText = rest || `执行 ${skill.name} 任务`;
 
@@ -7770,7 +7718,7 @@ async function sendMessage(userText) {
 
 
 
-  const shouldAutoTitle = state.messages.length === 0 && isAutoSessionTitle(els.sessionTitle.value);
+  const shouldAutoTitle = ctx.messages.length === 0 && isAutoSessionTitle(els.sessionTitle.value);
 
   if (shouldAutoTitle) {
 
@@ -7780,33 +7728,31 @@ async function sendMessage(userText) {
 
   }
 
-  state.messages.push({ role: "user", content: messageContent, _images: images.length > 0 ? images : undefined, _model: getSelectedModel() });
+  ctx.messages.push({ role: "user", content: messageContent, _images: images.length > 0 ? images : undefined, _model: ctx.model || getSelectedModel() });
+  setSessionMessages(sessionId, ctx.messages);
 
   state.attachedImages = [];
 
   renderImageThumbs();
 
-  renderMessages();
+  renderSessionMessages(sessionId);
 
-  await saveCurrentSession();
+  await saveSessionState(sessionId, ctx.messages, ctx.stats);
 
-  setStreaming(true);
+  setStreaming(true, sessionId);
 
   let loopError = null;
   try {
-    await runAgentLoop();
+    await runAgentLoop(ctx);
   } catch (err) {
     loopError = err;
-  } finally {
-    state.explicitSkill = null;
   }
 
   // Drain queued messages: push all as separate user messages, then one API call
-  if (!loopError && state.messageQueue.length > 0) {
-    const queued = [...state.messageQueue];
-    state.messageQueue = [];
-    renderMessages();  // clear queue cards immediately
-    setStreaming(false);
+  if (!loopError && run.messageQueue.length > 0) {
+    const queued = [...run.messageQueue];
+    run.messageQueue = [];
+    renderSessionMessages(sessionId);  // clear queue cards immediately
 
     // Push each queued message as a separate user message
     for (const q of queued) {
@@ -7814,25 +7760,28 @@ async function sendMessage(userText) {
       const msgContent = imgs.length > 0
         ? [{ type: "text", text: q.text || "" }, ...imgs.map((img) => ({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.base64}` } }))]
         : (q.text || "");
-      state.messages.push({ role: "user", content: msgContent, _images: imgs.length > 0 ? imgs : undefined, _model: getSelectedModel() });
+      ctx.messages.push({ role: "user", content: msgContent, _images: imgs.length > 0 ? imgs : undefined, _model: ctx.model || getSelectedModel() });
     }
     state.attachedImages = [];
     renderImageThumbs();
-    renderMessages();
-    await saveCurrentSession();
+    setSessionMessages(sessionId, ctx.messages);
+    renderSessionMessages(sessionId);
+    await saveSessionState(sessionId, ctx.messages, ctx.stats);
 
     // One API call to respond to all queued messages
-    setStreaming(true);
+    setStreaming(true, sessionId);
     let drainError = null;
     try {
-      await runAgentLoop();
+      await runAgentLoop(ctx);
     } catch (err) {
       drainError = err;
-    } finally {
-      state.explicitSkill = null;
     }
     if (drainError) throw drainError;
   }
+
+  setStreaming(false, sessionId);
+  await saveSessionState(sessionId, ctx.messages, ctx.stats);
+  renderSessions();
 
   if (loopError) throw loopError;  // propagate to chatForm handler
 }
@@ -7851,7 +7800,7 @@ function setSelectedModel(modelId) {
 
   els.modelPillBtn.dataset.model = modelId;
 
-  els.modelPillLabel.textContent = modelId || "选择模型";
+  els.modelPillLabel.textContent = modelId || "请选择模型";
 
   // Update dropdown checkmarks
 
@@ -7969,7 +7918,7 @@ function exportMarkdown() {
 
     .join("\n\n");
 
-  const blob = new Blob([text || "# 空会话\n"], { type: "text/markdown;charset=utf-8" });
+  const blob = new Blob([text || "# 会话\n"], { type: "text/markdown;charset=utf-8" });
 
   const url = URL.createObjectURL(blob);
 
@@ -8047,7 +7996,7 @@ async function renderMemoryList() {
 
     if (memories.length === 0) {
 
-      els.memoryList.innerHTML = `<div class="muted-line" style="padding:12px;">暂无记忆。在下方创建第一条持久记忆。</div>`;
+      els.memoryList.innerHTML = `<div class="muted-line" style="padding:12px;">加载失败：${escapeHtml(err.message)}</div>`;
 
       return;
 
@@ -8299,7 +8248,8 @@ els.prompt.addEventListener("keydown", (event) => {
 
 els.stopBtn.addEventListener("click", () => {
 
-  if (state.abortController) state.abortController.abort();
+  const run = ensureSessionRun(state.sessionId);
+  if (run?.abortController) run.abortController.abort();
 
 });
 
@@ -8308,7 +8258,8 @@ els.stopBtn.addEventListener("click", () => {
 els.sendBtn.addEventListener("click", (event) => {
   if (!state.isStreaming) return;  // idle → let form submit send
   event.preventDefault();
-  if (state.abortController) state.abortController.abort();
+  const run = ensureSessionRun(state.sessionId);
+  if (run?.abortController) run.abortController.abort();
 });
 
 
@@ -9105,11 +9056,11 @@ function renderMemoryPanel(container) {
 
       </div>
 
-      <input id="settingsMemName" placeholder="name（英文+数字+_-，如 coding-conventions）" autocomplete="off" />
+      <input id="settingsMemName" placeholder="name，只能使用英文、数字、中划线和下划线，例如 coding-conventions" autocomplete="off" />
 
-      <input id="settingsMemDesc" placeholder="description（一行描述）" autocomplete="off" />
+      <input id="settingsMemDesc" placeholder="description，简要说明" autocomplete="off" />
 
-      <textarea id="settingsMemBody" rows="5" placeholder="记忆内容…" spellcheck="false"></textarea>
+      <textarea id="settingsMemBody" rows="5" placeholder="记忆内容..." spellcheck="false"></textarea>
 
       <div class="memory-form-actions"><button id="settingsSaveMem" class="mini-btn" type="button">保存</button></div>
 
@@ -9125,9 +9076,9 @@ function renderMemoryPanel(container) {
 
     const body = document.getElementById("settingsMemBody").value.trim();
 
-    if (!name || !body) { showToast("名称和内容不能为空", "error"); return; }
+    if (!name || !body) { showToast("请补全必填内容", "error"); return; }
 
-    if (!/^[a-zA-Z0-9_-]+$/.test(name)) { showToast("名称只能包含英文、数字、下划线和连字符", "error"); return; }
+    if (!/^[a-zA-Z0-9_-]+$/.test(name)) { showToast("请补全必填内容", "error"); return; }
 
     if (state._editingMemory && state._editingMemory !== name) {
 
@@ -9225,7 +9176,7 @@ async function refreshSettingsMemoryList() {
 
       document.getElementById("settingsMemBody").value = mem.body || "";
 
-      document.getElementById("memFormLabel").textContent = `编辑中: ${mem.name}`;
+      document.getElementById("memFormLabel").textContent = `编辑中：${mem.name}`;
 
       document.getElementById("memCancelBtn").style.visibility = "";
 
@@ -9251,7 +9202,7 @@ async function refreshSettingsMemoryList() {
 
       confirm.innerHTML = `
 
-        <span>删除记忆「${escapeHtml(name)}」？</span>
+        <span>确定删除「${escapeHtml(name)}」？</span>
 
         <button class="key-confirm-yes" type="button">确认</button>
 
@@ -9375,12 +9326,12 @@ function showSkillDetailInSettings(skill) {
   if (!skill) {
     const hasSkills = state.skills.length > 0;
     panel.innerHTML = hasSkills
-      ? `<div class="skills-detail-empty">← 选择左侧 Skill 查看详情</div>`
+      ? '<div class="skills-detail-empty">选择 Skill 查看详情</div>'
       : `<div class="skills-detail-empty">
-        <strong>暂无 Skill</strong>
-        <span style="margin-top:6px">点击左侧「+ 新建 Skill」创建第一个 Skill</span>
+        <strong>新建 Skill</strong>
+        <span style="margin-top:6px">点击 + 新建 Skill，或在左侧选择 Skill</span>
         <button class="mini-btn primary-btn" style="margin-top:12px" id="settingsEmptyCreateBtn">+ 新建 Skill</button>
-        <span style="margin-top:4px;font-size:11px">或在 data/skills/ 目录下创建 SKILL.md 文件</span>
+        <span style="margin-top:4px;font-size:11px">将在 data/skills/ 下创建 SKILL.md 文件</span>
       </div>`;
     if (!hasSkills) {
       document.getElementById("settingsEmptyCreateBtn").addEventListener("click", () => openSkillEditor(null));
@@ -9391,82 +9342,35 @@ function showSkillDetailInSettings(skill) {
   const isOn = !state.disabledSkills.has(skill.name);
 
   panel.innerHTML = `
-
     <div class="skill-detail-head">
-
       <div class="skill-detail-name">${escapeHtml(skill.name)}</div>
-
       <div class="skill-detail-head-actions">
-
         <label class="toggle-switch" title="${isOn ? '已启用' : '已禁用'}">
-
           <input type="checkbox" ${isOn ? 'checked' : ''} id="settingsSkillToggle" />
-
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
-
         </label>
-
         <button class="skill-edit-icon" id="settingsSkillEdit" title="编辑">
 
-          <svg class="icon" viewBox="0 0 1097 1024" width="14" height="14"><path d="M925.72 1024H161.13C72 1024 0 952.32 0 863.57V160.43C0 71.68 72 0 161.16 0h613.67c20.58 0 34.3 13.65 34.3 34.13s-13.72 34.14-34.3 34.14H161.16a91.99 91.99 0 00-92.55 92.16v699.73c0 54.61 41.13 95.57 92.55 95.57h764.59c51.44 0 92.57-40.96 92.57-92.16V337.92c0-20.48 13.7-34.13 34.28-34.13s34.28 13.65 34.28 34.13v525.65c3.41 88.75-72 160.43-161.16 160.43zM456 658.77c-10.29 0-17.14-3.41-24-10.24-13.72-13.65-13.72-34.13 0-47.78L1038.85 23.89a33.26 33.26 0 0148.03 0c13.7 13.66 13.7 34.14 0 47.79L479.96 648.53c-6.83 6.83-13.7 10.24-24 10.24z" fill="currentColor"/></svg>
-
+            <svg class="icon" viewBox="0 0 1097 1024" width="14" height="14"><path d="M925.72 1024H161.13C72 1024 0 952.32 0 863.57V160.43C0 71.68 72 0 161.16 0h613.67c20.58 0 34.3 13.65 34.3 34.13s-13.72 34.14-34.3 34.14H161.16a91.99 91.99 0 00-92.55 92.16v699.73c0 54.61 41.13 95.57 92.55 95.57h764.59c51.44 0 92.57-40.96 92.57-92.16V337.92c0-20.48 13.7-34.13 34.28-34.13s34.28 13.65 34.28 34.13v525.65c3.41 88.75-72 160.43-161.16 160.43zM456 658.77c-10.29 0-17.14-3.41-24-10.24-13.72-13.65-13.72-34.13 0-47.78L1038.85 23.89a33.26 33.26 0 0148.03 0c13.7 13.66 13.7 34.14 0 47.79L479.96 648.53c-6.83 6.83-13.7 10.24-24 10.24z" fill="currentColor"/></svg>
         </button>
-
       </div>
-
     </div>
-
-    ${["dispatching-parallel-agents", "subagent-driven-development", "executing-plans", "writing-plans"].includes(skill.name) ? `<div class="skill-detail-note">此 Skill 仅支持显式调用 /${escapeHtml(skill.name)}，不会被关键词自动匹配</div>` : ""}
-
-    <div class="skill-detail-section">
-
-      <div class="skill-detail-label">描述</div>
-
-      <div class="skill-detail-value">${escapeHtml(skill.description || "无")}</div>
-
-    </div>
-
-    <div class="skill-detail-section">
-
-      <div class="skill-detail-label">关键词</div>
-
-      <div class="skill-detail-value">${escapeHtml((skill.keywords || []).join(", ") || "无")}</div>
-
-    </div>
-
-    <div class="skill-detail-section">
-
-      <div class="skill-detail-label">工具</div>
-
-      <div class="skill-detail-value">${escapeHtml((skill.tools || []).join(", ") || "无")}</div>
-
-    </div>
-
-    <div class="skill-detail-section">
-
-      <div class="skill-detail-label">文件路径</div>
-
-      <div class="skill-detail-value">${escapeHtml(skill.path || `data/skills/${skill.dir || skill.name}/SKILL.md`)}</div>
-
-    </div>
-
+    ${["dispatching-parallel-agents", "subagent-driven-development", "executing-plans", "writing-plans"].includes(skill.name) ? `<div class="skill-detail-note">此 Skill 可以通过 /${escapeHtml(skill.name)} 命令手动触发</div>` : ""}
+    <div class="skill-detail-section"><div class="skill-detail-label">描述</div><div class="skill-detail-value">${escapeHtml(skill.description || "-")}</div></div>
+    <div class="skill-detail-section"><div class="skill-detail-label">关键词</div><div class="skill-detail-value">${escapeHtml((skill.keywords || []).join(", ") || "-")}</div></div>
+    <div class="skill-detail-section"><div class="skill-detail-label">工具</div><div class="skill-detail-value">${escapeHtml((skill.tools || []).join(", ") || "-")}</div></div>
+    <div class="skill-detail-section"><div class="skill-detail-label">文件路径</div><div class="skill-detail-value">${escapeHtml(skill.path || `data/skills/${skill.dir || skill.name}/SKILL.md`)}</div></div>
   `;
 
   document.getElementById("settingsSkillToggle").addEventListener("change", () => {
-
     toggleSkill(skill.name);
-
     showSkillDetailInSettings(state.skills.find((s) => s.name === skill.name));
-
     renderSettingsSkillsSidebar();
-
   });
 
   document.getElementById("settingsSkillEdit").addEventListener("click", () => openSkillEditor(skill));
 
 }
-
-
 
 function renderSystemPanel(container) {
 
@@ -9474,15 +9378,13 @@ function renderSystemPanel(container) {
 
     <textarea id="settingsSystemText" class="system-prompt-text" style="height:400px" spellcheck="false">${escapeHtml(els.systemPromptText.value)}</textarea>
 
-    <div class="panel-actions" style="margin-top:8px"><span>决定 Agent 的工作边界与编程风格。</span><button id="settingsResetSystem" class="mini-btn" type="button">恢复默认</button></div>`;
+    <div class="panel-actions" style="margin-top:8px"><span>这里作为 Agent 的系统提示词</span><button id="settingsResetSystem" class="mini-btn" type="button">恢复默认</button></div>`;
 
   document.getElementById("settingsSystemText").addEventListener("change", () => { els.systemPromptText.value = document.getElementById("settingsSystemText").value; saveSystemPrompt(); });
 
   document.getElementById("settingsResetSystem").addEventListener("click", () => { els.systemPromptText.value = defaultSystemPrompt; document.getElementById("settingsSystemText").value = defaultSystemPrompt; saveSystemPrompt(); });
 
 }
-
-
 
 function renderLanguagePanel(container) {
 
@@ -9820,9 +9722,10 @@ els.chatForm.addEventListener("submit", async (event) => {
   const hasImages = state.attachedImages.length > 0;
   if (!text && !hasImages) return;
 
-  if (state.isStreaming) {
+  if (isSessionStreaming(state.sessionId)) {
     // Queue message instead of aborting
-    state.messageQueue.push({ text, images: [...state.attachedImages] });
+    const run = ensureSessionRun(state.sessionId);
+    run.messageQueue.push({ text, images: [...state.attachedImages] });
     els.prompt.value = "";
     els.prompt.rows = 2;
     state.attachedImages = [];
@@ -9849,21 +9752,29 @@ els.chatForm.addEventListener("submit", async (event) => {
 
   } catch (err) {
 
+    const sessionId = state.sessionId;
+    const messages = getSessionMessages(sessionId);
+    const stats = getSessionStats(sessionId);
+
     if (err.name === "AbortError") {
 
-      state.messages.forEach((msg) => { msg.streaming = false; });
+      messages.forEach((msg) => { msg.streaming = false; });
 
-      const last = state.messages.at(-1);
+      const last = messages.at(-1);
 
       if (last?.role === "assistant") last.content = `${last.content || ""}\n\n[已暂停输出]`;
 
-      renderMessages();
+      setSessionMessages(sessionId, messages);
+      renderSessionMessages(sessionId);
 
-      await saveCurrentSession();
+      setStreaming(false, sessionId);
+      await saveSessionState(sessionId, messages, stats);
 
     } else {
 
-      state.messages = state.messages.filter((msg) => !msg.streaming);
+      const cleaned = messages.filter((msg) => !msg.streaming);
+      setSessionMessages(sessionId, cleaned);
+      if (sessionId === state.sessionId) state.messages = cleaned;
 
       appendSystemError(err.message);
 
@@ -9871,13 +9782,11 @@ els.chatForm.addEventListener("submit", async (event) => {
 
   } finally {
 
-    state.abortController = null;
-
-    setStreaming(false);
+    syncActiveStreamingState();
 
     els.messages.scrollTop = els.messages.scrollHeight;
 
-    if (state.sessionId) saveCurrentSession().catch(() => {});
+    if (state.sessionId) saveSessionState(state.sessionId, getSessionMessages(state.sessionId), getSessionStats(state.sessionId)).catch(() => {});
 
   }
 
@@ -9887,7 +9796,9 @@ els.chatForm.addEventListener("submit", async (event) => {
 
 els.newChat.addEventListener("click", () => {
 
-  if (state.abortController) state.abortController.abort();
+  const run = ensureSessionRun(state.sessionId);
+  if (run?.abortController) run.abortController.abort();
+  if (run) run.messageQueue = [];
   state.messageQueue = [];
 
   state.sessionId = null;
@@ -10050,4 +9961,3 @@ async function init() {
 
 
 init().catch((err) => appendSystemError(err.message));
-

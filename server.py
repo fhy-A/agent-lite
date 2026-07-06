@@ -550,21 +550,25 @@ def is_safe_command(command):
 def open_native_folder_picker(root):
     """Open a native folder browser dialog and return the selected path."""
     import tkinter as tk
-    from tkinter import filedialog
-    window = tk.Tk()
-    window.withdraw()
     try:
-        window.attributes("-topmost", True)
+        from tkinter import filedialog
+        window = tk.Tk()
+        window.withdraw()
+        try:
+            window.attributes("-topmost", True)
+        except Exception:
+            pass
+        selected = filedialog.askdirectory(
+            title="选择项目文件夹",
+            initialdir=str(root),
+            mustexist=True,
+        )
+        window.destroy()
+        if selected:
+            return str(selected)
     except Exception:
         pass
-    selected = filedialog.askdirectory(
-        title="选择项目文件夹",
-        initialdir=str(root),
-        mustexist=True,
-    )
-    window.destroy()
-    if selected:
-        return str(selected)
+    # Fallback: return empty, frontend will show manual input
     # User cancelled
     return None
 

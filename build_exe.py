@@ -17,6 +17,7 @@ cmd = [
     "--onefile",
     "--name", "AgentLite",
     "--icon", str(APP_DIR / "agent-lite-icon.ico"),
+    "--version-file", str(APP_DIR / "file_version_info.txt"),
     "--add-data", f"{APP_DIR / 'VERSION'}{';'}.",
     "--add-data", f"{APP_DIR / 'app.js'}{';'}.",
     "--add-data", f"{APP_DIR / 'index.html'}{';'}.",

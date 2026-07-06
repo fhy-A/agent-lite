@@ -1795,7 +1795,7 @@ function getSystemPrompt(options = {}) {
   const now = new Date();
   const dateStr = now.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", weekday: "long" });
   const timeStr = now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-  const parts = [customPrompt, `当前时间：${dateStr} ${timeStr}（北京时间）`];
+  const parts = [customPrompt, `当前时间：${dateStr} ${timeStr}（北京时间）`, `Agent Lite 版本：${state.appVersion || "unknown"}`];
 
   if (state.projectContext?.found) {
 
@@ -9938,6 +9938,9 @@ async function init() {
   await loadMemoryContext();
 
   await loadSkills();
+
+  // Load app version
+  try { const r = await fetch("/VERSION"); state.appVersion = (await r.text()).trim(); } catch (_) {}
 
   await refreshSessions();
 

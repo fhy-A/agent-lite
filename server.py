@@ -173,8 +173,7 @@ def write_json(path, data):
 
 
 def default_project_root():
-    candidate = APP_DIR.parent
-    return str(candidate if candidate.exists() else APP_DIR)
+    return str(Path.home())
 
 
 def load_config():

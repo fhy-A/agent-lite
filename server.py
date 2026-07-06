@@ -14,7 +14,7 @@ import uuid
 
 
 APP_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path(os.environ.get("AGENT_LITE_DATA_DIR", APP_DIR / "data"))
+DATA_DIR = Path(os.environ.get("AGENT_LITE_DATA_DIR") or (APP_DIR / "data"))
 SESSIONS_DIR = DATA_DIR / "sessions"
 FILE_BACKUP_DIR = DATA_DIR / "file-backups"
 ATTACHMENTS_DIR = DATA_DIR / "attachments"
@@ -22,7 +22,7 @@ MEMORY_DIR = DATA_DIR / "memory"
 MEMORY_INDEX_PATH = MEMORY_DIR / "MEMORY.md"
 SKILLS_DIR = DATA_DIR / "skills"
 CONFIG_PATH = DATA_DIR / "config.json"
-NEW_API_BASE_URL = os.environ.get("NEW_API_BASE_URL", "http://localhost:3000").rstrip("/")
+NEW_API_BASE_URL = os.environ.get("NEW_API_BASE_URL", "").rstrip("/")
 PORT = int(os.environ.get("AGENT_LITE_PORT", "3010"))
 MAX_PREVIEW_BYTES = 1024 * 1024
 MAX_TOOL_READ_BYTES = 512 * 1024
@@ -180,7 +180,7 @@ def default_project_root():
 def load_config():
     config = read_json(CONFIG_PATH, {})
     config.setdefault("projectRoot", default_project_root())
-    config.setdefault("newApiBaseUrl", NEW_API_BASE_URL)
+    config.setdefault("newApiBaseUrl", "")
     return config
 
 
@@ -1826,18 +1826,26 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
 
     def tool_propose_edit(self):
         body = self.read_body_json()
-        _, _, rel, _, new_text, diff = self.build_edit_payload(body)
+        _, target, rel, _, new_text, diff = self.build_edit_payload(body)
+        mtime = int(target.stat().st_mtime * 1000) if target.exists() else 0
         self.send_json({
             "ok": True,
             "action": "propose_edit",
             "path": rel,
             "diff": diff or "(no changes)",
             "newContent": new_text,
+            "mtime": mtime,
         })
 
     def tool_apply_edit(self):
         body = self.read_body_json()
         _, target, rel, old_text, new_text, diff = self.build_edit_payload(body)
+        expected_mtime = body.get("expectedMtime")
+        if expected_mtime is not None and target.exists():
+            current_mtime = int(target.stat().st_mtime * 1000)
+            if current_mtime != int(expected_mtime):
+                self.send_json({"ok": False, "action": "apply_edit", "path": rel, "error": "File modified by another session, please re-read.", "currentMtime": current_mtime}, 409)
+                return
         backup_path = None
         if target.exists():
             stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -2228,7 +2236,8 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             with request.urlopen(upstream, timeout=180) as resp:
                 # Set a read timeout so readline() doesn't hang forever on stale connections
                 import socket
-                resp.fp._sock.settimeout(30)
+                try: resp.fp._sock.settimeout(30)
+                except Exception: pass
                 if is_stream:
                     self.send_response(resp.status)
                     self.send_header("Content-Type", resp.headers.get("Content-Type", "text/event-stream"))

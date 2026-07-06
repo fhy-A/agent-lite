@@ -145,6 +145,9 @@ function markSessionUnread(sessionId) {
 
 function renderSessionMessages(sessionId) {
   if (sessionId === state.sessionId) {
+    // User is viewing this session — mark messages as seen
+    const s = state.sessions.find(function(s){ return s.id === sessionId; });
+    if (s) s._seenCount = getSessionMessages(sessionId).length;
     renderMessages();
   } else {
     markSessionUnread(sessionId);
@@ -1112,7 +1115,7 @@ function renderKeyEditor(raw, newRow = false) {
 
       <span class="key-drag-handle" title="拖拽排序" draggable="true">⠿</span>
 
-      <input class="key-name-input" placeholder="名称" value="${escapeHtml(e.name)}" data-idx="${i}" />
+      <input class="key-name-input" placeholder="名称（可选）" value="${escapeHtml(e.name)}" data-idx="${i}" />
 
       <div class="key-value-wrap">
 
@@ -4343,6 +4346,12 @@ async function createSession(title = "新会话") {
 async function loadSession(sessionId) {
 
   if (!sessionId) return;
+
+  // Debounce rapid clicks (300ms)
+  const now = Date.now();
+  if (state._lastSwitchTime && now - state._lastSwitchTime < 300) return;
+  state._lastSwitchTime = now;
+
   if (sessionId === state.sessionId) {
     syncActiveStreamingState();
     resetRenderCache();
@@ -4360,12 +4369,13 @@ async function loadSession(sessionId) {
   const session = await apiJson(`/api/sessions/${encodeURIComponent(sessionId)}`);
   if (loadSeq !== state._sessionLoadSeq) return;
 
-  // Track unread
+  // Track unread: only mark if messages arrived while user was away
   if (prevId && prevId !== session.id) {
     const prev = state.sessions.find((s) => s.id === prevId);
     const prevMsgs = state._sessionMsgs[prevId] || [];
+    // User was viewing this session, so they've seen all current messages
+    if (prev) prev._seenCount = Math.max(prev._seenCount || 0, prevMsgs.length);
     if (prev && prevMsgs.length > (prev._seenCount || 0)) prev._unread = true;
-    if (prev) prev._seenCount = prevMsgs.length;
   }
   const loaded = state.sessions.find((s) => s.id === session.id);
   if (loaded) { loaded._unread = false; }
@@ -4400,6 +4410,7 @@ async function loadSession(sessionId) {
         newContent: msg.meta.newContent,
 
         applied: Boolean(msg.meta.applied),
+        mtime: msg.meta.mtime || 0,
 
       };
 
@@ -5335,7 +5346,7 @@ async function refreshModels() {
 
   if (allModels.size === 0) {
 
-    alert(`一次最多测试 ${keys.length} 个 key。`);
+    showToast("未找到可用模型，请检查 Base URL 和 API Key", "error");
 
     els.refreshModelsBtn.disabled = false;
 
@@ -7035,6 +7046,7 @@ async function commitPendingEdit() {
         path: edit.path,
 
         newContent: edit.newContent,
+        expectedMtime: edit.mtime || 0,
 
       }),
 
@@ -7206,6 +7218,10 @@ async function runAgentLoop(ctx = null) {
 
       const current = ctx.messages[assistantIndex] || {};
 
+      // Preserve timer & usage from previous message object
+      const _prevTimer = current._responseTime;
+      const _prevUsage = (current.meta || {})._usage;
+
       ctx.messages[assistantIndex] = {
 
         ...current,
@@ -7215,10 +7231,12 @@ async function runAgentLoop(ctx = null) {
         content: (current.content || "").trim() || `准备调用 ${nativeCalls.length} 个工具`,
 
         streaming: false,
+        ...(_prevTimer ? { _responseTime: _prevTimer } : {}),
 
         meta: {
 
           ...(current.meta || {}),
+          ...(_prevUsage ? { _usage: _prevUsage } : {}),
 
           toolCalls: nativeCalls,
 
@@ -7283,6 +7301,7 @@ async function runAgentLoop(ctx = null) {
             newContent: result.newContent,
 
             applied: false,
+            mtime: result.mtime || 0,
 
           };
 
@@ -7385,6 +7404,7 @@ async function runAgentLoop(ctx = null) {
         newContent: result.newContent,
 
         applied: false,
+        mtime: result.mtime || 0,
 
       };
 
@@ -8966,7 +8986,7 @@ function renderModelsPanel(container) {
 
     <h3 style="margin:0 0 14px">${t("models")}</h3>
 
-    <label class="field"><span>${t("baseUrl")}</span><input id="settingsBaseUrl" value="${escapeHtml(els.baseUrl.value)}" placeholder="http://localhost:3000" autocomplete="off" /></label>
+    <label class="field"><span>${t("baseUrl")}</span><input id="settingsBaseUrl" value="${escapeHtml(els.baseUrl.value)}" placeholder="https://your-api-host.com" autocomplete="off" /></label>
 
     <label class="field"><span>${t("apiKeys")}</span>
 
@@ -9796,6 +9816,8 @@ els.chatForm.addEventListener("submit", async (event) => {
 
 els.newChat.addEventListener("click", () => {
 
+  if (state.isStreaming) { showToast("请等待当前回答完成后再新建会话"); return; }
+
   const run = ensureSessionRun(state.sessionId);
   if (run?.abortController) run.abortController.abort();
   if (run) run.messageQueue = [];
@@ -9929,7 +9951,7 @@ async function init() {
 
   }
 
-  if (els.apiKey.value.trim()) await refreshModels();
+  if (els.apiKey.value.trim() && els.baseUrl.value.trim()) await refreshModels();
 
   // Restore preview state
 

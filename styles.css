@@ -1041,7 +1041,9 @@ input:focus, select:focus, textarea:focus {
   line-height: 1.75;
   white-space: normal;
   overflow-x: auto;
-  word-break: break-word;
+  word-break: normal;
+  overflow-wrap: break-word;
+  text-wrap: pretty;
 }
 .bubble h1 { font-size: 1.4em; }
 .bubble h2 { font-size: 1.25em; }
@@ -2480,6 +2482,7 @@ input:focus, select:focus, textarea:focus {
   border-bottom: 2px solid var(--line-strong);
   border-right: 1px solid var(--line);
   white-space: nowrap;
+  word-break: normal;
 }
 .md-table th:last-child { border-right: 0; }
 
@@ -2489,6 +2492,8 @@ input:focus, select:focus, textarea:focus {
   border-right: 1px solid var(--line);
   color: var(--text);
   line-height: 1.6;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 .md-table td:last-child { border-right: 0; }
 .md-table tr:last-child td { border-bottom: 0; }
@@ -2760,6 +2765,9 @@ body.theme-dark .syn-fn { color: #61afef; }
   color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
+  word-break: normal;
+  overflow-wrap: break-word;
+  text-wrap: pretty;
 }
 
 /* Remove old verbose tool card styles (keep what's needed) */
@@ -3121,6 +3129,7 @@ body.theme-dark .syn-fn { color: #61afef; }
   border-bottom: 2px solid var(--line-strong);
   border-right: 1px solid var(--line);
   white-space: nowrap;
+  word-break: normal;
 }
 .bubble th:last-child, .assistant-inline-text th:last-child, .tool-inline-body th:last-child { border-right: 0; }
 .bubble td, .assistant-inline-text td, .tool-inline-body td {
@@ -3128,6 +3137,8 @@ body.theme-dark .syn-fn { color: #61afef; }
   border-bottom: 1px solid var(--line);
   border-right: 1px solid var(--line);
   color: var(--text);
+  word-break: normal;
+  overflow-wrap: break-word;
   line-height: 1.6;
 }
 .bubble td:last-child, .assistant-inline-text td:last-child, .tool-inline-body td:last-child { border-right: 0; }

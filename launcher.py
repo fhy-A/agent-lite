@@ -78,7 +78,11 @@ def check_and_update():
 
     try:
         import urllib.request
-        target_dir = get_base_dir() / "dist"
+        # Use the actual exe directory (not the PyInstaller temp dir)
+        if getattr(sys, 'frozen', False):
+            target_dir = Path(sys.executable).parent
+        else:
+            target_dir = get_base_dir() / "dist"
         target_dir.mkdir(parents=True, exist_ok=True)
         new_exe = target_dir / "AgentLite.exe.new"
 
@@ -89,12 +93,14 @@ def check_and_update():
         pw.destroy()
         root.destroy()
 
-        # Write new version marker
-        (target_dir / "VERSION").write_text(remote, encoding="utf-8")
-        mb.showinfo("Update Ready", f"AgentLite v{remote} downloaded.\n\nRestart the application to apply the update.")
+        mb.showinfo("Update Ready", f"AgentLite v{remote} downloaded to:\n{target_dir}\n\nRestart to apply the update.")
         root.destroy()
     except Exception as e:
-        print(f"Update failed: {e}")
+        pw.destroy()
+        root.destroy()
+        mb.showwarning("Update Failed", f"Could not download update:\n{e}\n\nPlease check your network or try again later.")
+        root.destroy()
+        return False
 
     return True
 

@@ -1643,6 +1643,17 @@ const I18N = {
     collapseExpand: "点击收起/展开",
     toolExpand: "详情", toolSection: "工具：", toolCount: "{count} 个工具", tasksDone: "{count} 已完成", tasksFail: "{count} 失败",
     fetchDone: "已抓取",
+    fmtFilenameMatch: "文件名匹配", fmtRegexMode: "模式：正则", fmtTruncated: "结果已截断",
+    fmtKeyword: "关键词", fmtHitCount: "命中数量", fmtNoMatch: "没有找到匹配项",
+    fmtGlobPattern: "glob 模式", fmtMatchCount: "匹配数量", fmtNoGlobMatch: "没有匹配项",
+    fmtProposeEdit: "已生成修改方案", fmtAppliedEdit: "已应用修改", fmtBackup: "备份",
+    fmtCommand: "命令", fmtCwd: "目录", fmtExitCode: "退出码",
+    fmtSubAgentDone: "子 Agent 执行完成", fmtSubAgentFail: "子 Agent 执行失败",
+    fmtTask: "任务", fmtRounds: "轮", fmtToolCalls: "工具调用", fmtTimes: "次", fmtNoResult: "(无返回内容)",
+    fmtWroteFile: "已写入文件", fmtSize: "大小", fmtDeletedFile: "已删除文件",
+    fmtOrigSize: "原大小", fmtNoBackup: "无",
+    fmtFetched: "抓取", fmtStatus: "状态", fmtTruncatedContent: "内容已截断",
+    fmtToolResult: "工具结果",
     toggleVisibility: "显示/隐藏", enabledStatus: "已启用", disabledStatus: "已禁用",
   },
   en: {
@@ -1721,6 +1732,17 @@ const I18N = {
     collapseExpand: "Click to collapse/expand",
     toolExpand: "Details", toolSection: "Tools: ", toolCount: "{count} tools", tasksDone: "{count} completed", tasksFail: "{count} failed",
     fetchDone: "Fetched",
+    fmtFilenameMatch: "filename match", fmtRegexMode: "Mode: regex", fmtTruncated: "Results truncated",
+    fmtKeyword: "Keyword", fmtHitCount: "Matches", fmtNoMatch: "No matches",
+    fmtGlobPattern: "Glob pattern", fmtMatchCount: "Match count", fmtNoGlobMatch: "No matches",
+    fmtProposeEdit: "Edit proposal generated", fmtAppliedEdit: "Edit applied", fmtBackup: "Backup",
+    fmtCommand: "Command", fmtCwd: "Directory", fmtExitCode: "Exit code",
+    fmtSubAgentDone: "Sub-agent completed", fmtSubAgentFail: "Sub-agent failed",
+    fmtTask: "Task", fmtRounds: "rounds", fmtToolCalls: "tool calls", fmtTimes: "times", fmtNoResult: "(No result)",
+    fmtWroteFile: "File written", fmtSize: "Size", fmtDeletedFile: "File deleted",
+    fmtOrigSize: "Original size", fmtNoBackup: "None",
+    fmtFetched: "Fetched", fmtStatus: "Status", fmtTruncatedContent: "Content truncated",
+    fmtToolResult: "Tool result",
     toggleVisibility: "Show/Hide", enabledStatus: "Enabled", disabledStatus: "Disabled",
   },
 };
@@ -6186,7 +6208,7 @@ function shouldAskBeforeTool(action) {
 
 function describeToolForConfirm(tool) {
 
-  if (tool.action === "run_command") return `命令：${tool.command || ""}`;
+  if (tool.action === "run_command") return `${t("fmtCommand")}：${tool.command || ""}`;
 
   if (tool.path) return `文件：${tool.path}`;
 
@@ -7011,13 +7033,13 @@ function formatToolResult(result) {
 
       }).join("\n");
 
-      return `- ${item.path}${item.nameMatch ? "（文件名匹配）" : ""}${matches ? `\n${matches}` : ""}`;
+      return `- ${item.path}${item.nameMatch ? `（${t("fmtFilenameMatch")}）` : ""}${matches ? `\n${matches}` : ""}`;
 
     });
 
-    const info = [result.regex ? "模式：正则" : "", result.truncated ? "结果已截断" : ""].filter(Boolean).join(" · ");
+    const info = [result.regex ? t("fmtRegexMode") : "", result.truncated ? t("fmtTruncated") : ""].filter(Boolean).join(" · ");
 
-    return `${modeLabel}关键词：${result.query}\n命中数量：${result.count}${info ? `\n${info}` : ""}\n\n${rows.join("\n") || "没有找到匹配项"}`;
+    return `${modeLabel}${t("fmtKeyword")}：${result.query}\n${t("fmtHitCount")}：${result.count}${info ? `\n${info}` : ""}\n\n${rows.join("\n") || t("fmtNoMatch")}`;
 
   }
 
@@ -7033,25 +7055,25 @@ function formatToolResult(result) {
 
     });
 
-    return `glob 模式：${result.pattern}\n匹配数量：${result.count}${result.truncated ? "（结果已截断）" : ""}\n\n${rows.join("\n") || "没有匹配项"}`;
+    return `${t("fmtGlobPattern")}：${result.pattern}\n${t("fmtMatchCount")}：${result.count}${result.truncated ? `（${t("fmtTruncated")}）` : ""}\n\n${rows.join("\n") || t("fmtNoGlobMatch")}`;
 
   }
 
   if (result.action === "propose_edit") {
 
-    return `已生成修改方案：${result.path}\n\n\`\`\`diff\n${truncateForDisplay(result.diff || "")}\n\`\`\``;
+    return `${t("fmtProposeEdit")}：${result.path}\n\n\`\`\`diff\n${truncateForDisplay(result.diff || "")}\n\`\`\``;
 
   }
 
   if (result.action === "apply_edit") {
 
-    return `已应用修改：${result.path}${result.backupPath ? `\n备份：${result.backupPath}` : ""}\n\n\`\`\`diff\n${truncateForDisplay(result.diff || "")}\n\`\`\``;
+    return `${t("fmtAppliedEdit")}：${result.path}${result.backupPath ? `\n${t("fmtBackup")}：${result.backupPath}` : ""}\n\n\`\`\`diff\n${truncateForDisplay(result.diff || "")}\n\`\`\``;
 
   }
 
   if (result.action === "run_command") {
 
-    return `命令：${result.command}\n目录：${result.cwd || "-"}\n退出码：${result.exitCode}\n\nSTDOUT:\n\`\`\`terminal\n${truncateForDisplay(result.stdout || "")}\n\`\`\`\n\nSTDERR:\n\`\`\`terminal\n${truncateForDisplay(result.stderr || "")}\n\`\`\``;
+    return `${t("fmtCommand")}：${result.command}\n${t("fmtCwd")}：${result.cwd || "-"}\n${t("fmtExitCode")}：${result.exitCode}\n\nSTDOUT:\n\`\`\`terminal\n${truncateForDisplay(result.stdout || "")}\n\`\`\`\n\nSTDERR:\n\`\`\`terminal\n${truncateForDisplay(result.stderr || "")}\n\`\`\``;
 
   }
 
@@ -7059,21 +7081,21 @@ function formatToolResult(result) {
 
     const ok = result.ok !== false;
 
-    return `${ok ? "子 Agent 执行完成" : "子 Agent 执行失败"}\n任务：${result.prompt}\n轮次：${result.rounds || "?"} 轮 · 工具调用：${result.tool_rounds || 0} 次\n\n---\n\n${result.result || "(无返回内容)"}`;
+    return `${ok ? t("fmtSubAgentDone") : t("fmtSubAgentFail")}\n${t("fmtTask")}：${result.prompt}\n${t("fmtRounds")}：${result.rounds || "?"} ${t("fmtRounds")} · ${t("fmtToolCalls")}：${result.tool_rounds || 0} ${t("fmtTimes")}\n\n---\n\n${result.result || t("fmtNoResult")}`;
 
   }
 
   if (result.action === "write_file") {
 
-    const backup = result.backupPath ? `\n备份：${result.backupPath}` : "";
+    const backup = result.backupPath ? `\n${t("fmtBackup")}：${result.backupPath}` : "";
 
-    return `已写入文件：${result.path}\n大小：${formatSize(result.size || 0)}${backup}\n\n\`\`\`diff\n${truncateForDisplay(result.diff || "")}\n\`\`\``;
+    return `${t("fmtWroteFile")}：${result.path}\n${t("fmtSize")}：${formatSize(result.size || 0)}${backup}\n\n\`\`\`diff\n${truncateForDisplay(result.diff || "")}\n\`\`\``;
 
   }
 
   if (result.action === "delete_file") {
 
-    return `已删除文件：${result.path}\n原大小：${formatSize(result.size || 0)}\n备份：${result.backupPath || "无"}`;
+    return `${t("fmtDeletedFile")}：${result.path}\n${t("fmtOrigSize")}：${formatSize(result.size || 0)}\n${t("fmtBackup")}：${result.backupPath || t("fmtNoBackup")}`;
 
   }
 
@@ -7081,13 +7103,13 @@ function formatToolResult(result) {
 
     const status = result.ok ? `HTTP ${result.status}` : "Failed";
 
-    const trunc = result.truncated ? " · 内容已截断" : "";
+    const trunc = result.truncated ? ` · ${t("fmtTruncatedContent")}` : "";
 
-    return `抓取：${result.url}\n状态：${status}${trunc}\n\n${truncateForDisplay(result.content || result.error || "")}`;
+    return `${t("fmtFetched")}：${result.url}\n${t("fmtStatus")}：${status}${trunc}\n\n${truncateForDisplay(result.content || result.error || "")}`;
 
   }
 
-  return `工具结果：\n\n\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\``;
+  return `${t("fmtToolResult")}：\n\n\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\``;
 
 }
 

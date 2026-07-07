@@ -164,7 +164,8 @@ def check_and_update():
     except Exception as e:
         pw.destroy()
         root.destroy()
-        mb.showwarning("更新失败", f"下载失败：{e}\n\n请检查网络后重试。")
+        if mb.askyesno("更新失败", f"自动下载失败：{e}\n\n是否打开 GitHub 页面手动下载？"):
+            webbrowser.open(f"https://github.com/{GITHUB_REPO}/releases/latest")
         return False
 
     return True
@@ -180,9 +181,8 @@ def main():
         import time
         time.sleep(0.5)  # Wait for port to be released
 
-    # Start server first, then check for updates in background
-    import threading
-    threading.Thread(target=check_and_update, daemon=True).start()
+    # Check for updates on the main thread (tkinter dialogs must run on main thread)
+    check_and_update()
 
     base = get_base_dir()
     data_dir = ensure_dirs()
@@ -194,9 +194,12 @@ def main():
             src = bundled_data / sub
             dst = data_dir / sub
             if src.exists() and not any(dst.iterdir()):
-                for f in src.iterdir():
-                    if f.is_file():
-                        (dst / f.name).write_text(f.read_text(encoding="utf-8-sig"), encoding="utf-8")
+                import shutil as _shutil
+                for item in src.iterdir():
+                    if item.is_file():
+                        (dst / item.name).write_text(item.read_text(encoding="utf-8-sig"), encoding="utf-8")
+                    elif item.is_dir():
+                        _shutil.copytree(item, dst / item.name)
 
     # Set environment for server
     os.environ["AGENT_LITE_PORT"] = "3010"

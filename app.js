@@ -1619,7 +1619,7 @@ const I18N = {
     selectModel: "选择模型", reasoningEffort: "推理强度", pauseBtn: "暂停", sendTip: "发送消息", emptyTip: "请输入内容",
     addKey: "添加 Key", edit: "编辑", editing: "编辑中", models: "模型", baseUrl: "Base URL", apiKeys: "API Keys",
     temperature: "Temperature", maxTokens: "Max Tokens", memory: "记忆", newMemory: "新建记忆",
-    cancel: "取消", save: "保存", skills: "Skills", system: "系统",
+    cancel: "取消", save: "保存", skills: "Skills", system: "系统", deleteSkill: "删除 Skill",
     light: "浅色", dark: "深色", followSystem: "跟随系统",
     newFolder: "新建文件夹", refreshFiles: "刷新文件",
     availableModels: "可用模型", refreshModels: "刷新模型",
@@ -1680,7 +1680,7 @@ const I18N = {
     selectModel: "Select model", reasoningEffort: "Reasoning effort", pauseBtn: "Pause", sendTip: "Send", emptyTip: "Type a message",
     addKey: "Add Key", edit: "Edit", editing: "Editing", models: "Models", baseUrl: "Base URL", apiKeys: "API Keys",
     temperature: "Temperature", maxTokens: "Max Tokens", memory: "Memory", newMemory: "New Memory",
-    cancel: "Cancel", save: "Save", skills: "Skills", system: "System",
+    cancel: "Cancel", save: "Save", skills: "Skills", system: "System", deleteSkill: "Delete Skill",
     light: "Light", dark: "Dark", followSystem: "Follow System",
     newFolder: "New Folder", refreshFiles: "Refresh Files",
     availableModels: "Available Models", refreshModels: "Refresh Models",
@@ -2265,7 +2265,7 @@ function showSkillDetail(skill) {
 
     <div class="skill-detail-section"><div class="skill-detail-label">${t("skillPathLabel")}</div><div class="skill-detail-value">${escapeHtml(skill.path || `data/skills/${skill.dir || skill.name}/SKILL.md`)}</div></div>
     <div class="skill-detail-actions">
-      <button class="skill-delete-icon" id="skillDeleteBtn" title="删除 Skill">${t("delete")}</button>
+      <button class="skill-delete-icon" id="skillDeleteBtn" title="${t("deleteSkill")}">${t("delete")}</button>
     </div>
   `;
 
@@ -9710,7 +9710,7 @@ function showSkillDetailInSettings(skill) {
     <div class="skill-detail-section"><div class="skill-detail-label">${t("skillTools")}</div><div class="skill-detail-value">${escapeHtml((skill.tools || []).join(", ") || "-")}</div></div>
     <div class="skill-detail-section"><div class="skill-detail-label">${t("skillPathLabel")}</div><div class="skill-detail-value">${escapeHtml(skill.path || `data/skills/${skill.dir || skill.name}/SKILL.md`)}</div></div>
     <div class="skill-detail-actions">
-      <button class="skill-delete-icon" id="settingsSkillDelete" title="删除 Skill">${t("delete")}</button>
+      <button class="skill-delete-icon" id="settingsSkillDelete" title="${t("deleteSkill")}">${t("delete")}</button>
     </div>
   `;
 

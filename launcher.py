@@ -13,7 +13,6 @@ GITHUB_REPO = "fhy-A/agent-lite"
 
 def kill_existing():
     """Kill any already-running AgentLite.exe or pythonw server processes."""
-    import signal
     current_pid = os.getpid()
     killed = 0
     try:
@@ -33,20 +32,11 @@ def kill_existing():
             pid = int(pid_str)
             if pid == current_pid:
                 continue
-            # Only kill if it's an agent-lite process
             cmdline = " ".join(parts[:-1]).lower()
-            if "agent-lite" in cmdline or "agentlite" in cmdline or "launcher" in cmdline:
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                    killed += 1
-                except Exception:
-                    pass
-            elif "server.py" in cmdline:
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                    killed += 1
-                except Exception:
-                    pass
+            if any(kw in cmdline for kw in ["agent-lite", "agentlite", "launcher", "server.py"]):
+                subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                               capture_output=True, timeout=5)
+                killed += 1
     except Exception:
         pass
     return killed
@@ -68,7 +58,8 @@ def apply_pending_update():
         except Exception:
             pass
 VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/master/VERSION"
-RELEASE_EXE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest/download/AgentLite.exe"
+def release_exe_url(version):
+    return f"https://github.com/{GITHUB_REPO}/releases/download/v{version}/AgentLite-v{version}.exe"
 
 
 def get_base_dir():
@@ -155,7 +146,7 @@ def check_and_update():
                 progress.config(text=f"{pct}%")
                 pw.update()
 
-        urllib.request.urlretrieve(RELEASE_EXE_URL, str(new_exe), reporthook=report_progress)
+        urllib.request.urlretrieve(release_exe_url(remote), str(new_exe), reporthook=report_progress)
 
         pw.destroy()
         root.destroy()

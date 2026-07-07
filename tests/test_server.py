@@ -179,28 +179,220 @@ class TestIsSafeCommand(unittest.TestCase):
         ok, _ = server.is_safe_command("rm file.txt")
         self.assertFalse(ok)
 
-    def test_pipe_is_blocked(self):
+    # ── Updated: pipe now allowed ──
+    def test_pipe_is_allowed(self):
         ok, _ = server.is_safe_command("dir | findstr test")
-        self.assertFalse(ok)
+        self.assertTrue(ok)
 
-    def test_redirect_is_blocked(self):
+    def test_pipe_git_log(self):
+        ok, _ = server.is_safe_command("git log --oneline | head -5")
+        self.assertTrue(ok)
+
+    # ── Updated: redirect now allowed ──
+    def test_redirect_is_allowed(self):
         ok, _ = server.is_safe_command("dir > output.txt")
-        self.assertFalse(ok)
+        self.assertTrue(ok)
 
-    def test_semicolon_is_blocked(self):
+    def test_append_redirect_allowed(self):
+        ok, _ = server.is_safe_command("echo line >> log.txt")
+        self.assertTrue(ok)
+
+    # ── Semicolon: still blocks when combined with dangerous cmd ──
+    def test_semicolon_with_del_still_blocked(self):
         ok, _ = server.is_safe_command("dir; del file.txt")
         self.assertFalse(ok)
 
-    def test_python_c_is_blocked(self):
+    def test_semicolon_in_python_allowed(self):
+        ok, _ = server.is_safe_command("python -c \"x=1; y=2; print(x+y)\"")
+        self.assertTrue(ok)
+
+    def test_semicolon_in_python_import_allowed(self):
+        ok, _ = server.is_safe_command("python -c \"from docx import Document; print('ok')\"")
+        self.assertTrue(ok)
+
+    # ── Updated: python -c now allowed ──
+    def test_python_c_is_allowed(self):
         ok, _ = server.is_safe_command("python -c 'print(1)'")
+        self.assertTrue(ok)
+
+    def test_python_c_multiline_allowed(self):
+        ok, _ = server.is_safe_command("python -c \"for i in range(3):\\n print(i)\"")
+        self.assertTrue(ok)
+
+    # ── Updated: node -e now allowed ──
+    def test_node_e_is_allowed(self):
+        ok, _ = server.is_safe_command("node -e 'console.log(1)'")
+        self.assertTrue(ok)
+
+    # ── New: file write/create commands allowed ──
+    def test_mkdir_allowed(self):
+        ok, _ = server.is_safe_command("mkdir newdir")
+        self.assertTrue(ok)
+
+    def test_set_content_allowed(self):
+        ok, _ = server.is_safe_command("set-content test.txt 'hello'")
+        self.assertTrue(ok)
+
+    def test_copy_item_allowed(self):
+        ok, _ = server.is_safe_command("copy-item a.txt b.txt")
+        self.assertTrue(ok)
+
+    def test_move_item_allowed(self):
+        ok, _ = server.is_safe_command("move-item a.txt b.txt")
+        self.assertTrue(ok)
+
+    def test_out_file_allowed(self):
+        ok, _ = server.is_safe_command("out-file -FilePath out.txt")
+        self.assertTrue(ok)
+
+    def test_pip_install_allowed(self):
+        ok, _ = server.is_safe_command("pip install requests")
+        self.assertTrue(ok)
+
+    # ── New: expanded whitelist checks ──
+    def test_curl_allowed(self):
+        ok, _ = server.is_safe_command("curl https://example.com")
+        self.assertTrue(ok)
+
+    def test_cat_allowed(self):
+        ok, _ = server.is_safe_command("cat file.txt")
+        self.assertTrue(ok)
+
+    def test_grep_allowed(self):
+        ok, _ = server.is_safe_command("grep pattern file.txt")
+        self.assertTrue(ok)
+
+    def test_find_allowed(self):
+        ok, _ = server.is_safe_command("find . -name '*.py'")
+        self.assertTrue(ok)
+
+    def test_wc_allowed(self):
+        ok, _ = server.is_safe_command("wc -l file.txt")
+        self.assertTrue(ok)
+
+    def test_head_allowed(self):
+        ok, _ = server.is_safe_command("head -10 file.txt")
+        self.assertTrue(ok)
+
+    def test_tail_allowed(self):
+        ok, _ = server.is_safe_command("tail -20 file.txt")
+        self.assertTrue(ok)
+
+    def test_tasklist_allowed(self):
+        ok, _ = server.is_safe_command("tasklist")
+        self.assertTrue(ok)
+
+    def test_netstat_allowed(self):
+        ok, _ = server.is_safe_command("netstat -an")
+        self.assertTrue(ok)
+
+    def test_ipconfig_allowed(self):
+        ok, _ = server.is_safe_command("ipconfig")
+        self.assertTrue(ok)
+
+    def test_ping_allowed(self):
+        ok, _ = server.is_safe_command("ping localhost")
+        self.assertTrue(ok)
+
+    def test_git_branch_allowed(self):
+        ok, _ = server.is_safe_command("git branch -a")
+        self.assertTrue(ok)
+
+    def test_git_stash_allowed(self):
+        ok, _ = server.is_safe_command("git stash list")
+        self.assertTrue(ok)
+
+    def test_git_blame_allowed(self):
+        ok, _ = server.is_safe_command("git blame server.py")
+        self.assertTrue(ok)
+
+    def test_docker_ps_allowed(self):
+        ok, _ = server.is_safe_command("docker ps")
+        self.assertTrue(ok)
+
+    def test_get_process_allowed(self):
+        ok, _ = server.is_safe_command("get-process")
+        self.assertTrue(ok)
+
+    def test_cargo_allowed(self):
+        ok, _ = server.is_safe_command("cargo build")
+        self.assertTrue(ok)
+
+    def test_go_allowed(self):
+        ok, _ = server.is_safe_command("go build ./...")
+        self.assertTrue(ok)
+
+    def test_tar_create_allowed(self):
+        ok, _ = server.is_safe_command("tar -czf archive.tar.gz dir/")
+        self.assertTrue(ok)
+
+    # ── Deletion still blocked ──
+    def test_del_is_blocked(self):
+        ok, _ = server.is_safe_command("del file.txt")
         self.assertFalse(ok)
 
-    def test_node_e_is_blocked(self):
-        ok, _ = server.is_safe_command("node -e 'console.log(1)'")
+    def test_rm_is_blocked(self):
+        ok, _ = server.is_safe_command("rm file.txt")
         self.assertFalse(ok)
+
+    def test_rmdir_is_blocked(self):
+        ok, _ = server.is_safe_command("rmdir somedir")
+        self.assertFalse(ok)
+
+    def test_remove_item_is_blocked(self):
+        ok, _ = server.is_safe_command("remove-item file.txt")
+        self.assertFalse(ok)
+
+    def test_del_force_is_blocked(self):
+        ok, _ = server.is_safe_command("del /f /s C:\\important.txt")
+        self.assertFalse(ok)
+
+    # ── System destruction still blocked ──
+    def test_format_is_blocked(self):
+        ok, _ = server.is_safe_command("format C:")
+        self.assertFalse(ok)
+
+    def test_shutdown_is_blocked(self):
+        ok, _ = server.is_safe_command("shutdown /s")
+        self.assertFalse(ok)
+
+    def test_reg_is_blocked(self):
+        ok, _ = server.is_safe_command("reg delete HKLM\\something")
+        self.assertFalse(ok)
+
+    def test_net_user_is_blocked(self):
+        ok, _ = server.is_safe_command("net user admin password")
+        self.assertFalse(ok)
+
+    def test_net_start_is_blocked(self):
+        ok, _ = server.is_safe_command("net start wuauserv")
+        self.assertFalse(ok)
+
+    def test_sc_is_blocked(self):
+        ok, _ = server.is_safe_command("sc stop service")
+        self.assertFalse(ok)
+
+    def test_stop_process_is_blocked(self):
+        ok, _ = server.is_safe_command("stop-process -Name chrome")
+        self.assertFalse(ok)
+
+    # ── Command chaining / escape still blocked ──
+    def test_ampersand_chaining_blocked(self):
+        ok, _ = server.is_safe_command("dir & del file.txt")
+        self.assertFalse(ok)
+
+    def test_backtick_escape_blocked(self):
+        ok, _ = server.is_safe_command("dir `; del file.txt")
+        self.assertFalse(ok)
+
+    # ── Still unknown / edge cases ──
+    def test_empty_is_unsafe(self):
+        ok, msg = server.is_safe_command("")
+        self.assertFalse(ok)
+        self.assertIn("不能为空", msg)
 
     def test_unknown_prefix_is_unsafe(self):
-        ok, _ = server.is_safe_command("format C:")
+        ok, _ = server.is_safe_command("sudo rm -rf /")
         self.assertFalse(ok)
 
     def test_findstr_is_safe(self):
@@ -334,6 +526,101 @@ class TestToProjectRelative(unittest.TestCase):
         target = Path("/project")
         result = server.to_project_relative(root, target)
         self.assertEqual(result, ".")
+
+
+# ─── 2026-07-07: security / performance regression tests ───
+
+class TestSubprocessKwargs(unittest.TestCase):
+    """Verify DETACHED_PROCESS is no longer used (breaks stdout capture)."""
+    def test_no_detached_process_flag(self):
+        kwargs = server._hidden_subprocess_kwargs()
+        if not kwargs:  # non-Windows
+            self.assertTrue(True)
+            return
+        flags = kwargs["creationflags"]
+        DETACHED = 0x00000008
+        CREATE_NO_WINDOW = 0x08000000
+        self.assertEqual(flags, CREATE_NO_WINDOW,
+                         f"DETACHED_PROCESS flag present! Got 0x{flags:08x}, expected 0x{CREATE_NO_WINDOW:08x}")
+        self.assertFalse(flags & DETACHED,
+                         f"DETACHED_PROCESS must not be set, got 0x{flags:08x}")
+
+
+class TestSkipDirs(unittest.TestCase):
+    """Verify expanded SKIP_DIRS covers common large directories."""
+    def test_appdata_skipped(self):
+        self.assertIn("AppData", server.SKIP_DIRS)
+
+    def test_vscode_skipped(self):
+        self.assertIn(".vscode", server.SKIP_DIRS)
+
+    def test_node_modules_skipped(self):
+        self.assertIn("node_modules", server.SKIP_DIRS)
+
+    def test_one_drive_skipped(self):
+        self.assertIn("OneDrive", server.SKIP_DIRS)
+
+    def test_cookies_skipped(self):
+        self.assertIn("Cookies", server.SKIP_DIRS)
+
+    def test_npm_skipped(self):
+        self.assertIn(".npm", server.SKIP_DIRS)
+
+    def test_min_size(self):
+        self.assertGreater(len(server.SKIP_DIRS), 50,
+                           f"SKIP_DIRS only has {len(server.SKIP_DIRS)} entries, expected 50+")
+
+
+class TestDeniedRuntimePattern(unittest.TestCase):
+    """Verify DENIED_RUNTIME_PATTERN is disabled (python -c / node -e allowed)."""
+    def test_denied_runtime_removed(self):
+        self.assertFalse(hasattr(server, "DENIED_RUNTIME_PATTERN"),
+                         "DENIED_RUNTIME_PATTERN should not exist — python -c / node -e must be allowed")
+
+
+class TestDeniedCommandPattern(unittest.TestCase):
+    """Verify DENIED_COMMAND_PATTERN correctly blocks/allows."""
+    def test_does_not_block_semicolon_alone(self):
+        # `;` should NOT be in the character class; only `&` and backtick
+        self.assertFalse(server.DENIED_COMMAND_PATTERN.search("python -c a=1 print a"),  # no ;/&/` in this
+                         "DENIED pattern should not match safe Python")
+
+    def test_does_not_block_pipe(self):
+        self.assertIsNone(server.DENIED_COMMAND_PATTERN.search("dir | findstr x"))
+
+    def test_blocks_del(self):
+        self.assertIsNotNone(server.DENIED_COMMAND_PATTERN.search("del file.txt"))
+
+    def test_blocks_ampersand(self):
+        self.assertIsNotNone(server.DENIED_COMMAND_PATTERN.search("dir & del"))
+
+    def test_blocks_backtick(self):
+        self.assertIsNotNone(server.DENIED_COMMAND_PATTERN.search("dir `; del"))
+
+
+class TestSafeCommandPrefixes(unittest.TestCase):
+    """Verify whitelist has expected entries."""
+    def test_python_c_in_prefixes(self):
+        self.assertIn("python -c ", server.SAFE_COMMAND_PREFIXES)
+
+    def test_pip_in_prefixes(self):
+        self.assertIn("pip ", server.SAFE_COMMAND_PREFIXES)
+
+    def test_curl_in_prefixes(self):
+        self.assertIn("curl ", server.SAFE_COMMAND_PREFIXES)
+
+    def test_cat_in_prefixes(self):
+        self.assertIn("cat ", server.SAFE_COMMAND_PREFIXES)
+
+    def test_mkdir_in_prefixes(self):
+        self.assertIn("mkdir ", server.SAFE_COMMAND_PREFIXES)
+
+    def test_set_content_in_prefixes(self):
+        self.assertIn("set-content ", server.SAFE_COMMAND_PREFIXES)
+
+    def test_min_count(self):
+        self.assertGreater(len(server.SAFE_COMMAND_PREFIXES), 100,
+                           f"Only {len(server.SAFE_COMMAND_PREFIXES)} prefixes, expected 100+")
 
 
 if __name__ == "__main__":

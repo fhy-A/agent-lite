@@ -2100,7 +2100,9 @@ function showSkillDetail(skill) {
     <div class="skill-detail-section"><div class="skill-detail-label">工具</div><div class="skill-detail-value">${escapeHtml((skill.tools || []).join(", ") || "-")}</div></div>
 
     <div class="skill-detail-section"><div class="skill-detail-label">文件路径</div><div class="skill-detail-value">${escapeHtml(skill.path || `data/skills/${skill.dir || skill.name}/SKILL.md`)}</div></div>
-
+    <div class="skill-detail-actions">
+      <button class="skill-delete-icon" id="skillDeleteBtn" title="删除 Skill">删除</button>
+    </div>
   `;
 
   document.getElementById("skillToggleBtn").addEventListener("change", () => {
@@ -2110,6 +2112,8 @@ function showSkillDetail(skill) {
   });
 
   document.getElementById("skillEditBtn").addEventListener("click", () => openSkillEditor(skill));
+
+  document.getElementById("skillDeleteBtn").addEventListener("click", () => deleteSkillConfirm(skill.name, "skillDeleteBtn"));
 
 }
 
@@ -2230,11 +2234,15 @@ function toggleSkill(name) {
 
 
 
-async function deleteSkillConfirm(name) {
+async function deleteSkillConfirm(name, btnId = "skillDeleteBtn") {
 
-  const btn = document.getElementById("skillDeleteBtn");
+  const btn = document.getElementById(btnId);
 
-  document.querySelector(".key-delete-confirm")?.remove();
+  if (!btn) return;
+
+  // Remove any existing confirm bar in this panel
+  const panel = btn.closest(".skills-detail");
+  panel?.querySelector(".key-delete-confirm")?.remove();
 
   const confirm = document.createElement("div");
 
@@ -2263,8 +2271,16 @@ async function deleteSkillConfirm(name) {
       await loadSkills();
 
       renderSkillsList();
+      renderSettingsSkillsSidebar();
 
-      showSkillDetail(null);
+      // Refresh whichever detail panel is visible
+      const skill = state.skills.find((s) => s.name === name);
+      if (skill) {
+        showSkillDetail(skill);
+        showSkillDetailInSettings(skill);
+      } else {
+        showSkillDetail(null);
+      }
 
     } catch (err) {
 
@@ -4525,11 +4541,19 @@ async function loadConfig() {
 
   const config = await apiJson("/api/config");
 
-  if (els.projectRoot) els.projectRoot.value = config.projectRoot || "";
+  // Ensure projectRoot input always has a value (fallback to user home)
+  const root = config.projectRoot || config.userHome || "";
+  if (els.projectRoot) els.projectRoot.value = root;
 
   els.cwdPathText.textContent = config.projectRoot ? shortPath(config.projectRoot) : "~";
 
   els.projectRootShort.title = config.projectRoot || "点击管理项目目录";
+
+  // Set home button label to show actual path
+  const homeBtn = document.getElementById("cwdHomeBtn");
+  if (homeBtn && config.userHome) {
+    homeBtn.textContent = shortPath(config.userHome);
+  }
 
   await loadFiles("");
 
@@ -4539,10 +4563,10 @@ async function loadConfig() {
 
 async function saveProjectRoot(newPath) {
 
-  const path = (newPath || (els.projectRoot ? els.projectRoot.value : "") || "").trim();
+  // Use newPath explicitly (empty string = user home), fallback to current value if undefined
+  const path = (newPath !== undefined ? newPath : (els.projectRoot ? els.projectRoot.value : "")).trim();
 
-  if (!path) return;
-
+  // Allow empty path — server will default to user home directory
   const config = await apiJson("/api/config", {
 
     method: "POST",
@@ -4551,13 +4575,12 @@ async function saveProjectRoot(newPath) {
 
   });
 
+  // Update the hidden input so system prompt picks up the new value
+  if (els.projectRoot) els.projectRoot.value = config.projectRoot || "";
+
   els.cwdPathText.textContent = config.projectRoot ? shortPath(config.projectRoot) : "~";
 
   els.projectRootShort.title = config.projectRoot || "点击管理项目目录";
-
-  state._noProject = false;
-
-  localStorage.removeItem("agent-lite-no-project");
 
   addRecentFolder(config.projectRoot);
 
@@ -5028,7 +5051,7 @@ async function resolvePickedFile(file) {
 
     const message = err.message || "选择文件失败";
 
-    alert(message);
+    showToast(message, "error");
 
   } finally {
 
@@ -5282,7 +5305,7 @@ async function refreshModels() {
 
   if (keys.length === 0) {
 
-    alert("请先输入 API Key");
+    showToast("请先输入 API Key", "warning");
 
     return;
 
@@ -5458,7 +5481,7 @@ async function refreshModels() {
 
   } catch (err) {
 
-    alert(err.message);
+    showToast(err.message, "error");
 
   } finally {
 
@@ -7058,7 +7081,7 @@ async function commitPendingEdit() {
 
     els.confirmApplyEdit.textContent = "确认写入";
 
-    alert(`写入失败：${err.message}`);
+    showToast(`写入失败：${err.message}`, "error");
 
     return;
 
@@ -7332,6 +7355,46 @@ async function runAgentLoop(ctx = null) {
 
         await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
 
+        // ── Consecutive failure detection ──
+        const FAIL_SIGNALS = ["工具执行失败", "已被安全策略拦截", "文件不存在", "路径不存在",
+                              "unknown error", "binary file is not supported"];
+        const isFailure = (msg) => {
+          const c = msg.content || "";
+          if (msg.meta && msg.meta.action === "run_command" && !c.includes("工具执行失败")) {
+            return false; // commands that ran but had non-zero exit are not hard failures
+          }
+          return FAIL_SIGNALS.some(s => c.includes(s));
+        };
+
+        const recentResults = ctx.messages.filter(m => m.role === "tool-result").slice(-8);
+        let consecutiveFails = 0;
+        for (let i = recentResults.length - 1; i >= 0; i--) {
+          if (isFailure(recentResults[i])) { consecutiveFails++; }
+          else { break; }
+        }
+
+        if (consecutiveFails >= 5 && ctx._failureWarned < 5) {
+          ctx._failureWarned = 5;
+          ctx.messages.push({
+            role: "user",
+            content: "[系统] 已连续失败 5 次。请停止尝试，直接告诉用户哪里出了问题，不要再调用工具。"
+          });
+          renderSessionMessages(ctx.sessionId);
+          await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+          continue;
+        }
+        if (consecutiveFails >= 5) { break; } // already warned, stop
+
+        if (consecutiveFails >= 3 && round > 1 && ctx._failureWarned < 3) {
+          ctx._failureWarned = 3;
+          ctx.messages.push({
+            role: "user",
+            content: "[系统] 已连续失败 3 次。请换一个完全不同的方法，不要再重复已失败的命令。"
+          });
+          renderSessionMessages(ctx.sessionId);
+          await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+        }
+
       }
 
       continue;
@@ -7458,9 +7521,9 @@ async function runAgentLoop(ctx = null) {
 
 async function compactConversation() {
 
-  if (state.isStreaming) { alert("Please wait for the current task to finish before compacting."); return; }
+  if (state.isStreaming) { showToast("Please wait for the current task to finish before compacting.", "warning"); return; }
 
-  if (state.messages.length < 6) { alert("There are too few messages to compact."); return; }
+  if (state.messages.length < 6) { showToast("There are too few messages to compact.", "warning"); return; }
 
 
 
@@ -7468,7 +7531,7 @@ async function compactConversation() {
 
   const model = getSelectedModel();
 
-  if (!key || !model) { alert("Please configure the API key and model first."); return; }
+  if (!key || !model) { showToast("Please configure the API key and model first.", "warning"); return; }
 
 
 
@@ -7584,7 +7647,7 @@ async function compactConversation() {
 
     } catch (err) {
 
-      alert(`压缩失败：${err.message}`);
+      showToast(`压缩失败：${err.message}`, "error");
 
     } finally {
 
@@ -8046,7 +8109,23 @@ async function renderMemoryList() {
 
     document.querySelectorAll("[data-memory-delete]").forEach((btn) => {
 
-      btn.addEventListener("click", () => deleteMemory(btn.dataset.memoryDelete));
+      btn.addEventListener("click", () => {
+        document.querySelector(".key-delete-confirm")?.remove();
+        const name = btn.dataset.memoryDelete;
+        const confirm = document.createElement("div");
+        confirm.className = "key-delete-confirm";
+        confirm.innerHTML = `
+          <span>删除记忆「${escapeHtml(name)}」？此操作不可恢复。</span>
+          <button class="key-confirm-yes" type="button">确认</button>
+          <button class="key-confirm-no" type="button">取消</button>
+        `;
+        btn.closest(".memory-item")?.after(confirm);
+        confirm.querySelector(".key-confirm-yes").addEventListener("click", () => {
+          confirm.remove();
+          deleteMemory(name);
+        });
+        confirm.querySelector(".key-confirm-no").addEventListener("click", () => confirm.remove());
+      });
 
     });
 
@@ -8084,8 +8163,6 @@ async function editMemory(name) {
 
 async function deleteMemory(name) {
 
-  if (!window.confirm(`删除记忆 "${name}"？此操作不可恢复。`)) return;
-
   try {
 
     await apiJson(`/api/memory?file=${encodeURIComponent(name)}`, { method: "DELETE" });
@@ -8114,9 +8191,9 @@ async function saveMemorySubmit() {
 
   const body = els.memoryBody.value.trim();
 
-  if (!name) { alert("请输入记忆名称"); return; }
+  if (!name) { showToast("请输入记忆名称", "warning"); return; }
 
-  if (!body) { alert("请输入记忆内容"); return; }
+  if (!body) { showToast("请输入记忆内容", "warning"); return; }
 
   try {
 
@@ -8560,7 +8637,7 @@ function renderRecentFolders() {
 
     btn.addEventListener("click", () => {
 
-      saveProjectRoot(btn.dataset.path).catch((err) => alert(err.message));
+      saveProjectRoot(btn.dataset.path).catch((err) => showToast(err.message, "error"));
 
       cwdDropdown.classList.add("hidden");
 
@@ -8598,7 +8675,7 @@ async function pickFolder() {
 
     await saveProjectRoot(data.path);
 
-  } catch (err) { alert(err.message); }
+  } catch (err) { showToast(err.message, "error"); }
 
 }
 
@@ -8612,21 +8689,11 @@ function cwdPickFolderAction() { cwdDropdown.classList.add("hidden"); pickFolder
 
 function cwdNewFolderAction() { document.getElementById("newFolderModal").classList.remove("hidden"); document.getElementById("newFolderName").value = ""; document.getElementById("newFolderName").focus(); }
 
-function cwdClearFolderAction() {
+function cwdUseHomeFolder() {
 
   cwdDropdown.classList.add("hidden");
 
-  els.cwdPathText.textContent = "未选择";
-
-  els.projectRootShort.title = "未选择项目目录";
-
-  state._fileItems = [];
-
-  state._noProject = true;
-
-  localStorage.setItem("agent-lite-no-project", "1");
-
-  renderFileTree();
+  saveProjectRoot("");
 
 }
 
@@ -8672,7 +8739,7 @@ document.getElementById("confirmNewFolder").addEventListener("click", async () =
 
     await loadFiles(state.currentDir);
 
-  } catch (err) { alert(err.message); }
+  } catch (err) { showToast(err.message, "error"); }
 
 });
 
@@ -8692,7 +8759,7 @@ function hideNewFolder() {
 
 }
 
-els.refreshFiles.addEventListener("click", (e) => { e.stopPropagation(); loadFiles().catch((err) => alert(err.message)); });
+els.refreshFiles.addEventListener("click", (e) => { e.stopPropagation(); loadFiles().catch((err) => showToast(err.message, "error")); });
 
 els.newFolderBtn.addEventListener("click", (e) => { e.stopPropagation(); cwdNewFolderAction(); });
 
@@ -8704,7 +8771,7 @@ els.refreshPreview.addEventListener("click", () => {
 
   if (!state.previewPath) return;
 
-  loadFile(state.previewPath).catch((err) => alert(err.message));
+  loadFile(state.previewPath).catch((err) => showToast(err.message, "error"));
 
 });
 
@@ -9380,6 +9447,9 @@ function showSkillDetailInSettings(skill) {
     <div class="skill-detail-section"><div class="skill-detail-label">关键词</div><div class="skill-detail-value">${escapeHtml((skill.keywords || []).join(", ") || "-")}</div></div>
     <div class="skill-detail-section"><div class="skill-detail-label">工具</div><div class="skill-detail-value">${escapeHtml((skill.tools || []).join(", ") || "-")}</div></div>
     <div class="skill-detail-section"><div class="skill-detail-label">文件路径</div><div class="skill-detail-value">${escapeHtml(skill.path || `data/skills/${skill.dir || skill.name}/SKILL.md`)}</div></div>
+    <div class="skill-detail-actions">
+      <button class="skill-delete-icon" id="settingsSkillDelete" title="删除 Skill">删除</button>
+    </div>
   `;
 
   document.getElementById("settingsSkillToggle").addEventListener("change", () => {
@@ -9389,6 +9459,8 @@ function showSkillDetailInSettings(skill) {
   });
 
   document.getElementById("settingsSkillEdit").addEventListener("click", () => openSkillEditor(skill));
+
+  document.getElementById("settingsSkillDelete").addEventListener("click", () => deleteSkillConfirm(skill.name, "settingsSkillDelete"));
 
 }
 
@@ -9903,35 +9975,12 @@ async function init() {
 
 
 
-  // Restore no-project state before loading files
-
-  if (localStorage.getItem("agent-lite-no-project") === "1") {
-
-    state._noProject = true;
-
-    els.cwdPathText.textContent = "未选择";
-
-    els.projectRootShort.title = "未选择项目目录";
-
-  }
-
-
-
   renderMessages();
 
-  if (!state._noProject) {
-
-    await loadConfig().catch((err) => {
-
-      els.fileTree.innerHTML = `<div class="muted-line" style="padding:8px;">${escapeHtml(err.message)}</div>`;
-
-    });
-
-  } else {
-
-    renderFileTree();
-
-  }
+  // Always load config — server defaults to user home when no project is set
+  await loadConfig().catch((err) => {
+    els.fileTree.innerHTML = `<div class="muted-line" style="padding:8px;">${escapeHtml(err.message)}</div>`;
+  });
 
   await loadProjectContext();
 

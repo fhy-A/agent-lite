@@ -36,6 +36,7 @@
         </header>
         <div class="cwd-inline">
           <div class="cwd-dropdown">
+            <input type="hidden" id="projectRoot" value="" />
             <button id="projectRootShort" class="cwd-name" title="点击管理项目目录">
               <span class="cwd-icon">📁</span>
               <span id="cwdPathText">~\api中转站</span>
@@ -43,7 +44,7 @@
             <div class="cwd-dropdown-menu hidden" id="cwdDropdown">
               <div class="cwd-dropdown-section" id="cwdRecentFolders"></div>
               <button class="cwd-dropdown-item" onclick="cwdPickFolderAction()">📂 选择文件夹...</button>
-              <button class="cwd-dropdown-item" onclick="cwdClearFolderAction()">不选择文件夹</button>
+              <button class="cwd-dropdown-item" id="cwdHomeBtn" onclick="cwdUseHomeFolder()">🏠 ~</button>
             </div>
           </div>
         </div>

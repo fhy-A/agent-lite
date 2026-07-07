@@ -40,84 +40,117 @@ def _hidden_subprocess_kwargs():
     si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     si.wShowWindow = subprocess.SW_HIDE
     # CREATE_NO_WINDOW (0x08000000): prevent console allocation
-    # DETACHED_PROCESS  (0x00000008): don't inherit parent console
+    # NOTE: DETACHED_PROCESS (0x00000008) breaks stdout capture — do NOT combine
     return {
         "startupinfo": si,
-        "creationflags": 0x08000008,
+        "creationflags": 0x08000000,
     }
 
 
 SKIP_DIRS = {
-    ".git",
-    ".hg",
-    ".svn",
-    ".next",
-    ".venv",
-    "venv",
-    "env",
-    "__pycache__",
-    "node_modules",
-    "dist",
-    "build",
-    "coverage",
-    ".turbo",
-    ".cache",
-    "logs",
-    "backups",
-    "sessions",
-    "file-backups",
+    # VCS
+    ".git", ".hg", ".svn",
+    # Build / deps
+    ".next", ".nuxt", ".venv", "venv", "env", ".env",
+    "__pycache__", "node_modules", ".npm", ".yarn", ".pnpm",
+    "dist", "build", "coverage", ".turbo", ".cache",
+    "logs", "backups", "sessions", "file-backups",
+    ".tox", ".eggs", "*.egg-info",
+    # IDE / editors
+    ".vscode", ".vscode-shared", ".idea", ".vs",
+    # Windows system (huge)
+    "AppData", "Application Data", "Local Settings",
+    "Cookies", "Recent", "NetHood", "PrintHood", "SendTo",
+    "Templates", "「开始」菜单", "Start Menu",
+    "ntuser.dat", "ntuser.dat.log1", "ntuser.dat.log2",
+    "NTUSER.DAT", "ntuser.ini",
+    # Agent / AI tool data
+    ".claude", ".codex", ".cursor", ".gemini", ".copilot",
+    ".agent-lite", ".agents", ".clawd", ".openclaw",
+    ".qclaw", ".qclaw-backups", ".hi-codex", ".eigent",
+    ".minimax-agent-cn", ".hyperframes",
+    ".pi", ".duokuai", ".mem0", ".tavily", ".streamlit",
+    # Cloud sync
+    "OneDrive", "WPS Cloud Files", "WPSDrive",
+    "Yinxiang Biji", "xwechat_files",
+    # Package managers
+    ".chocolatey", ".docker", "ansel",
+    # Misc large dirs
+    ".config", ".ssh", ".cc-switch", "netfix", "source",
+    "My Documents", "Downloads", "Music", "Videos", "Pictures",
+    "3D Objects", "Contacts", "Favorites", "Links",
+    "Saved Games", "Searches",
 }
 
 SAFE_COMMAND_PREFIXES = (
-    # 文件查看
-    "dir",
-    "dir ",
-    "ls",
-    "type ",
-    "findstr ",
+    # -- File viewing / search --
+    "dir", "dir ", "ls",
+    "type ", "cat ",
+    "more ", "less ",
+    "head ", "tail ",
+    "findstr ", "grep ", "find ", "rg ",
     "select-string ",
-    "get-childitem",
-    "get-content ",
-    "where ",
-    # 解释器 + 包管理（只放行运行/构建，-c/-e 被 DENIED_RUNTIME_PATTERN 拦截）
-    "python ",
-    "python -m ",
-    "py ",
-    "node ",
-    "npm ",
-    "npx ",
-    "pnpm ",
-    "yarn ",
-    # 版本控制
-    "git status",
-    "git diff",
-    "git log",
-    "git show",
-    # 容器
-    "docker compose ps",
-    "docker compose logs",
-    "docker compose config",
-    # 系统信息（纯查看，只读）
-    "echo",
-    "echo ",
-    "date ",
-    "time ",
-    "get-date",
-    "ver",
-    "whoami",
-    "hostname",
-    "systeminfo",
+    "get-childitem", "get-content ", "get-item ", "get-itemproperty ",
+    "test-path ", "resolve-path ",
+    "where ", "where.exe ", "which ",
+    "wc ", "sort ", "uniq ", "cut ", "tr ",
+    "tree ", "du ", "df ",
+    "file ", "stat ",
+    # -- Interpreters / package managers (-c/-e no longer blocked) --
+    "python ", "python -c ", "python -m ",
+    "python3 ", "py ",
+    "node ", "node -e ",
+    "npm ", "npx ", "pnpm ", "yarn ",
+    "ruby ", "perl ",
+    # -- Version control --
+    "git status", "git diff", "git log", "git show",
+    "git branch", "git remote", "git tag",
+    "git config", "git stash", "git describe",
+    "git rev-parse", "git rev-list", "git shortlog", "git blame",
+    # -- Containers --
+    "docker compose ps", "docker compose logs", "docker compose config",
+    "docker ps", "docker images", "docker inspect", "docker logs",
+    # -- System info --
+    "echo", "echo ",
+    "date ", "time ",
+    "get-date", "get-location", "get-psdrive", "get-volume",
+    "ver", "whoami", "hostname", "systeminfo",
+    "tasklist", "get-process", "get-service",
+    "netstat", "ipconfig", "ping ", "nslookup ", "tracert ",
+    "set ", "printenv", "env",
+    # -- Network / HTTP --
+    "curl ", "wget ",
+    "invoke-webrequest ", "invoke-restmethod ",
+    # -- Archives (list/test only) --
+    "tar -t", "tar --list",
+    "unzip -l", "unzip -t",
+    "7z l", "7z t",
+    # -- File comparison --
+    "comp ", "fc ", "diff ",
+    # -- Misc --
+    "get-command", "get-help ", "get-alias",
+    "measure-object", "group-object", "sort-object", "select-object",
+    "format-list", "format-table", "out-string",
+    # -- File write / create / copy --
+    "set-content ", "add-content ", "out-file ",
+    "new-item ", "mkdir ", "md ",
+    "copy-item ", "move-item ", "copy ", "move ", "xcopy ", "robocopy ",
+    "rename-item ", "rename ", "ren ",
+    "tar -c", "tar -x", "tar --create", "tar --extract",
+    "unzip ", "7z x", "7z a",
+    # -- Package management --
+    "pip ", "pip3 ", "python -m pip ",
+    "gem ", "cargo ", "go ", "dotnet ",
+    "nuget ", "choco ",
 )
 
 DENIED_COMMAND_PATTERN = re.compile(
-    r"(^|\s)(del|erase|rmdir|rd|rm|remove-item|move-item|copy-item|set-content|add-content|"
-    r"format|shutdown|restart-computer|reg|takeown|icacls|net\s+user)\b|[;&|<>`]",
-    re.IGNORECASE,
-)
-
-# Block inline code execution via runtime interpreters (python -c, node -e, etc.)
-DENIED_RUNTIME_PATTERN = re.compile(
-    r"\b(python|python3?|py|node|ruby|perl)\s+(?:-[ce]\s+|--(?:command|eval|execute)\s+)",
+    # Only block: deletion, system destruction, command chaining / esca
+    r"(^|\s)(del|erase|rmdir|rd|rm|remove-item|Remove-Item|Remove-ItemProperty|"
+    r"format|shutdown|restart-computer|reg|takeown|icacls|net\s+user|"
+    r"sc\s+|net\s+start|net\s+stop|stop-process|kill|"
+    r"rmdir\s+/s|del\s+/f|rd\s+/s)\b|"
+    r"[&`]",
     re.IGNORECASE,
 )
 
@@ -180,6 +213,11 @@ def load_config():
     config = read_json(CONFIG_PATH, {})
     config.setdefault("projectRoot", default_project_root())
     config.setdefault("newApiBaseUrl", "")
+    # Ensure projectRoot is never empty — fall back to user home
+    if not config.get("projectRoot"):
+        config["projectRoot"] = default_project_root()
+    # Always include user home so the client can display it
+    config["userHome"] = str(Path.home().resolve())
     return config
 
 
@@ -471,10 +509,30 @@ def session_summary(session):
 def resolve_project_path(relative_path=""):
     config = load_config()
     root = Path(config["projectRoot"]).expanduser().resolve()
-    target = (root / (relative_path or "")).resolve()
-    if root != target and root not in target.parents:
-        raise ValueError("path is outside project root")
-    return root, target
+    home = Path.home().resolve()
+    rel = (relative_path or "").strip()
+
+    # Resolve absolute paths directly; relative paths resolve against project root
+    if rel and Path(rel).is_absolute():
+        target = Path(rel).expanduser().resolve()
+    else:
+        target = (root / rel).resolve() if rel else root.resolve()
+
+    # Inside project root — use it
+    if root == target or root in target.parents:
+        return root, target
+
+    # Outside project root but inside user home — silently expand to home
+    if home == target or home in target.parents:
+        return home, target
+
+    # Relative path not found in project root — try home as fallback
+    if rel and not Path(rel).is_absolute():
+        home_target = (home / rel).resolve()
+        if home_target.exists():
+            return home, home_target
+
+    raise ValueError("path is outside project root")
 
 
 def to_project_relative(root, target):
@@ -539,8 +597,7 @@ def is_safe_command(command):
         return False, "命令不能为空"
     if DENIED_COMMAND_PATTERN.search(normalized):
         return False, "命令包含写入、删除、重定向或危险操作，已被安全策略拦截"
-    if DENIED_RUNTIME_PATTERN.search(normalized):
-        return False, "不允许通过 -c/-e 等参数执行内联代码"
+    # python -c / node -e allowed; destructive ops caught by DENIED_COMMAND_PATTERN
     if not any(lower == prefix.strip() or lower.startswith(prefix) for prefix in SAFE_COMMAND_PREFIXES):
         return False, "当前只允许查看、测试、构建、git diff/status/log、docker compose 查询等低风险命令"
     return True, ""
@@ -1265,10 +1322,15 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         body = self.read_body_json()
         updates = {}
         if "projectRoot" in body:
-            root = Path(body["projectRoot"]).expanduser().resolve()
-            if not root.exists() or not root.is_dir():
-                raise ValueError("项目目录不存在或不是文件夹")
-            updates["projectRoot"] = str(root)
+            raw = body["projectRoot"]
+            if raw:
+                root = Path(raw).expanduser().resolve()
+                if not root.exists() or not root.is_dir():
+                    raise ValueError("项目目录不存在或不是文件夹")
+                updates["projectRoot"] = str(root)
+            else:
+                # Empty path → use user home directory
+                updates["projectRoot"] = str(Path.home().resolve())
         self.send_json(save_config(updates))
 
     def get_files(self, relative_path):
@@ -1530,23 +1592,38 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         if start.is_file():
             return [start]
 
-        # Apply glob pattern to filter files
+        # Apply glob pattern to filter files (os.walk with pruning)
         if glob_pattern:
+            import fnmatch as _fnmatch
+            candidates = []
             try:
-                candidates = list(start.glob(glob_pattern))
-                # Also search subdirectories: rglob
-                if "**" not in glob_pattern:
-                    candidates += list(start.rglob(glob_pattern))
-                candidates = sorted(set(candidates))
+                for dirpath, dirnames, filenames in os.walk(str(start)):
+                    dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+                    dirpath_p = Path(dirpath)
+                    for name in filenames + dirnames:
+                        full = dirpath_p / name
+                        if _fnmatch.fnmatch(full.name, glob_pattern):
+                            candidates.append(full)
+                        elif "**" in glob_pattern:
+                            try:
+                                if _fnmatch.fnmatch(str(full.relative_to(start)), glob_pattern):
+                                    candidates.append(full)
+                            except ValueError:
+                                pass
+                    if len(candidates) >= 5000:
+                        break
             except Exception:
                 candidates = []
         else:
             candidates = []
-            for path in start.rglob("*"):
-                if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
-                    continue
-                if path.is_file():
-                    candidates.append(path)
+            for dirpath, dirnames, filenames in os.walk(str(start)):
+                # Prune skipped dirs BEFORE recursing
+                dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+                for fn in filenames:
+                    candidates.append(Path(dirpath) / fn)
+                if len(candidates) >= 5000:
+                    break
+            candidates = [p for p in candidates if p.is_file()]
 
         # Filter: skip dirs
         candidates = [p for p in candidates if p.is_file()]
@@ -1658,41 +1735,65 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         if not start.exists():
             raise ValueError("搜索路径不存在")
 
+        import fnmatch as _fnmatch
         results = []
         try:
-            for path in start.rglob(pattern):
-                if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
-                    continue
-                rel = to_project_relative(root, path)
-                if path.is_dir():
-                    results.append({"path": rel, "type": "dir"})
-                elif path.is_file():
-                    try:
-                        size = path.stat().st_size
-                    except OSError:
-                        size = 0
-                    results.append({"path": rel, "type": "file", "size": size})
+            for dirpath, dirnames, filenames in os.walk(str(start)):
+                # Prune skipped dirs BEFORE recursing
+                dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+                dirpath_p = Path(dirpath)
+                for name in filenames + dirnames:
+                    full = dirpath_p / name
+                    if not _fnmatch.fnmatch(full.name, pattern) and not _fnmatch.fnmatch(str(full.relative_to(start)) if start != full else full.name, pattern):
+                        # Also check relative path match for ** patterns
+                        try:
+                            rel_pat = str(full.relative_to(start))
+                        except ValueError:
+                            continue
+                        if not _fnmatch.fnmatch(rel_pat, pattern):
+                            continue
+                    rel = to_project_relative(root, full)
+                    if full.is_dir():
+                        results.append({"path": rel, "type": "dir"})
+                    elif full.is_file():
+                        try:
+                            size = full.stat().st_size
+                        except OSError:
+                            size = 0
+                        results.append({"path": rel, "type": "file", "size": size})
+                    if len(results) >= 200:
+                        break
                 if len(results) >= 200:
                     break
         except Exception as exc:
             raise ValueError(f"glob 模式无效：{exc}")
 
         if not results:
-            root_rel = to_project_relative(root, root)
             results = []
-            # Try rglob on root
-            for path in root.rglob(pattern):
-                if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
-                    continue
-                rel = to_project_relative(root, path)
-                if path.is_dir():
-                    results.append({"path": rel, "type": "dir"})
-                elif path.is_file():
-                    try:
-                        size = path.stat().st_size
-                    except OSError:
-                        size = 0
-                    results.append({"path": rel, "type": "file", "size": size})
+            # Try walk on root
+            for dirpath, dirnames, filenames in os.walk(str(root)):
+                dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+                dirpath_p = Path(dirpath)
+                for name in filenames + dirnames:
+                    full = dirpath_p / name
+                    if not _fnmatch.fnmatch(full.name, pattern):
+                        try:
+                            rel_pat = str(full.relative_to(root))
+                        except ValueError:
+                            continue
+                        if not _fnmatch.fnmatch(rel_pat, pattern):
+                            continue
+                    rel = to_project_relative(root, full)
+                    if full.is_dir():
+                        results.append({"path": rel, "type": "dir"})
+                    elif full.is_file():
+                        try:
+                            size = full.stat().st_size
+                        except OSError:
+                            size = 0
+                        results.append({"path": rel, "type": "file", "size": size})
+                    if len(results) >= 200:
+                        break
                 if len(results) >= 200:
                     break
 
@@ -1999,16 +2100,21 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         backup_path = None
         size = 0
         if target.is_file():
+            size = target.stat().st_size
             try:
-                content, _, _ = read_text_limited(target, MAX_TOOL_READ_BYTES)
                 stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
                 safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", rel)
                 backup_path = FILE_BACKUP_DIR / f"{safe_name}.{stamp}.bak"
                 backup_path.parent.mkdir(parents=True, exist_ok=True)
-                backup_path.write_text(content, encoding="utf-8")
+                # Try text first, fall back to binary copy
+                try:
+                    content, _, _ = read_text_limited(target, MAX_TOOL_READ_BYTES)
+                    backup_path.write_text(content, encoding="utf-8")
+                except ValueError:
+                    import shutil
+                    shutil.copy2(target, backup_path)
             except Exception as exc:
                 raise ValueError(f"备份文件失败: {exc}")
-            size = target.stat().st_size
             target.unlink()
         else:
             target.rmdir()

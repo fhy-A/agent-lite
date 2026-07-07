@@ -3255,6 +3255,18 @@ body.theme-dark .syn-fn { color: #61afef; }
   color: var(--muted); cursor: pointer;
 }
 .skill-edit-icon:hover { color: var(--text); background: var(--panel-2); border-color: var(--line); }
+.skill-delete-icon {
+  height: 26px; padding: 0 10px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line); border-radius: 6px; background: transparent;
+  color: var(--muted); cursor: pointer; font-size: 12px; white-space: nowrap;
+}
+.skill-delete-icon:hover { color: var(--red); background: var(--red-bg); border-color: color-mix(in srgb, var(--red) 30%, var(--line)); }
+.skill-detail-actions {
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  margin-top: 14px; padding-top: 12px;
+  border-top: 1px solid var(--line); min-height: 28px;
+}
+.skill-detail-actions:empty { display: none; }
 
 /* Toggle switch */
 .toggle-switch { cursor: pointer; display: flex; align-items: center; }

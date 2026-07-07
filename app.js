@@ -1445,13 +1445,13 @@ function bindKeyEditorEvents(container) {
 
         area.innerHTML = `
 
-          <textarea id="keyBulkInput" class="key-bulk-input" placeholder="每行输入一个 key，可以粘贴多个 key；空行会自动跳过。" rows="5"></textarea>
+          <textarea id="keyBulkInput" class="key-bulk-input" placeholder="${t("keyBulkPlaceholder")}" rows="5"></textarea>
 
           <div class="key-bulk-actions">
 
-            <button id="keyBulkSave" class="mini-btn" type="button">保存</button>
+            <button id="keyBulkSave" class="mini-btn" type="button">${t("save")}</button>
 
-            <button id="keyBulkCancel" class="mini-btn" type="button">取消</button>
+            <button id="keyBulkCancel" class="mini-btn" type="button">${t("cancel")}</button>
 
           </div>`;
 
@@ -1620,6 +1620,7 @@ const I18N = {
     addKey: "添加 Key", edit: "编辑", editing: "编辑中", models: "模型", baseUrl: "Base URL", apiKeys: "API Keys",
     temperature: "Temperature", maxTokens: "Max Tokens", memory: "记忆", newMemory: "新建记忆",
     cancel: "取消", save: "保存", skills: "Skills", system: "系统", deleteSkill: "删除 Skill",
+    keyBulkPlaceholder: "每行输入一个 key，可以粘贴多个 key；空行会自动跳过。",
     light: "浅色", dark: "深色", followSystem: "跟随系统",
     newFolder: "新建文件夹", refreshFiles: "刷新文件",
     availableModels: "可用模型", refreshModels: "刷新模型",
@@ -1681,6 +1682,7 @@ const I18N = {
     addKey: "Add Key", edit: "Edit", editing: "Editing", models: "Models", baseUrl: "Base URL", apiKeys: "API Keys",
     temperature: "Temperature", maxTokens: "Max Tokens", memory: "Memory", newMemory: "New Memory",
     cancel: "Cancel", save: "Save", skills: "Skills", system: "System", deleteSkill: "Delete Skill",
+    keyBulkPlaceholder: "One key per line, paste multiple keys; blank lines are skipped.",
     light: "Light", dark: "Dark", followSystem: "System",
     newFolder: "New Folder", refreshFiles: "Refresh Files",
     availableModels: "Available Models", refreshModels: "Refresh Models",

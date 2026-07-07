@@ -1640,6 +1640,7 @@ const I18N = {
     systemPromptHint: "这里作为 Agent 的系统提示词", resetDefault: "恢复默认",
     language: "语言", theme: "主题", settings: "设置",
     dragSort: "拖拽排序", keyNamePlaceholder: "名称（可选）",
+    collapseExpand: "点击收起/展开",
     toggleVisibility: "显示/隐藏", enabledStatus: "已启用", disabledStatus: "已禁用",
   },
   en: {
@@ -1715,6 +1716,7 @@ const I18N = {
     systemPromptHint: "This serves as the Agent's system prompt", resetDefault: "Reset to Default",
     language: "Language", theme: "Theme", settings: "Settings",
     dragSort: "Drag to sort", keyNamePlaceholder: "Name (optional)",
+    collapseExpand: "Click to collapse/expand",
     toggleVisibility: "Show/Hide", enabledStatus: "Enabled", disabledStatus: "Disabled",
   },
 };

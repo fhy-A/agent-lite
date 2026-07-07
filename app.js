@@ -970,7 +970,7 @@ const defaultSystemPrompt = `
 - 搜索文件名用 glob_files，不要用 run_command 调 dir/ls
 - 读文件用 read_file，尽量指定行范围，避免全文件读取
 - 写文件走 propose_edit 生成 diff，用户确认后写入
-- run_command 仅用于查看、测试、构建、git 查询等低风险命令
+- run_command 仅用于查看、测试、构建、git 查询等低风险命令。禁止启动持续运行的服务（Flask/Django/HTTP Server），用 read_file 和 python -c 检查代码即可
 - 独立工具可以并行调用，不确定文件位置时先用 list_files 或 glob_files 定位
 - task 子 Agent 用于独立的并行搜索和分析任务
 
@@ -1795,7 +1795,7 @@ function getSystemPrompt(options = {}) {
   const now = new Date();
   const dateStr = now.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", weekday: "long" });
   const timeStr = now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-  const parts = [customPrompt, `当前时间：${dateStr} ${timeStr}（北京时间）`, `项目根目录：${els.projectRoot?.value || "未设置"}`, `Agent Lite 版本：${state.appVersion || "unknown"}`];
+  const parts = [customPrompt, `当前时间：${dateStr} ${timeStr}（北京时间）`, `项目根目录：${els.projectRoot?.value || "未设置"}`, `提示：项目目录外的文件（如 Desktop、Documents）也可以直接尝试读取，系统会自动处理路径权限。`, `Agent Lite 版本：${state.appVersion || "unknown"}`];
 
   if (state.projectContext?.found) {
 
@@ -2995,7 +2995,8 @@ function renderAnsi(text) {
 
       .join("");
 
-    return `<div class="code-block"><div class="code-head"><span>${escapeHtml(lang || "text")}</span><button class="copy-code" type="button">copy</button></div><pre class="code-lines">${lineHtml}</pre></div>`;
+    const codeId = "cb-" + Math.random().toString(36).slice(2, 10);
+    return `<div class="code-block"><div class="code-head"><span>${escapeHtml(lang || "text")}</span><button class="copy-code" type="button" data-code-id="${codeId}">copy</button></div><pre class="code-lines" id="${codeId}">${lineHtml}</pre></div>`;
 
   };
 
@@ -3054,6 +3055,27 @@ function bindCopyButtons() {
       event.stopPropagation();
 
       applyPendingEdit(btn.dataset.editId);
+
+    });
+
+  });
+
+  document.querySelectorAll(".reject-edit-btn").forEach((btn) => {
+
+    btn.addEventListener("click", (event) => {
+
+      event.stopPropagation();
+
+      const editId = btn.dataset.editId;
+      // Mark as rejected on the message meta (persists across re-renders)
+      for (const msg of state.messages) {
+        if (msg.meta?.pendingEditId === editId) msg.meta.rejected = true;
+      }
+      if (state.pendingEdits[editId]) state.pendingEdits[editId].resolved = true;
+      renderMessages();
+
+      state._rejectedEditId = editId;
+      if (state._editResolver) state._editResolver("reject");
 
     });
 
@@ -3146,7 +3168,7 @@ function renderToolMessage(msg) {
   const target = _toolTarget(meta);
   const summary = isCall ? "" : _toolResultSummary(msg);
   const pendingId = meta.pendingEditId;
-  const applied = pendingId && state.pendingEdits[pendingId]?.applied;
+  const applied = !!(resultMsg?.meta?.applied);
   const cls = isCall ? "call" : "result";
   const content = getMsgText(msg);
   const error = !isCall && _isToolError(content);
@@ -3166,7 +3188,8 @@ function renderToolMessage(msg) {
       </summary>
       ${hasBody ? `<div class="tool-inline-body">${renderMarkdownLite(content)}</div>` : ""}
     </details>
-    ${pendingId && applied ? `<div class="apply-edit-bar done"><span class="apply-edit-done">✓ 已应用</span></div>` : ""}
+    ${pendingId && applied ? `<div class="apply-edit-bar done"><span class="apply-edit-done">已应用</span></div>` : ""}
+    ${pendingId && resultMsg?.meta?.rejected ? `<div class="apply-edit-bar rejected"><span class="apply-edit-rejected">已拒绝</span></div>` : ""}
   `;
 }
 function renderProcessAssistant(msg) {
@@ -3272,8 +3295,9 @@ function renderToolSection(tools, isStreaming) {
     const statusClass = _toolStatusClass(statusLabel);
     const target = _toolTarget(meta);
     const pendingId = (resultMsg?.meta || {}).pendingEditId;
-    const applied = pendingId && state.pendingEdits[pendingId]?.applied;
-    const showApplyBar = pendingId && !applied;
+    const applied = !!(resultMsg?.meta?.applied);
+    const rejected = !!(resultMsg?.meta?.rejected);
+    const showApplyBar = pendingId && !applied && !rejected;
     const summary = resultMsg ? _toolResultSummary(resultMsg) : "";
     const hasBody = resultContent.length > 0 && action !== "read_file";
     const needsReview = pendingId && !applied;
@@ -3289,10 +3313,14 @@ function renderToolSection(tools, isStreaming) {
     if (hasBody) html += `<div class="tool-inline-body">${renderMarkdownLite(resultContent)}</div>`;
     html += `</details>`;
     if (showApplyBar) {
-      html += `<div class="apply-edit-bar"><button class="apply-edit-btn" type="button" data-edit-id="${pendingId}">Apply edit</button><span class="apply-edit-hint">Write changes to file</span></div>`;
+      const canReject = getPermissionProfile() !== "bypass";
+      html += `<div class="apply-edit-bar"><button class="apply-edit-btn" type="button" data-edit-id="${pendingId}">Apply edit</button>${canReject ? `<button class="reject-edit-btn" type="button" data-edit-id="${pendingId}">Reject</button>` : ""}<span class="apply-edit-hint">Write changes to file</span></div>`;
     }
     if (pendingId && applied) {
       html += `<div class="apply-edit-bar done"><span class="apply-edit-done">Applied</span></div>`;
+    }
+    if (pendingId && (resultMsg?.meta || {}).rejected) {
+      html += `<div class="apply-edit-bar rejected"><span class="apply-edit-rejected">Rejected</span></div>`;
     }
     return html;
   }).join("");
@@ -3421,7 +3449,8 @@ function renderMessages() {
 
         } else if (m.role === "tool-result") {
 
-          // Orphan result
+          // Orphan result — skip apply_edit (user-triggered, already shown on its propose_edit card)
+          if (m.meta?.action === "apply_edit") { i++; continue; }
 
           tools.push({ callMsg: null, resultMsg: m });
 
@@ -3513,6 +3542,8 @@ function renderMessages() {
     }
 
     if (msg.role === "user") {
+
+      if (msg.meta?._system) return ""; // hide system injection messages
 
       const origIdx = state.messages.indexOf(msg);
 
@@ -5967,10 +5998,6 @@ function showInlineConfirm(tool) {
 
     const action = tool.action || "tool";
 
-    const icons = { run_command: "⚡", write_file: "📝", delete_file: "🗑️" };
-
-    const icon = icons[action] || "🔧";
-
     const detail = describeToolForConfirm(tool);
 
     const id = `confirm-${Date.now()}`;
@@ -5978,8 +6005,6 @@ function showInlineConfirm(tool) {
     const html = `
 
       <div class="inline-confirm" id="${id}">
-
-        <div class="inline-confirm-icon">${icon}</div>
 
         <div class="inline-confirm-body">
 
@@ -6984,6 +7009,8 @@ async function executeToolCall(tool) {
 
       body: JSON.stringify({ ...tool, ...extra }),
 
+      signal: state.abortController?.signal,
+
     });
 
     return result;
@@ -7006,13 +7033,8 @@ async function applyPendingEdit(editId) {
 
   state.confirmingEditId = editId;
 
-  els.confirmEditPath.textContent = edit.path;
-
-  els.confirmApplyEdit.disabled = false;
-
-  els.confirmApplyEdit.textContent = "确认写入";
-
-  els.confirmEditModal.classList.remove("hidden");
+  // Apply directly — no secondary confirmation
+  await commitPendingEdit();
 
 }
 
@@ -7069,7 +7091,6 @@ async function commitPendingEdit() {
         path: edit.path,
 
         newContent: edit.newContent,
-        expectedMtime: edit.mtime || 0,
 
       }),
 
@@ -7114,6 +7135,11 @@ async function commitPendingEdit() {
   await loadFiles().catch(() => {});
 
   renderMessages();
+
+  // If agent loop is paused waiting for this edit, signal to continue
+  if (state._editResolver && state._pendingEditForPause === editId) {
+    state._editResolver("apply");
+  }
 
 }
 
@@ -7334,6 +7360,18 @@ async function runAgentLoop(ctx = null) {
 
           meta.applied = false;
 
+          // Auto-apply in bypass mode
+          if (getPermissionProfile() === "bypass") {
+            const applied = await apiJson("/api/tools/apply_edit", {
+              method: "POST",
+              body: JSON.stringify({ action: "apply_edit", path: result.path, newContent: result.newContent }),
+            });
+            state.pendingEdits[editId].applied = true;
+            meta.applied = true;
+            result = applied;
+            result.action = "propose_edit"; // keep original action for labeling
+          }
+
         }
 
         ctx.messages.push({
@@ -7354,6 +7392,54 @@ async function runAgentLoop(ctx = null) {
         }
 
         await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+
+        // ── Pause on propose_edit in plan/accept mode ──
+        const profile = getPermissionProfile();
+        if (profile !== "bypass" && result.action === "propose_edit" && !meta.applied) {
+          const editId = meta.pendingEditId;
+          if (editId) {
+            // Check if user already clicked reject before we got here
+            if (state._rejectedEditId === editId) {
+              for (const msg of ctx.messages) {
+                if (msg.meta?.pendingEditId === editId) msg.meta.rejected = true;
+              }
+              state._rejectedEditId = null;
+              ctx.messages.push({
+                role: "user",
+                content: "[系统] 用户拒绝了你的修改方案。不要猜测原因，不要提新方案——直接问用户：哪个部分需要调整、期望改成什么样。回复控制在 50 字以内。",
+                meta: { _system: true },
+              });
+              renderSessionMessages(ctx.sessionId);
+              await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+              continue;
+            }
+
+            const userChoice = await new Promise((resolve) => {
+              state._editResolver = resolve;
+              state._pendingEditForPause = editId;
+            });
+            state._editResolver = null;
+            state._pendingEditForPause = null;
+            state._rejectedEditId = null;
+            if (userChoice === "reject") {
+              for (const msg of ctx.messages) {
+                if (msg.meta?.pendingEditId === editId) msg.meta.rejected = true;
+              }
+              ctx.messages.push({
+                role: "user",
+                content: "[系统] 用户拒绝了你的修改方案。不要猜测原因，不要提新方案——直接问用户：哪个部分需要调整、期望改成什么样。回复控制在 50 字以内。",
+                meta: { _system: true },
+              });
+              renderSessionMessages(ctx.sessionId);
+              await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+              continue; // give model one turn to respond, then stop
+            }
+            // "apply" — update meta to mark as applied
+            for (const m of ctx.messages) {
+              if (m.meta?.pendingEditId === editId) m.meta.applied = true;
+            }
+          }
+        }
 
         // ── Consecutive failure detection ──
         const FAIL_SIGNALS = ["工具执行失败", "已被安全策略拦截", "文件不存在", "路径不存在",
@@ -7377,7 +7463,8 @@ async function runAgentLoop(ctx = null) {
           ctx._failureWarned = 5;
           ctx.messages.push({
             role: "user",
-            content: "[系统] 已连续失败 5 次。请停止尝试，直接告诉用户哪里出了问题，不要再调用工具。"
+            content: "[系统] 已连续失败 5 次。请停止尝试，直接告诉用户哪里出了问题，不要再调用工具。",
+            meta: { _system: true },
           });
           renderSessionMessages(ctx.sessionId);
           await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
@@ -7389,7 +7476,8 @@ async function runAgentLoop(ctx = null) {
           ctx._failureWarned = 3;
           ctx.messages.push({
             role: "user",
-            content: "[系统] 已连续失败 3 次。请换一个完全不同的方法，不要再重复已失败的命令。"
+            content: "[系统] 已连续失败 3 次。请换一个完全不同的方法，不要再重复已失败的命令。",
+            meta: { _system: true },
           });
           renderSessionMessages(ctx.sessionId);
           await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();

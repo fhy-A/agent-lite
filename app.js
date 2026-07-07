@@ -1771,6 +1771,14 @@ function setLang(lang) {
 
   applyI18n();
 
+  setSelectedModel(getSelectedModel());
+
+  setThinkingLevel(getThinkingLevel());
+
+  setPermLevel(getPermLevel());
+
+  if (!state.sessionId) els.sessionTitle.value = t("sessionTitleDefault");
+
 }
 
 
@@ -10315,6 +10323,7 @@ async function init() {
 
   applyI18n(); // run early, before async ops, to prevent flicker
   setSelectedModel(getSelectedModel()); // sync model pill (excluded from applyI18n)
+  if (!state.sessionId) els.sessionTitle.value = t("sessionTitleDefault");
 
   updateModePromptPreview();
 

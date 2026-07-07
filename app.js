@@ -1641,6 +1641,8 @@ const I18N = {
     language: "语言", theme: "主题", settings: "设置",
     dragSort: "拖拽排序", keyNamePlaceholder: "名称（可选）",
     collapseExpand: "点击收起/展开",
+    toolExpand: "详情", toolSection: "工具：", toolCount: "{count} 个工具", tasksDone: "{count} 已完成", tasksFail: "{count} 失败",
+    fetchDone: "已抓取",
     toggleVisibility: "显示/隐藏", enabledStatus: "已启用", disabledStatus: "已禁用",
   },
   en: {
@@ -1717,6 +1719,8 @@ const I18N = {
     language: "Language", theme: "Theme", settings: "Settings",
     dragSort: "Drag to sort", keyNamePlaceholder: "Name (optional)",
     collapseExpand: "Click to collapse/expand",
+    toolExpand: "Details", toolSection: "Tools: ", toolCount: "{count} tools", tasksDone: "{count} completed", tasksFail: "{count} failed",
+    fetchDone: "Fetched",
     toggleVisibility: "Show/Hide", enabledStatus: "Enabled", disabledStatus: "Disabled",
   },
 };
@@ -3314,14 +3318,14 @@ function _isToolError(content) {
 }
 
 function _toolStatusLabel({ isCall = false, resultMsg = null, error = false } = {}) {
-  if (error) return "失败";
-  if (resultMsg || !isCall) return "完成";
-  return "准备";
+  if (error) return "statusFail";
+  if (resultMsg || !isCall) return "statusDone";
+  return "statusRunning";
 }
 
 function _toolStatusClass(label) {
-  if (label === "失败") return "failed";
-  if (label === "完成") return "done";
+  if (label === "statusFail") return "failed";
+  if (label === "statusDone") return "done";
   return "pending";
 }
 
@@ -3351,7 +3355,7 @@ function _toolResultSummary(msg) {
     return m ? (m[1] === "0" ? "退出码 0" : "退出码 " + m[1]) : "";
   }
   if (action === "web_fetch") {
-    return _isToolError(content) ? "抓取失败" : "已抓取";
+    return _isToolError(content) ? t("fetchFailed") : t("fetchDone");
   }
   const firstLine = content.split("\n").find((l) => l.trim() && !l.startsWith("```"));
   return firstLine ? firstLine.trim().slice(0, 80) : "";
@@ -3378,11 +3382,11 @@ function renderToolMessage(msg) {
   return `
     <details class="tool-inline ${cls}${error ? " error" : ""}"${autoOpen}>
       <summary class="tool-inline-head">
-        <span class="tool-status-chip ${statusClass}">${escapeHtml(statusLabel)}</span>
+        <span class="tool-status-chip ${statusClass}">${t(statusLabel)}</span>
         <span class="tool-inline-label">${escapeHtml(label)}</span>
         ${target ? `<span class="tool-inline-target">${escapeHtml(target)}</span>` : ""}
         ${summary ? `<span class="tool-inline-summary">${escapeHtml(summary)}</span>` : ""}
-        ${hasBody ? `<span class="tool-inline-expand">详情</span>` : ""}
+        ${hasBody ? `<span class="tool-inline-expand">${t("toolExpand")}</span>` : ""}
       </summary>
       ${hasBody ? `<div class="tool-inline-body">${renderMarkdownLite(content)}</div>` : ""}
     </details>
@@ -3433,7 +3437,7 @@ function getRunTimerDisplay(sessionId = state.sessionId) {
 }
 
 function renderThinkingBadge(sessionId = state.sessionId) {
-  return `<span class="streaming-dot">思考中 <span class="streaming-timer">${escapeHtml(getRunTimerDisplay(sessionId))}</span></span>`;
+  return `<span class="streaming-dot">${t("thinkingLabel")} <span class="streaming-timer">${escapeHtml(getRunTimerDisplay(sessionId))}</span></span>`;
 }
 
 function renderRunStatus(model, sessionId = state.sessionId) {
@@ -3502,11 +3506,11 @@ function renderToolSection(tools, isStreaming) {
     const openAttr = needsReview ? " open" : "";
     let html = `<details class="tool-inline merged${resultError ? " error" : ""}"${openAttr}>
       <summary class="tool-inline-head">
-        <span class="tool-status-chip ${statusClass}">${escapeHtml(statusLabel)}</span>
+        <span class="tool-status-chip ${statusClass}">${t(statusLabel)}</span>
         <span class="tool-inline-label">${escapeHtml(label)}</span>
         ${target ? `<span class="tool-inline-target">${escapeHtml(target)}</span>` : ""}
         ${summary ? `<span class="tool-inline-summary">${escapeHtml(summary)}</span>` : ""}
-        ${hasBody ? `<span class="tool-inline-expand">详情</span>` : ""}
+        ${hasBody ? `<span class="tool-inline-expand">${t("toolExpand")}</span>` : ""}
       </summary>`;
     if (hasBody) html += `<div class="tool-inline-body">${renderMarkdownLite(resultContent)}</div>`;
     html += `</details>`;
@@ -3531,10 +3535,10 @@ function renderToolSection(tools, isStreaming) {
     return (a === "propose_edit" || a === "write_file") && pid && !state.pendingEdits[pid]?.applied;
   });
   if (isStreaming) return `<div class="tool-section streaming">${cards}</div>`;
-  const parts = [`${totalCalls} 个工具`];
-  if (successCount) parts.push(`${successCount} 已完成`);
-  if (failCount) parts.push(`${failCount} 失败`);
-  return `<details class="tool-section done"${needsReview ? " open" : ""}><summary class="tool-section-summary">工具：${escapeHtml(parts.join(" · "))}</summary><div class="tool-section-body">${cards}</div></details>`;
+  const parts = [t("toolCount").replace("{count}", totalCalls)];
+  if (successCount) parts.push(t("tasksDone").replace("{count}", successCount));
+  if (failCount) parts.push(t("tasksFail").replace("{count}", failCount));
+  return `<details class="tool-section done"${needsReview ? " open" : ""}><summary class="tool-section-summary">${t("toolSection")}${escapeHtml(parts.join(" · "))}</summary><div class="tool-section-body">${cards}</div></details>`;
 }
 
 function renderMessages() {

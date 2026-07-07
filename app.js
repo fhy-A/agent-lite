@@ -1654,6 +1654,9 @@ const I18N = {
     fmtOrigSize: "原大小", fmtNoBackup: "无",
     fmtFetched: "抓取", fmtStatus: "状态", fmtTruncatedContent: "内容已截断",
     fmtToolResult: "工具结果",
+    fmtDir: "目录", fmtFileCount: "文件数量", fmtTruncatedList: "结果较多，已截断显示",
+    fmtEmptyDir: "目录为空", fmtLineRange: "行范围", fmtReadFile: "已读取文件",
+    fmtTruncatedFile: "，内容已截断", fmtRegexSearch: "正则搜索", fmtSearch: "搜索",
     toggleVisibility: "显示/隐藏", enabledStatus: "已启用", disabledStatus: "已禁用",
   },
   en: {
@@ -1743,6 +1746,9 @@ const I18N = {
     fmtOrigSize: "Original size", fmtNoBackup: "None",
     fmtFetched: "Fetched", fmtStatus: "Status", fmtTruncatedContent: "Content truncated",
     fmtToolResult: "Tool result",
+    fmtDir: "Directory", fmtFileCount: "File count", fmtTruncatedList: "Many results, truncated",
+    fmtEmptyDir: "Directory empty", fmtLineRange: "Line range", fmtReadFile: "File read",
+    fmtTruncatedFile: ", content truncated", fmtRegexSearch: "Regex search", fmtSearch: "Search",
     toggleVisibility: "Show/Hide", enabledStatus: "Enabled", disabledStatus: "Disabled",
   },
 };
@@ -6955,6 +6961,8 @@ function stripToolBlock(text = "") {
 
 
 
+function _safeMd(text = "") { return String(text).replace(/`/g, "\\`"); }
+
 function truncateForDisplay(text = "", max = 12000) {
 
   if (String(text).length <= max) return String(text);
@@ -6985,7 +6993,7 @@ function formatToolResult(result) {
 
   if (!result.ok) {
 
-    return `工具执行失败：${result.error || "unknown error"}`;
+    return `${t("toolExecFailed")}：${result.error || "unknown error"}`;
 
   }
 
@@ -7001,23 +7009,23 @@ function formatToolResult(result) {
 
     });
 
-    return `目录：${result.path || "/"}\n文件数量：${result.count}\n${result.truncated ? "结果较多，已截断显示\n" : ""}\n${rows.join("\n") || "目录为空"}`;
+    return `${t("fmtDir")}：${result.path || "/"}\n${t("fmtFileCount")}：${result.count}\n${result.truncated ? t("fmtTruncatedList") + "\n" : ""}\n${rows.join("\n") || t("fmtEmptyDir")}`;
 
   }
 
   if (result.action === "read_file") {
 
-    const lineText = result.lineRange ? `\n行范围：${result.lineRange.start}-${result.lineRange.end}` : "";
+    const lineText = result.lineRange ? `\n${t("fmtLineRange")}：${result.lineRange.start}-${result.lineRange.end}` : "";
 
     const lang = languageFromPath(result.path || "");
 
-    return `已读取文件：${result.path}\n大小：${formatSize(result.size || 0)}${result.truncated ? "，内容已截断" : ""}${lineText}\n\n\`\`\`${lang}\n${truncateForDisplay(result.content || "")}\n\`\`\``;
+    return `${t("fmtReadFile")}：${result.path}\n${t("fmtSize")}：${formatSize(result.size || 0)}${result.truncated ? t("fmtTruncatedFile") : ""}${lineText}\n\n\`\`\`${lang}\n${truncateForDisplay(result.content || "")}\n\`\`\``;
 
   }
 
   if (result.action === "search_files") {
 
-    const modeLabel = result.regex ? "正则搜索" : "搜索";
+    const modeLabel = result.regex ? t("fmtRegexSearch") : t("fmtSearch");
 
     const rows = (result.results || []).map((item) => {
 
@@ -7025,11 +7033,11 @@ function formatToolResult(result) {
 
         if (m.context) {
 
-          return m.context.map((c) => `  L${c.line}: ${c.text}${c.line === m.line ? " ←" : ""}`).join("\n");
+          return m.context.map((c) => `  L${c.line}: ${_safeMd(c.text)}${c.line === m.line ? " ←" : ""}`).join("\n");
 
         }
 
-        return `  L${m.line}: ${m.text}`;
+        return `  L${m.line}: ${_safeMd(m.text)}`;
 
       }).join("\n");
 

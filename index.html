@@ -10,7 +10,7 @@
   <main class="pi-shell" id="piShell">
     <div class="sidebar-peek-zone" id="sidebarPeekZone"></div>
     <aside class="pi-sidebar" id="sidebar">
-      <div class="sidebar-resizer" id="sidebarResizer" title="拖拽调整侧栏宽度"></div>
+      <div class="sidebar-resizer" id="sidebarResizer" title="拖拽调整侧栏宽度" data-i18n-title="dragSidebar"></div>
       <header class="side-header">
         <div class="side-title">
           <svg class="logo-svg" viewBox="0 0 24 24" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
@@ -19,36 +19,37 @@
           </svg>
           Agent Lite
         </div>
-        <button id="newChat" class="new-btn" type="button">+ New</button>
       </header>
 
+      <button id="newChat" class="new-session-bar" type="button" data-i18n="newSession">+ 新建会话</button>
+
       <section class="sessions" id="sessionList"></section>
-      <div class="sidebar-splitter" id="sidebarSplitter" title="拖拽调整会话与文件区域高度"></div>
+      <div class="sidebar-splitter" id="sidebarSplitter" title="拖拽调整会话与文件区域高度" data-i18n-title="dragSessions"></div>
 
       <section class="explorer">
         <header class="section-head" id="explorerHead" title="点击收起/展开">
-          <span><span class="explorer-arrow">▾</span> 文件</span>
+          <span><span class="explorer-arrow">▾</span> <span data-i18n="files">文件</span></span>
           <div class="head-actions">
-            <button id="goUp" class="tiny-btn" type="button" title="上一层">↑</button>
-            <button id="newFolderBtn" class="tiny-btn" type="button" title="新建文件夹">+</button>
-            <button id="refreshFiles" class="tiny-btn" type="button" title="刷新文件">↻</button>
+            <button id="goUp" class="tiny-btn" type="button" data-i18n-title="goUp" title="上一层">↑</button>
+            <button id="newFolderBtn" class="tiny-btn" type="button" data-i18n-title="newFolder" title="新建文件夹">+</button>
+            <button id="refreshFiles" class="tiny-btn" type="button" data-i18n-title="refreshFiles" title="刷新文件">↻</button>
           </div>
         </header>
         <div class="cwd-inline">
           <div class="cwd-dropdown">
             <input type="hidden" id="projectRoot" value="" />
-            <button id="projectRootShort" class="cwd-name" title="点击管理项目目录">
+            <button id="projectRootShort" class="cwd-name" title="点击管理项目目录" data-i18n-title="manageProjectDir">
               <span class="cwd-icon">📁</span>
               <span id="cwdPathText">~\api中转站</span>
             </button>
             <div class="cwd-dropdown-menu hidden" id="cwdDropdown">
               <div class="cwd-dropdown-section" id="cwdRecentFolders"></div>
-              <button class="cwd-dropdown-item" onclick="cwdPickFolderAction()">📂 选择文件夹...</button>
+              <button class="cwd-dropdown-item" onclick="cwdPickFolderAction()" data-i18n="chooseFolder">📂 选择文件夹...</button>
               <button class="cwd-dropdown-item" id="cwdHomeBtn" onclick="cwdUseHomeFolder()">🏠 ~</button>
             </div>
           </div>
         </div>
-        <input id="fileSearch" class="file-search" placeholder="筛选文件…" autocomplete="off" />
+        <input id="fileSearch" class="file-search" data-i18n="filterFiles" placeholder="筛选文件…" autocomplete="off" />
         <div id="filePathBar" class="path-line" style="display:none">/</div>
         <div id="fileTree" class="file-tree"></div>
       </section>
@@ -73,7 +74,7 @@
 
     <section class="pi-stage">
       <nav class="toolbar">
-        <button id="toggleSidebar" class="tool-btn sidebar-icon-btn" type="button" title="收起/展开侧栏"></button>
+        <button id="toggleSidebar" class="tool-btn sidebar-icon-btn" type="button" title="收起/展开侧栏" data-i18n-title="toggleSidebar"></button>
         <button id="exportChat" class="tool-btn text-tool" type="button"><svg class="tool-icon" viewBox="0 0 1024 1024" width="14" height="14"><path d="M837.5 919.1H185.6c-65.5 0-118.8-53.2-118.8-118.8V222.6c0-65.5 53.2-118.8 118.8-118.8h160.3c22.2 0 42.9 9.8 57.1 26.7l70.3 84.5h371c61.8 0 111.9 50.2 111.9 111.9v473.4c0 65.5-53.3 118.8-118.8 118.8zM185.6 178c-24.5 0-44.6 20-44.6 44.6v577.7c0 24.5 20 44.6 44.6 44.6h651.9c24.5 0 44.6-20 44.6-44.6V326.9c0-20.8-16.9-37.8-37.9-37.8H473.5c-22.2 0-42.9-9.8-57.1-26.7l-70.3-84.5H185.6z" fill="currentColor"/><path d="M623.3 589.5c-9.4 0-18.9-3.7-26.3-10.9l-84.9-84.9-84.9 84.9c-14.4 14.6-38 14.6-52.3 0-14.6-14.6-14.6-38 0-52.3l111.2-111.2c14.4-14.6 38-14.6 52.3 0l111.2 111.2c14.6 14.6 14.6 38 0 52.3-7.4 7.4-16.8 10.9-26.3 10.9z" fill="currentColor"/><path d="M512.1 737.8c-20.5 0-37.1-16.6-37.1-37.1V441.4c0-20.5 16.6-37.1 37.1-37.1 20.5 0 37.1 16.6 37.1 37.1v259.5c0 20.3-16.7 36.9-37.1 36.9z" fill="currentColor"/></svg> Export</button>
         <button id="toolLogToggle" class="tool-btn text-tool" type="button"><svg class="tool-icon" viewBox="0 0 1024 1024" width="14" height="14"><path d="M814.9 1009.1c-38.4 0-74.7-14.9-104.5-42.7l-258.1-256 76.8-76.8 12.8 12.8 29.9-29.9 46.9 46.9-46.9 46.9 196.3 196.3c23.5 23.5 64 23.5 89.6 0l53.3-53.3c25.6-25.6 25.6-64 0-89.6l-196.3-196.3-46.9 46.9-46.9-46.9 29.9-29.9-10.7-14.9 76.8-76.8 256 258.1c57.6 57.6 57.6 151.5 0 209.1l-53.3 53.3c-29.9 29.9-66.1 42.7-104.5 42.7z" fill="currentColor"/><path d="M328.5 490.7l-85.3-83.2-113.1-59.7L6.4 189.9 196.3 0l157.9 123.7 59.7 115.2 89.6 87.5-59.7 61.9-130.1-130.1 10.7-8.5-36.3-70.4-85.3-64-81.1 81.1 64 85.3 70.4 36.3 8.5-10.7 123.7 123.7z" fill="currentColor"/><path d="M179.2 1009.1c-29.9 0-57.6-10.7-81.1-34.1l-53.3-53.3c-44.8-44.8-44.8-117.3 0-162.1l452.3-452.3c-12.8-83.2 12.8-166.4 72.5-226.1C650.7 0 772.3-19.2 874.7 34.1l51.2 27.7-149.3 149.3 32 32 149.3-149.3 27.7 51.2c53.3 102.4 34.1 224-46.9 305.1-59.7 59.7-145.1 85.3-226.1 72.5L260.3 977.1c-21.3 21.3-51.2 32-81.1 32z m576-917.3c-44.8 0-89.6 17.1-123.7 51.2-44.8 44.8-61.9 108.8-44.8 168.5l6.4 23.5L106.7 821.3c-10.7 10.7-10.7 29.9 0 40.5l53.3 53.3c10.7 10.7 29.9 10.7 40.5 0l486.4-486.4 23.5 6.4c59.7 17.1 125.9-2.1 168.5-44.8 38.4-38.4 57.6-93.9 51.2-145.1L810.7 364.8 657.1 213.3l119.5-119.5c-6.4-2.1-14.9-2.1-21.3-2.1z" fill="currentColor"/></svg> Tools</button>
         <div class="toolbar-spacer"></div>
@@ -87,37 +88,38 @@
           </span>
           <span id="liveTimer" class="live-timer"></span>
         </button>
-        <button id="togglePreview" class="tool-btn text-tool" type="button" title="文件预览"><svg class="tool-icon" viewBox="0 0 1024 1024" width="14" height="14"><path d="M674.56 304.992H277.216c-20.544 0-37.216-15.68-37.216-34.976 0-19.328 16.672-35.008 37.216-35.008H674.56c20.544 0 37.216 15.68 37.216 35.008 0 19.328-16.64 34.976-37.216 34.976zM277.216 521.44c-20.544 0-37.216-15.68-37.216-34.976 0-19.328 16.672-35.008 37.216-35.008h148.992c20.576 0 37.216 15.68 37.216 35.008 0 19.296-16.64 34.976-37.216 34.976H277.248z m0 216.448c-20.544 0-37.216-15.68-37.216-35.008 0-19.296 16.672-34.976 37.216-34.976h124.256c20.544 0 37.216 15.68 37.216 34.976 0 19.328-16.64 35.008-37.216 35.008H277.248z" fill="currentColor"/><path d="M626.528 928.032H223.136C152.96 928.032 96 877.376 96 815.072V176.96C96 114.72 152.96 64 223.04 64h538.016c70.08 0 127.04 50.656 127.04 112.96v234.88c0 18.336-16.736 33.216-37.376 33.216-20.608 0-37.376-14.88-37.376-33.216V176.96c0-25.696-23.456-46.56-52.288-46.56H223.136c-28.896 0-52.32 20.864-52.32 46.528v638.048c0 25.664 23.424 46.528 52.256 46.528h403.52c20.608 0 37.376 14.88 37.376 33.216 0 18.368-16.704 33.28-37.376 33.28l-0.064 0.032z" fill="currentColor"/><path d="M718.848 835.104a185.344 185.344 0 0 1-185.152-185.152 185.376 185.376 0 0 1 185.152-185.152 185.376 185.376 0 0 1 185.152 185.152 185.344 185.344 0 0 1-185.152 185.152z m0-304.96a119.904 119.904 0 0 0-119.776 119.808 119.904 119.904 0 0 0 119.712 119.776 119.904 119.904 0 0 0 119.84-119.712 119.936 119.936 0 0 0-119.776-119.872z" fill="currentColor"/><path d="M925.76 870.752c-9.024 0.032-17.696-3.488-24.16-9.792l-64.512-63.136a32.96 32.96 0 0 1 0-47.36 34.752 34.752 0 0 1 48.384 0l64.512 63.136a32.96 32.96 0 0 1 0 47.36 34.496 34.496 0 0 1-24.192 9.856v-0.064z" fill="currentColor"/></svg> Preview</button>
+        <button id="togglePreview" class="tool-btn text-tool" type="button" data-i18n="previewBtn" title="文件预览" data-i18n-title="filePreview"><svg class="tool-icon" viewBox="0 0 1024 1024" width="14" height="14"><path d="M674.56 304.992H277.216c-20.544 0-37.216-15.68-37.216-34.976 0-19.328 16.672-35.008 37.216-35.008H674.56c20.544 0 37.216 15.68 37.216 35.008 0 19.328-16.64 34.976-37.216 34.976zM277.216 521.44c-20.544 0-37.216-15.68-37.216-34.976 0-19.328 16.672-35.008 37.216-35.008h148.992c20.576 0 37.216 15.68 37.216 35.008 0 19.296-16.64 34.976-37.216 34.976H277.248z m0 216.448c-20.544 0-37.216-15.68-37.216-35.008 0-19.296 16.672-34.976 37.216-34.976h124.256c20.544 0 37.216 15.68 37.216 34.976 0 19.328-16.64 35.008-37.216 35.008H277.248z" fill="currentColor"/><path d="M626.528 928.032H223.136C152.96 928.032 96 877.376 96 815.072V176.96C96 114.72 152.96 64 223.04 64h538.016c70.08 0 127.04 50.656 127.04 112.96v234.88c0 18.336-16.736 33.216-37.376 33.216-20.608 0-37.376-14.88-37.376-33.216V176.96c0-25.696-23.456-46.56-52.288-46.56H223.136c-28.896 0-52.32 20.864-52.32 46.528v638.048c0 25.664 23.424 46.528 52.256 46.528h403.52c20.608 0 37.376 14.88 37.376 33.216 0 18.368-16.704 33.28-37.376 33.28l-0.064 0.032z" fill="currentColor"/><path d="M718.848 835.104a185.344 185.344 0 0 1-185.152-185.152 185.376 185.376 0 0 1 185.152-185.152 185.376 185.376 0 0 1 185.152 185.152 185.344 185.344 0 0 1-185.152 185.152z m0-304.96a119.904 119.904 0 0 0-119.776 119.808 119.904 119.904 0 0 0 119.712 119.776 119.904 119.904 0 0 0 119.84-119.712 119.936 119.936 0 0 0-119.776-119.872z" fill="currentColor"/><path d="M925.76 870.752c-9.024 0.032-17.696-3.488-24.16-9.792l-64.512-63.136a32.96 32.96 0 0 1 0-47.36 34.752 34.752 0 0 1 48.384 0l64.512 63.136a32.96 32.96 0 0 1 0 47.36 34.496 34.496 0 0 1-24.192 9.856v-0.064z" fill="currentColor"/></svg> Preview</button>
       </nav>
 
 
       <section class="top-panel stats-panel" id="statsPanel">
         <div class="sys-col wide">
-          <h3>Session Info</h3>
-          <div class="kv"><span>Name</span><input id="sessionTitle" value="新会话" /></div>
-          <div class="kv"><span>Created</span><code id="sessionCreated">-</code></div>
-          <div class="kv"><span>File</span><code id="sessionFile" title="">-</code><button id="copySessionPath" class="copy-mini" type="button">copy</button></div>
+          <h3 data-i18n="sessionInfo">会话信息</h3>
+          <div class="kv"><span data-i18n="sessionName">名称</span><input id="sessionTitle" value="新会话" data-i18n="sessionTitleDefault" /></div>
+          <div class="kv"><span data-i18n="created">创建</span><code id="sessionCreated">-</code></div>
+          <div class="kv"><span data-i18n="active">活跃</span><code id="sessionUpdated">-</code></div>
+          <div class="kv"><span data-i18n="file">文件</span><code id="sessionFile" title="">-</code><button id="copySessionPath" class="copy-mini" type="button">copy</button></div>
         </div>
         <div class="sys-col">
-          <h3>Messages</h3>
+          <h3 data-i18n="messages">消息</h3>
           <div class="metric total"><span>Total</span><b id="msgTotal">0</b></div>
-          <div class="metric"><span>User</span><b id="msgUser">0</b></div>
-          <div class="metric"><span>Assistant</span><b id="msgAssistant">0</b></div>
+          <div class="metric"><span data-i18n="user">User</span><b id="msgUser">0</b></div>
+          <div class="metric"><span data-i18n="agent">Agent</span><b id="msgAssistant">0</b></div>
           <div class="metric"><span>Tools</span><b id="msgTools">0</b></div>
         </div>
         <div class="sys-col">
-          <h3>Tokens</h3>
-          <div class="metric total"><span>Context</span><b id="tokenContext">0%（超 95% 自动压缩）</b></div>
-          <div class="metric"><span>Input</span><b id="tokenInput">0</b></div>
-          <div class="metric"><span>Output</span><b id="tokenOutput">0</b></div>
-          <div class="metric"><span>Cache</span><b id="tokenCache">0</b></div>
-          <div class="metric"><span>Total</span><b id="tokenTotal">0</b></div>
+          <h3 data-i18n="tokens">Tokens</h3>
+          <div class="metric total"><span>Total</span><b id="tokenTotal">0</b></div>
+          <div class="metric"><span data-i18n="input">Input</span><b id="tokenInput">0</b></div>
+          <div class="metric"><span data-i18n="output">Output</span><b id="tokenOutput">0</b></div>
+          <div class="metric"><span data-i18n="cache">Cache</span><b id="tokenCache">0</b></div>
+          <div class="metric"><span data-i18n="context">Context</span><b id="tokenContext">0%（超 95% 自动压缩）</b></div>
         </div>
       </section>
 
       <section class="top-panel tool-log-panel" id="toolLogPanel">
         <div class="sys-col wide">
-          <h3>Tool Log</h3>
+          <h3 data-i18n="toolLog">Tool Log</h3>
           <div id="toolLogSummary" class="tool-log-summary">暂无工具动作</div>
           <div id="toolLogList" class="tool-log-list"></div>
         </div>
@@ -131,39 +133,39 @@
             <textarea id="prompt" rows="2" placeholder="描述需求、粘贴代码，或输入 / 调用命令"></textarea>
             <div class="composer-bar">
               <div class="bar-left">
-                <button id="attachFile" class="bar-btn" type="button" data-tip="选择项目文件并插入路径">+</button>
+                <button id="attachFile" class="bar-btn" type="button" title="选择项目文件并插入路径" data-i18n-title="addFile">+</button>
                 <input id="filePicker" type="file" hidden />
                 <div class="model-pill-wrap" id="permPillWrap">
-                  <button id="permPillBtn" class="model-pill-btn thinking-pill" type="button" title="权限策略">
-                    <span id="permPillLabel">接受编辑</span>
+                  <button id="permPillBtn" class="model-pill-btn thinking-pill" type="button" title="权限策略" data-i18n-title="permTitle">
+                    <span id="permPillLabel" data-i18n="permAccept">接受编辑</span>
                     <svg class="model-pill-chevron" width="10" height="10" viewBox="0 0 10 10"><path d="M2 3.5l3 3 3-3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
                   </button>
                   <div class="model-pill-dropdown hidden" id="permPillDropdown" style="min-width:110px">
-                    <button class="model-pill-option" data-value="plan" title="仅规划，不执行写操作">计划</button>
-                    <button class="model-pill-option" data-value="accept" title="可读写文件，编辑需用户确认">接受编辑</button>
-                    <button class="model-pill-option" data-value="bypass" title="自动执行所有操作，无需确认">自动</button>
+                    <button class="model-pill-option" data-value="plan" data-i18n="permPlan" title="仅规划，不执行写操作" data-i18n-title="permPlanTip">计划</button>
+                    <button class="model-pill-option" data-value="accept" data-i18n="permAccept" title="可读写文件，编辑需用户确认" data-i18n-title="permAcceptTip">接受编辑</button>
+                    <button class="model-pill-option" data-value="bypass" data-i18n="permBypass" title="自动执行所有操作，无需确认" data-i18n-title="permBypassTip">自动</button>
                   </div>
                 </div>
               </div>
               <div class="bar-spacer"></div>
               <div class="bar-right">
                 <div class="model-pill-wrap" id="modelPillWrap">
-                  <button id="modelPillBtn" class="model-pill-btn" type="button" title="选择模型">
-                    <span id="modelPillLabel">选择模型</span>
+                  <button id="modelPillBtn" class="model-pill-btn" type="button" title="选择模型" data-i18n-title="selectModel">
+                    <span id="modelPillLabel" data-i18n="selectModel">选择模型</span>
                     <svg class="model-pill-chevron" width="10" height="10" viewBox="0 0 10 10"><path d="M2 3.5l3 3 3-3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
                   </button>
                   <div class="model-pill-dropdown hidden" id="modelPillDropdown"></div>
                 </div>
                 <div class="model-pill-wrap" id="thinkingPillWrap">
-                  <button id="thinkingPillBtn" class="model-pill-btn thinking-pill" type="button" title="推理强度">
-                    <span id="thinkingPillLabel">自动</span>
+                  <button id="thinkingPillBtn" class="model-pill-btn thinking-pill" type="button" title="推理强度" data-i18n-title="reasoningEffort">
+                    <span id="thinkingPillLabel" data-i18n="thinkingAuto">自动</span>
                     <svg class="model-pill-chevron" width="10" height="10" viewBox="0 0 10 10"><path d="M2 3.5l3 3 3-3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
                   </button>
                   <div class="model-pill-dropdown hidden" id="thinkingPillDropdown" style="min-width:100px">
-                    <button class="model-pill-option" data-value="auto">自动</button>
-                    <button class="model-pill-option" data-value="off">关闭</button>
-                    <button class="model-pill-option" data-value="high">高</button>
-                    <button class="model-pill-option" data-value="max">最高</button>
+                    <button class="model-pill-option" data-value="auto" data-i18n="thinkingAuto">自动</button>
+                    <button class="model-pill-option" data-value="off" data-i18n="thinkingOff">关闭</button>
+                    <button class="model-pill-option" data-value="high" data-i18n="thinkingHigh">高</button>
+                    <button class="model-pill-option" data-value="max" data-i18n="thinkingMax">最高</button>
                   </div>
                 </div>
                 <button id="sendBtn" class="send-btn" type="submit" disabled>
@@ -179,15 +181,15 @@
             <option value="off">关闭</option>
             <option value="full">完整</option>
           </select>
-          <button id="stopBtn" class="hidden-control" type="button" disabled title="暂停输出">暂停</button>
+          <button id="stopBtn" class="hidden-control" type="button" disabled title="暂停输出" data-i18n-title="pauseBtn">暂停</button>
         </section>
 
         <aside class="preview-pane" id="previewPane">
-          <div class="preview-resizer" id="previewResizer" title="拖拽调整预览宽度"></div>
+          <div class="preview-resizer" id="previewResizer" title="拖拽调整预览宽度" data-i18n-title="dragPreviewWidth"></div>
           <header class="preview-head">
             <div class="preview-title-wrap">
-              <strong id="previewTitle">No file open</strong>
-              <span id="previewMeta">Select a file to preview</span>
+              <strong id="previewTitle" data-i18n="noFileOpen">No file open</strong>
+              <span id="previewMeta" data-i18n="selectFileToPreview">Select a file to preview</span>
             </div>
             <div class="preview-actions">
               <span id="previewLanguage" class="preview-language">text</span>
@@ -197,8 +199,8 @@
           </header>
           <div id="filePreview" class="file-preview empty">
             <div class="preview-notice">
-              <strong>No file open</strong>
-              <span>Select a file to preview</span>
+              <strong data-i18n="noFileOpen">No file open</strong>
+              <span data-i18n="selectFileToPreview">Select a file to preview</span>
             </div>
           </div>
         </aside>

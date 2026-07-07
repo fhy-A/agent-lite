@@ -1113,9 +1113,9 @@ function renderKeyEditor(raw, newRow = false) {
 
     <div class="key-row ${e.enabled === false && !isNew ? "disabled" : ""}" data-idx="${i}">
 
-      <span class="key-drag-handle" title="拖拽排序" draggable="true">⠿</span>
+      <span class="key-drag-handle" title="${t("dragSort")}" draggable="true">⠿</span>
 
-      <input class="key-name-input" placeholder="名称（可选）" value="${escapeHtml(e.name)}" data-idx="${i}" />
+      <input class="key-name-input" placeholder="${t("keyNamePlaceholder")}" value="${escapeHtml(e.name)}" data-idx="${i}" />
 
       <div class="key-value-wrap">
 
@@ -1137,9 +1137,9 @@ function keyNormalActions(e, i) {
 
   return `<div class="key-actions">
 
-    <button class="key-act-btn key-eye" type="button" title="显示/隐藏" data-idx="${i}">${eyeIcon()}</button>
+    <button class="key-act-btn key-eye" type="button" title="${t("toggleVisibility")}" data-idx="${i}">${eyeIcon()}</button>
 
-    <label class="toggle-switch key-enable" title="${e.enabled !== false ? '已启用' : '已禁用'}">
+    <label class="toggle-switch key-enable" title="${e.enabled !== false ? t("enabledStatus") : t("disabledStatus")}">
 
       <input type="checkbox" ${e.enabled !== false ? "checked" : ""} data-idx="${i}" />
 
@@ -1147,7 +1147,7 @@ function keyNormalActions(e, i) {
 
     </label>
 
-    <button class="key-act-btn key-trash" type="button" title="删除" data-idx="${i}">${trashIcon()}</button>
+    <button class="key-act-btn key-trash" type="button" title="${t("delete")}" data-idx="${i}">${trashIcon()}</button>
 
   </div>`;
 
@@ -1159,13 +1159,13 @@ function keyConfirmActions(i) {
 
   return `<div class="key-actions">
 
-    <button class="key-act-btn key-confirm" type="button" title="确认" data-idx="${i}">
+    <button class="key-act-btn key-confirm" type="button" title="${t("save")}" data-idx="${i}">
 
       <svg width="14" height="14" viewBox="0 0 14 14"><path d="M3 7l2.5 2.5L11 4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
 
     </button>
 
-    <button class="key-act-btn key-cancel" type="button" title="取消" data-idx="${i}">
+    <button class="key-act-btn key-cancel" type="button" title="${t("cancel")}" data-idx="${i}">
 
       <svg width="14" height="14" viewBox="0 0 14 14"><path d="M3 3l8 8M11 3L3 11" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
 
@@ -1565,11 +1565,137 @@ const LANG = {
 
 };
 
+const I18N = {
+  zh: {
+    toolListFiles: "列出文件", toolReadFile: "读取文件", toolSearchFiles: "搜索文件",
+    toolGlobFiles: "匹配文件", toolProposeEdit: "生成修改方案", toolApplyEdit: "应用修改",
+    toolRunCommand: "执行命令", toolWriteFile: "写入文件", toolDeleteFile: "删除文件",
+    toolWebFetch: "抓取网页", toolTask: "子任务", toolUseSkill: "加载 Skill", toolSaveMemory: "保存记忆",
+    newSession: "+ 新建会话", newSkill: "+ 新建 Skill", sessionTitleDefault: "新会话", untitledSession: "未命名会话",
+    skillDesc: "描述", skillKeywords: "关键词", skillTools: "工具", skillPathLabel: "文件路径",
+    skillExplicitHint: "此 Skill 可以通过 /{name} 命令手动触发", skillEmptyHint: "点击 + 新建 Skill，或在左侧选择 Skill",
+    skillCreateHint: "将在 data/skills/ 下创建 SKILL.md 文件",
+    applyEdit: "Apply edit", rejectEdit: "Reject",
+    allowLabel: "允许", rejectLabel: "拒绝",
+    copyBtn: "copy", copiedBtn: "copied", failedBtn: "failed",
+    appliedLabel: "已应用", rejectedLabel: "已拒绝",
+    sessionInfo: "会话信息", messages: "消息", tokens: "Tokens",
+    sessionName: "名称", created: "创建", active: "活跃", file: "文件",
+    totalLabel: "Total", userLabel: "User", agentLabel: "Agent",
+    inputLabel: "Input", outputLabel: "Output", cacheLabel: "Cache", contextLabel: "Context",
+    previewBtn: "预览", noFileOpen: "未打开文件", selectFileToPreview: "选择文件以预览",
+    exportBtn: "导出", tools: "工具", toolLog: "工具日志", settingsBtn: "设置",
+    files: "文件", chooseFolder: "选择文件夹", recentLabel: "最近使用",
+    welcome: "我是 Agent Lite，你的本地 AI 编程伙伴。\\n\\n我可以读文件、搜代码、跑命令、改项目。",
+    welcomeTagline: "开始对话，用自然语言驱动代码。",
+    inputPlaceholder: "描述需求、粘贴代码，或输入 / 调用命令",
+    thinkingLabel: "思考中", completedLabel: "完成",
+    refreshBtn: "刷新", closePreview: "关闭", filterFiles: "筛选文件…",
+    statusDone: "完成", statusFail: "失败", statusRunning: "准备",
+    toolExecFailed: "工具执行失败", fetchFailed: "抓取失败",
+    fillRequired: "请补全必填内容", nameExists: "名称已存在",
+    enterMemoryName: "请输入记忆名称", enterMemoryBody: "请输入记忆内容", waitForReply: "请等待当前回答完成后再新建会话",
+    memNamePlaceholder: "name，只能使用英文、数字、中划线和下划线，例如 coding-conventions",
+    memDescPlaceholder: "description，简要说明",
+    memBodyPlaceholder: "记忆内容...",
+    saveFailed: "保存失败", deleteFailed: "删除失败",
+    enterApiKey: "请先输入 API Key", noModelsFound: "未找到可用模型",
+    toolLogEmpty: "暂无工具动作", toolLogHint: "工具调用、搜索、读文件、修改确认和命令执行会显示在这里。",
+    toolActions: "条工具动作", toolCalls: "次调用", toolResults: "条结果", toolFailures: "条失败",
+    compactContext: "压缩上下文", compacting: "压缩中",
+    confirmWrite: "确认写入", applyEditLabel: "应用修改", userCancelled: "用户取消了本次工具调用",
+    settingsSaved: "设置已更新", copiedLabel: "已复制",
+    permNotifyEdit: "修改方案", permNotifyWrite: "文件写入", permNotifyPending: "待确认", permNotifyTitle: "Agent 请求确认",
+    auto: "自动", plan: "计划", request: "请求",
+    thinkingAuto: "自动", thinkingOff: "关闭", thinkingHigh: "高", thinkingMax: "最高",
+    permPlan: "计划", permAccept: "接受编辑", permBypass: "自动",
+    permPlanTip: "仅规划，不执行写操作", permAcceptTip: "可读写文件，编辑需用户确认", permBypassTip: "自动执行所有操作，无需确认",
+    permTitle: "权限策略",
+    addFile: "选择项目文件并插入路径",
+    pin: "置顶", unpin: "取消置顶", rename: "重命名", delete: "删除",
+    chatLabel: "聊天", pinnedLabel: "置顶",
+    dragSidebar: "拖拽调整侧栏宽度", dragSessions: "拖拽调整会话与文件区域高度", toggleSidebar: "收起/展开侧栏", goUp: "上一层",
+    manageProjectDir: "点击管理项目目录", filePreview: "文件预览",
+    selectModel: "选择模型", reasoningEffort: "推理强度", pauseBtn: "暂停", sendTip: "发送消息", emptyTip: "请输入内容",
+    addKey: "添加 Key", editing: "编辑中", models: "模型", baseUrl: "Base URL", apiKeys: "API Keys",
+    temperature: "Temperature", maxTokens: "Max Tokens", memory: "记忆", newMemory: "新建记忆",
+    cancel: "取消", save: "保存", skills: "Skills", system: "系统",
+    light: "浅色", dark: "深色", followSystem: "跟随系统",
+    newFolder: "新建文件夹", refreshFiles: "刷新文件",
+    availableModels: "可用模型", refreshModels: "刷新模型",
+    systemPromptHint: "这里作为 Agent 的系统提示词", resetDefault: "恢复默认",
+    language: "语言", theme: "主题",
+    dragSort: "拖拽排序", keyNamePlaceholder: "名称（可选）",
+    toggleVisibility: "显示/隐藏", enabledStatus: "已启用", disabledStatus: "已禁用",
+  },
+  en: {
+    toolListFiles: "List Files", toolReadFile: "Read File", toolSearchFiles: "Search Files",
+    toolGlobFiles: "Glob Files", toolProposeEdit: "Propose Edit", toolApplyEdit: "Apply Edit",
+    toolRunCommand: "Run Command", toolWriteFile: "Write File", toolDeleteFile: "Delete File",
+    toolWebFetch: "Web Fetch", toolTask: "Sub Task", toolUseSkill: "Use Skill", toolSaveMemory: "Save Memory",
+    newSession: "+ New Session", newSkill: "+ New Skill", sessionTitleDefault: "New Session", untitledSession: "Untitled",
+    skillDesc: "Description", skillKeywords: "Keywords", skillTools: "Tools", skillPathLabel: "File Path",
+    skillExplicitHint: "Can be invoked via /{name}", skillEmptyHint: "Click + New Skill or select one from the left",
+    skillCreateHint: "Creates SKILL.md under data/skills/",
+    applyEdit: "Apply edit", rejectEdit: "Reject",
+    allowLabel: "Allow", rejectLabel: "Reject",
+    copyBtn: "copy", copiedBtn: "copied", failedBtn: "failed",
+    appliedLabel: "Applied", rejectedLabel: "Rejected",
+    sessionInfo: "Session Info", messages: "Messages", tokens: "Tokens",
+    sessionName: "Name", created: "Created", active: "Active", file: "File",
+    totalLabel: "Total", userLabel: "User", agentLabel: "Agent",
+    inputLabel: "Input", outputLabel: "Output", cacheLabel: "Cache", contextLabel: "Context",
+    previewBtn: "Preview", noFileOpen: "No file open", selectFileToPreview: "Select a file to preview",
+    exportBtn: "Export", tools: "Tools", toolLog: "Tool Log", settingsBtn: "Settings",
+    files: "Files", chooseFolder: "Choose Folder", recentLabel: "Recent",
+    welcome: "I'm Agent Lite, your local AI coding partner. I can read files, search code, run commands, and modify projects.",
+    welcomeTagline: "Start a conversation, drive code with natural language.",
+    inputPlaceholder: "Describe your task, paste code, or type / for commands",
+    thinkingLabel: "Thinking", completedLabel: "Completed",
+    refreshBtn: "Refresh", closePreview: "Close", filterFiles: "Filter files...",
+    statusDone: "Done", statusFail: "Failed", statusRunning: "Preparing",
+    toolExecFailed: "Tool execution failed", fetchFailed: "Fetch failed",
+    fillRequired: "Please fill in required fields", nameExists: "Name already exists",
+    enterMemoryName: "Enter memory name", enterMemoryBody: "Enter memory content", waitForReply: "Please wait for the current reply to finish",
+    memNamePlaceholder: "name, use letters, numbers, hyphens and underscores, e.g. coding-conventions",
+    memDescPlaceholder: "description, a brief summary",
+    memBodyPlaceholder: "Memory content...",
+    saveFailed: "Save failed", deleteFailed: "Delete failed",
+    enterApiKey: "Please enter API Key first", noModelsFound: "No models found",
+    toolLogEmpty: "No tool actions", toolLogHint: "Tool calls, searches, reads, edits, and commands appear here.",
+    toolActions: "tool actions", toolCalls: "calls", toolResults: "results", toolFailures: "failed",
+    compactContext: "Compact context", compacting: "Compacting",
+    confirmWrite: "Confirm write", applyEditLabel: "Apply edit", userCancelled: "User cancelled the tool call",
+    settingsSaved: "Settings saved", copiedLabel: "Copied",
+    permNotifyEdit: "Edit proposal", permNotifyWrite: "File write", permNotifyPending: "Confirm", permNotifyTitle: "Agent Request",
+    auto: "Auto", plan: "Plan", request: "Accept",
+    thinkingAuto: "Auto", thinkingOff: "Off", thinkingHigh: "High", thinkingMax: "Max",
+    permPlan: "Plan", permAccept: "Accept edits", permBypass: "Auto",
+    permPlanTip: "Plan only, no writes", permAcceptTip: "Read & write, edits need confirmation", permBypassTip: "Auto-execute all",
+    permTitle: "Permissions", addFile: "Select a project file to insert its path",
+    pin: "Pin", unpin: "Unpin", rename: "Rename", delete: "Delete",
+    chatLabel: "Chats", pinnedLabel: "Pinned",
+    dragSidebar: "Drag to resize sidebar", dragSessions: "Drag to resize sections", toggleSidebar: "Toggle sidebar", goUp: "Go up",
+    manageProjectDir: "Manage project directory", filePreview: "File preview",
+    selectModel: "Select model", reasoningEffort: "Reasoning effort", pauseBtn: "Pause", sendTip: "Send", emptyTip: "Type a message",
+    addKey: "Add Key", editing: "Editing", models: "Models", baseUrl: "Base URL", apiKeys: "API Keys",
+    temperature: "Temperature", maxTokens: "Max Tokens", memory: "Memory", newMemory: "New Memory",
+    cancel: "Cancel", save: "Save", skills: "Skills", system: "System",
+    light: "Light", dark: "Dark", followSystem: "Follow System",
+    newFolder: "New Folder", refreshFiles: "Refresh Files",
+    availableModels: "Available Models", refreshModels: "Refresh Models",
+    systemPromptHint: "This serves as the Agent's system prompt", resetDefault: "Reset to Default",
+    language: "Language", theme: "Theme",
+    dragSort: "Drag to sort", keyNamePlaceholder: "Name (optional)",
+    toggleVisibility: "Show/Hide", enabledStatus: "Enabled", disabledStatus: "Disabled",
+  },
+};
+
 function t(key) {
 
   const lang = (state.lang || "zh") === "zh" ? "zh" : "en";
 
-  return LANG[lang][key] || LANG.zh[key] || key;
+  return I18N[lang]?.[key] || LANG[lang]?.[key] || LANG.zh?.[key] || I18N.zh?.[key] || key;
 
 }
 
@@ -1579,6 +1705,44 @@ function setLang(lang) {
 
   localStorage.setItem("agent-lite-lang", lang);
 
+  applyI18n();
+
+}
+
+
+function applyI18n() {
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    const key = el.dataset.i18n;
+    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+      el.placeholder = t(key);
+      if (el.type === "text" && el.id === "sessionTitle") el.value = t(key);
+    } else if (el.childNodes.length === 1 && el.childNodes[0].nodeType === 3) {
+      el.textContent = t(key);
+    } else {
+      const txt = [...el.childNodes].reverse().find(n => n.nodeType === 3);
+      if (txt) txt.nodeValue = t(key);
+    }
+  });
+  document.querySelectorAll("[data-i18n-title]").forEach(el => {
+    el.title = t(el.dataset.i18nTitle);
+  });
+  const idMap = {
+    newChat:"newSession", togglePreview:"previewBtn", exportChat:"exportBtn",
+    settingsMenuBtn:"settingsBtn", toolLogToggle:"toolLog",
+    settingsModels:"models", settingsMemory:"memory", settingsSkills:"skills", settingsSystem:"system",
+  };
+  for (const [id, key] of Object.entries(idMap)) {
+    const el = document.getElementById(id); if (!el) continue;
+    const txt = [...el.childNodes].reverse().find(n => n.nodeType === 3);
+    if (txt) txt.nodeValue = t(key); else el.textContent = t(key);
+  }
+  document.querySelectorAll(".theme-opt").forEach(el => {
+    el.textContent = t({light:"light",dark:"dark",system:"followSystem"}[el.dataset.theme]||"followSystem");
+  });
+  const w = document.querySelector(".welcome-text");
+  if (w) w.textContent = t("welcome");
+  const ta = document.getElementById("prompt");
+  if (ta) ta.placeholder = t("inputPlaceholder");
 }
 
 
@@ -1606,18 +1770,18 @@ let _pendingPermNotify = false;
 
 function notifyPermissionNeeded(action, path) {
   if (!document.hidden) return;
-  const label = action === "propose_edit" ? "修改方案" : "文件写入";
+  const label = action === "propose_edit" ? t("permNotifyEdit") : t("permNotifyWrite");
   _pendingPermNotify = true;
-  document.title = `[待确认] ${label} - ${path}`;
+  document.title = `[${t("permNotifyPending")}] ${label} - ${path}`;
   if (!state._titleInterval) {
     state._titleInterval = setInterval(() => {
       if (!_pendingPermNotify) { clearInterval(state._titleInterval); state._titleInterval = null; return; }
-      document.title = document.title.startsWith("[待确认]") ? document.title.replace("[待确认]", "") : `[待确认]${document.title}`;
+      document.title = document.title.startsWith("[") ? document.title.replace(`[${t("permNotifyPending")}]`, "") : `[${t("permNotifyPending")}]${document.title}`;
     }, 2000);
   }
   try {
     if ("Notification" in window && Notification.permission === "granted") {
-      new Notification("Agent 请求确认", { body: `${label}: ${path}` });
+      new Notification(t("permNotifyTitle"), { body: `${label}: ${path}` });
     }
   } catch (_) {}
 }
@@ -2093,15 +2257,15 @@ function showSkillDetail(skill) {
 
     </div>
 
-    <div class="skill-detail-section"><div class="skill-detail-label">描述</div><div class="skill-detail-value">${escapeHtml(skill.description || "-")}</div></div>
+    <div class="skill-detail-section"><div class="skill-detail-label">${t("skillDesc")}</div><div class="skill-detail-value">${escapeHtml(skill.description || "-")}</div></div>
 
-    <div class="skill-detail-section"><div class="skill-detail-label">关键词</div><div class="skill-detail-value">${escapeHtml((skill.keywords || []).join(", ") || "-")}</div></div>
+    <div class="skill-detail-section"><div class="skill-detail-label">${t("skillKeywords")}</div><div class="skill-detail-value">${escapeHtml((skill.keywords || []).join(", ") || "-")}</div></div>
 
-    <div class="skill-detail-section"><div class="skill-detail-label">工具</div><div class="skill-detail-value">${escapeHtml((skill.tools || []).join(", ") || "-")}</div></div>
+    <div class="skill-detail-section"><div class="skill-detail-label">${t("skillTools")}</div><div class="skill-detail-value">${escapeHtml((skill.tools || []).join(", ") || "-")}</div></div>
 
-    <div class="skill-detail-section"><div class="skill-detail-label">文件路径</div><div class="skill-detail-value">${escapeHtml(skill.path || `data/skills/${skill.dir || skill.name}/SKILL.md`)}</div></div>
+    <div class="skill-detail-section"><div class="skill-detail-label">${t("skillPathLabel")}</div><div class="skill-detail-value">${escapeHtml(skill.path || `data/skills/${skill.dir || skill.name}/SKILL.md`)}</div></div>
     <div class="skill-detail-actions">
-      <button class="skill-delete-icon" id="skillDeleteBtn" title="删除 Skill">删除</button>
+      <button class="skill-delete-icon" id="skillDeleteBtn" title="删除 Skill">${t("delete")}</button>
     </div>
   `;
 
@@ -2126,7 +2290,7 @@ let _editingSkillName = null;
 function openSkillEditor(skill) {
 
   _editingSkillName = skill ? skill.name : null;
-  document.getElementById("skillEditorTitle").textContent = skill ? `编辑 ${skill.name}` : "新建 Skill";
+  document.getElementById("skillEditorTitle").textContent = skill ? `${t("editing")} ${skill.name}` : t("newSkill");
   document.getElementById("skillEditName").value = skill ? skill.name : "";
   document.getElementById("skillEditDesc").value = skill ? (skill.description || "") : "";
   document.getElementById("skillEditKeywords").value = skill ? (skill.keywords || []).join(", ") : "";
@@ -2158,9 +2322,9 @@ async function saveSkillEdit() {
 
   const body = document.getElementById("skillEditBody").value.trim();
 
-  if (!name) { showToast("请补全必填内容", "error"); return; }
+  if (!name) { showToast(t("fillRequired"), "error"); return; }
 
-  if (!body) { showToast("请补全必填内容", "error"); return; }
+  if (!body) { showToast(t("fillRequired"), "error"); return; }
 
 
 
@@ -3108,7 +3272,11 @@ const TOOL_DISPLAY = {
 
 
 function _toolActionLabel(action) {
-  return (TOOL_DISPLAY[action] || {}).label || action;
+  const map = { list_files:"toolListFiles", read_file:"toolReadFile", search_files:"toolSearchFiles",
+    glob_files:"toolGlobFiles", propose_edit:"toolProposeEdit", apply_edit:"toolApplyEdit",
+    run_command:"toolRunCommand", write_file:"toolWriteFile", delete_file:"toolDeleteFile",
+    web_fetch:"toolWebFetch", task:"toolTask", use_skill:"toolUseSkill", save_memory:"toolSaveMemory" };
+  return map[action] ? t(map[action]) : action;
 }
 
 function _isToolError(content) {
@@ -3358,7 +3526,7 @@ function renderMessages() {
           </svg>
           <div class="welcome-brand">
             <h1 class="welcome-title">Agent Lite</h1>
-            <p class="welcome-desc">开始对话，用自然语言驱动代码。</p>
+            <p class="welcome-desc" data-i18n="welcomeTagline">开始对话，用自然语言驱动代码。</p>
           </div>
         </div>
       </div>
@@ -3369,6 +3537,8 @@ function renderMessages() {
     updateStatsPanel();
 
     renderToolLog();
+
+    applyI18n(); // translate dynamically rendered welcome HTML
 
     return;
 
@@ -3870,7 +4040,7 @@ function renderToolLog() {
 
   const errorCount = items.filter(({ msg }) => (getMsgText(msg)).startsWith("工具执行失败")).length;
 
-  els.toolLogSummary.textContent = `${items.length} 条工具动作：${callCount} 次调用，${resultCount} 条结果${errorCount ? `，${errorCount} 条失败` : ""}`;
+  els.toolLogSummary.textContent = `${items.length} ${t("toolActions")}: ${callCount} ${t("toolCalls")}, ${resultCount} ${t("toolResults")}${errorCount ? `, ${errorCount} ${t("toolFailures")}` : ""}`;
 
   els.toolLogList.innerHTML = items
 
@@ -4148,9 +4318,9 @@ function renderSessions() {
 
       const title = session.title || "未命名会话";
 
-      const labelHtml = isFirstPinned ? `<div class="session-group-label">置顶</div>`
+      const labelHtml = isFirstPinned ? `<div class="session-group-label">${t("pinnedLabel")}</div>`
 
-        : isFirstUnpinned ? `<div class="session-group-label">聊天</div>` : "";
+        : isFirstUnpinned ? `<div class="session-group-label">${t("chatLabel")}</div>` : "";
 
       if (state.renamingSessionId === session.id) {
 
@@ -4236,11 +4406,11 @@ function renderSessions() {
 
       menu.innerHTML = `
 
-        <button class="session-more-item pin ${getPinnedSessions().includes(id) ? 'is-pinned' : ''}" data-action="pin">${getPinnedSessions().includes(id) ? '取消置顶' : '置顶'}</button>
+        <button class="session-more-item pin ${getPinnedSessions().includes(id) ? 'is-pinned' : ''}" data-action="pin">${getPinnedSessions().includes(id) ? t('unpin') : t('pin')}</button>
 
-        <button class="session-more-item" data-action="rename">重命名</button>
+        <button class="session-more-item" data-action="rename">${t("rename")}</button>
 
-        <button class="session-more-item danger" data-action="delete">删除</button>
+        <button class="session-more-item danger" data-action="delete">${t("delete")}</button>
 
       `;
 
@@ -5338,7 +5508,7 @@ async function refreshModels() {
 
   if (keys.length === 0) {
 
-    showToast("请先输入 API Key", "warning");
+    showToast(t("enterApiKey"), "warning");
 
     return;
 
@@ -5402,7 +5572,7 @@ async function refreshModels() {
 
   if (allModels.size === 0) {
 
-    showToast("未找到可用模型，请检查 Base URL 和 API Key", "error");
+    showToast(t("noModelsFound"), "error");
 
     els.refreshModelsBtn.disabled = false;
 
@@ -5652,7 +5822,7 @@ function updateSendButtonState() {
   els.sendBtn.classList.toggle("ready", hasContent && !state.isStreaming);
   els.sendBtn.classList.toggle("running", state.isStreaming);
   els.sendBtn.disabled = !hasContent && !state.isStreaming;
-  els.sendBtn.title = state.isStreaming ? "暂停输出" : (hasContent ? "发送消息 (Enter 排队)" : "请输入内容");
+  els.sendBtn.title = state.isStreaming ? t("pauseBtn") : (hasContent ? t("sendTip") : t("emptyTip"));
 
 }
 
@@ -7973,7 +8143,7 @@ function setSelectedModel(modelId) {
 
   els.modelPillBtn.dataset.model = modelId;
 
-  els.modelPillLabel.textContent = modelId || "请选择模型";
+  els.modelPillLabel.textContent = modelId || t("selectModel");
 
   // Update dropdown checkmarks
 
@@ -7997,7 +8167,7 @@ function getThinkingLevel() {
 
 function setThinkingLevel(value) {
 
-  const labels = { auto: "自动", off: "关闭", high: "高", max: "最高" };
+  const labels = { auto: t("thinkingAuto"), off: t("thinkingOff"), high: t("thinkingHigh"), max: t("thinkingMax") };
 
   els.thinkingPillBtn.dataset.value = value;
 
@@ -8023,7 +8193,7 @@ function getPermLevel() {
 
 function setPermLevel(value) {
 
-  const labels = { plan: "计划", accept: "接受编辑", bypass: "自动" };
+  const labels = { plan: t("permPlan"), accept: t("permAccept"), bypass: t("permBypass") };
 
   els.permPillBtn.dataset.value = value;
 
@@ -8183,7 +8353,7 @@ async function renderMemoryList() {
 
         <button class="memory-item-btn" data-memory-edit="${escapeHtml(mem.name)}">编辑</button>
 
-        <button class="memory-item-btn danger" data-memory-delete="${escapeHtml(mem.name)}">删除</button>
+        <button class="memory-item-btn danger" data-memory-delete="${escapeHtml(mem.name)}">${t("delete")}</button>
 
         ${mem.description ? `<span class="memory-item-desc">${escapeHtml(mem.description)}</span>` : ""}
 
@@ -8281,9 +8451,9 @@ async function saveMemorySubmit() {
 
   const body = els.memoryBody.value.trim();
 
-  if (!name) { showToast("请输入记忆名称", "warning"); return; }
+  if (!name) { showToast(t("enterMemoryName"), "warning"); return; }
 
-  if (!body) { showToast("请输入记忆内容", "warning"); return; }
+  if (!body) { showToast(t("enterMemoryBody"), "warning"); return; }
 
   try {
 
@@ -8715,7 +8885,7 @@ function renderRecentFolders() {
 
   cwdRecent.style.display = "block";
 
-  cwdRecent.innerHTML = `<div class="cwd-dropdown-label">最近使用</div>` +
+  cwdRecent.innerHTML = `<div class="cwd-dropdown-label">${t("recentLabel")}</div>` +
 
     recents.slice(0, 5).map((p) =>
 
@@ -9133,6 +9303,8 @@ function switchSettingsPanel(panel) {
 
   }
 
+  applyI18n(); // translate dynamically rendered settings content
+
 }
 
 
@@ -9229,17 +9401,17 @@ function renderMemoryPanel(container) {
 
         <span id="memFormLabel" style="font-weight:700;font-size:13px;color:var(--text)">${t("newMemory")}</span>
 
-        <button id="memCancelBtn" class="mini-btn" type="button" style="visibility:hidden">取消</button>
+        <button id="memCancelBtn" class="mini-btn" type="button" style="visibility:hidden">${t("cancel")}</button>
 
       </div>
 
-      <input id="settingsMemName" placeholder="name，只能使用英文、数字、中划线和下划线，例如 coding-conventions" autocomplete="off" />
+      <input id="settingsMemName" placeholder="${t("memNamePlaceholder")}" autocomplete="off" />
 
-      <input id="settingsMemDesc" placeholder="description，简要说明" autocomplete="off" />
+      <input id="settingsMemDesc" placeholder="${t("memDescPlaceholder")}" autocomplete="off" />
 
-      <textarea id="settingsMemBody" rows="5" placeholder="记忆内容..." spellcheck="false"></textarea>
+      <textarea id="settingsMemBody" rows="5" placeholder="${t("memBodyPlaceholder")}" spellcheck="false"></textarea>
 
-      <div class="memory-form-actions"><button id="settingsSaveMem" class="mini-btn" type="button">保存</button></div>
+      <div class="memory-form-actions"><button id="settingsSaveMem" class="mini-btn" type="button">${t("save")}</button></div>
 
     </div>`;
 
@@ -9253,9 +9425,9 @@ function renderMemoryPanel(container) {
 
     const body = document.getElementById("settingsMemBody").value.trim();
 
-    if (!name || !body) { showToast("请补全必填内容", "error"); return; }
+    if (!name || !body) { showToast(t("fillRequired"), "error"); return; }
 
-    if (!/^[a-zA-Z0-9_-]+$/.test(name)) { showToast("请补全必填内容", "error"); return; }
+    if (!/^[a-zA-Z0-9_-]+$/.test(name)) { showToast(t("fillRequired"), "error"); return; }
 
     if (state._editingMemory && state._editingMemory !== name) {
 
@@ -9423,7 +9595,7 @@ function renderSkillsInSettings(container) {
 
         <div id="settingsSkillsSidebar" style="flex:1;overflow:auto;padding:4px 0"></div>
 
-        <button id="settingsSkillAddBtn" class="mini-btn" style="width:100%;margin-top:8px;flex-shrink:0">+ 新建 Skill</button>
+        <button id="settingsSkillAddBtn" class="mini-btn" style="width:100%;margin-top:8px;flex-shrink:0" data-i18n="newSkill">+ 新建 Skill</button>
 
       </div>
 
@@ -9505,10 +9677,10 @@ function showSkillDetailInSettings(skill) {
     panel.innerHTML = hasSkills
       ? '<div class="skills-detail-empty">选择 Skill 查看详情</div>'
       : `<div class="skills-detail-empty">
-        <strong>新建 Skill</strong>
-        <span style="margin-top:6px">点击 + 新建 Skill，或在左侧选择 Skill</span>
-        <button class="mini-btn primary-btn" style="margin-top:12px" id="settingsEmptyCreateBtn">+ 新建 Skill</button>
-        <span style="margin-top:4px;font-size:11px">将在 data/skills/ 下创建 SKILL.md 文件</span>
+        <strong>${t("newSkill")}</strong>
+        <span style="margin-top:6px">${t("skillEmptyHint")}</span>
+        <button class="mini-btn primary-btn" style="margin-top:12px" id="settingsEmptyCreateBtn" data-i18n="newSkill">+ 新建 Skill</button>
+        <span style="margin-top:4px;font-size:11px" data-i18n="skillCreateHint">将在 data/skills/ 下创建 SKILL.md 文件</span>
       </div>`;
     if (!hasSkills) {
       document.getElementById("settingsEmptyCreateBtn").addEventListener("click", () => openSkillEditor(null));
@@ -9532,13 +9704,13 @@ function showSkillDetailInSettings(skill) {
         </button>
       </div>
     </div>
-    ${["dispatching-parallel-agents", "subagent-driven-development", "executing-plans", "writing-plans"].includes(skill.name) ? `<div class="skill-detail-note">此 Skill 可以通过 /${escapeHtml(skill.name)} 命令手动触发</div>` : ""}
-    <div class="skill-detail-section"><div class="skill-detail-label">描述</div><div class="skill-detail-value">${escapeHtml(skill.description || "-")}</div></div>
-    <div class="skill-detail-section"><div class="skill-detail-label">关键词</div><div class="skill-detail-value">${escapeHtml((skill.keywords || []).join(", ") || "-")}</div></div>
-    <div class="skill-detail-section"><div class="skill-detail-label">工具</div><div class="skill-detail-value">${escapeHtml((skill.tools || []).join(", ") || "-")}</div></div>
-    <div class="skill-detail-section"><div class="skill-detail-label">文件路径</div><div class="skill-detail-value">${escapeHtml(skill.path || `data/skills/${skill.dir || skill.name}/SKILL.md`)}</div></div>
+    ${["dispatching-parallel-agents", "subagent-driven-development", "executing-plans", "writing-plans"].includes(skill.name) ? `<div class="skill-detail-note">${t("skillExplicitHint").replace("{name}", escapeHtml(skill.name))}</div>` : ""}
+    <div class="skill-detail-section"><div class="skill-detail-label">${t("skillDesc")}</div><div class="skill-detail-value">${escapeHtml(skill.description || "-")}</div></div>
+    <div class="skill-detail-section"><div class="skill-detail-label">${t("skillKeywords")}</div><div class="skill-detail-value">${escapeHtml((skill.keywords || []).join(", ") || "-")}</div></div>
+    <div class="skill-detail-section"><div class="skill-detail-label">${t("skillTools")}</div><div class="skill-detail-value">${escapeHtml((skill.tools || []).join(", ") || "-")}</div></div>
+    <div class="skill-detail-section"><div class="skill-detail-label">${t("skillPathLabel")}</div><div class="skill-detail-value">${escapeHtml(skill.path || `data/skills/${skill.dir || skill.name}/SKILL.md`)}</div></div>
     <div class="skill-detail-actions">
-      <button class="skill-delete-icon" id="settingsSkillDelete" title="删除 Skill">删除</button>
+      <button class="skill-delete-icon" id="settingsSkillDelete" title="删除 Skill">${t("delete")}</button>
     </div>
   `;
 
@@ -9560,7 +9732,7 @@ function renderSystemPanel(container) {
 
     <textarea id="settingsSystemText" class="system-prompt-text" style="height:400px" spellcheck="false">${escapeHtml(els.systemPromptText.value)}</textarea>
 
-    <div class="panel-actions" style="margin-top:8px"><span>这里作为 Agent 的系统提示词</span><button id="settingsResetSystem" class="mini-btn" type="button">恢复默认</button></div>`;
+    <div class="panel-actions" style="margin-top:8px"><span>${t("systemPromptHint")}</span><button id="settingsResetSystem" class="mini-btn" type="button">${t("resetDefault")}</button></div>`;
 
   document.getElementById("settingsSystemText").addEventListener("change", () => { els.systemPromptText.value = document.getElementById("settingsSystemText").value; saveSystemPrompt(); });
 
@@ -9572,7 +9744,7 @@ function renderLanguagePanel(container) {
 
   const cur = state.lang || "zh";
 
-  container.innerHTML = `<h3 style="margin:0 0 14px">Language</h3>
+  container.innerHTML = `<h3 style="margin:0 0 14px">${t("language")}</h3>
 
     <div class="lang-options">
 
@@ -9604,7 +9776,7 @@ function renderThemePanel(container) {
 
   const themes = [{ v: "light", l: t("light") }, { v: "dark", l: t("dark") }, { v: "system", l: t("followSystem") }];
 
-  container.innerHTML = `<h3 style="margin:0 0 14px">Theme</h3>
+  container.innerHTML = `<h3 style="margin:0 0 14px">${t("theme")}</h3>
 
     <div class="settings-theme-row" style="max-width:240px">${themes.map((t) => `<button class="theme-opt settings-theme-btn ${t.v === current ? 'active' : ''}" data-theme="${t.v}">${t.l}</button>`).join("")}</div>`;
 
@@ -9978,7 +10150,7 @@ els.chatForm.addEventListener("submit", async (event) => {
 
 els.newChat.addEventListener("click", () => {
 
-  if (state.isStreaming) { showToast("请等待当前回答完成后再新建会话"); return; }
+  if (state.isStreaming) { showToast(t("waitForReply")); return; }
 
   const run = ensureSessionRun(state.sessionId);
   if (run?.abortController) run.abortController.abort();
@@ -10060,6 +10232,8 @@ async function init() {
   setPermLevel(savedPerm);
 
   els.systemPromptText.value = localStorage.getItem("agent-lite-system-prompt") || defaultSystemPrompt;
+
+  applyI18n(); // run early, before async ops, to prevent flicker
 
   updateModePromptPreview();
 

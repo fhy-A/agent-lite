@@ -1624,6 +1624,9 @@ const I18N = {
     cancel: "取消", save: "保存", skills: "Skills", system: "系统", deleteSkill: "删除 Skill",
     keyBulkPlaceholder: "每行输入一个 key，可以粘贴多个 key；空行会自动跳过。",
     selectSkillHint: "选择 Skill 查看详情",
+    statInputTitle: "输入 token", statOutputTitle: "输出 token", statCacheTitle: "缓存 token",
+    statContextTitle: "上下文占比 · 超95%自动压缩", viewSessionInfo: "查看 Session Info",
+    usageStripTitle: "上下文 {current} / {limit} tokens",
     deleteConfirmMsg: "确定删除「{name}」？",
     deleteMemoryMsg: "删除记忆「{name}」？此操作不可恢复。",
     noProjectContext: "📄 无项目上下文",
@@ -1696,6 +1699,9 @@ const I18N = {
     cancel: "Cancel", save: "Save", skills: "Skills", system: "System", deleteSkill: "Delete Skill",
     keyBulkPlaceholder: "One key per line, paste multiple keys; blank lines are skipped.",
     selectSkillHint: "Select a Skill to view details",
+    statInputTitle: "Input tokens", statOutputTitle: "Output tokens", statCacheTitle: "Cache tokens",
+    statContextTitle: "Context usage · auto-compact above 95%", viewSessionInfo: "View Session Info",
+    usageStripTitle: "Context {current} / {limit} tokens",
     deleteConfirmMsg: "Delete 「{name}」?",
     deleteMemoryMsg: "Delete memory 「{name}」? This cannot be undone.",
     noProjectContext: "📄 No project context",
@@ -2835,7 +2841,7 @@ function updateStatsPanel() {
 
   els.statContext.textContent = `${stats.contextPct.toFixed(0)}%`;
 
-  els.usageStrip.title = `上下文 ${formatCompact(stats.contextTokens || 0)} / ${formatCompact(stats.ctxLimit || 200000)} tokens`;
+  els.usageStrip.title = t("usageStripTitle").replace("{current}", formatCompact(stats.contextTokens || 0)).replace("{limit}", formatCompact(stats.ctxLimit || 200000));
 
   // Update ring chart
 

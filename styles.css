@@ -2957,7 +2957,7 @@ body.theme-dark .syn-fn { color: #61afef; }
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
   gap: 8px;
-  max-width: 480px;
+  max-width: 320px;
 }
 .theme-opt {
   height: 48px;

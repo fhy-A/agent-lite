@@ -1681,7 +1681,7 @@ const I18N = {
     addKey: "Add Key", edit: "Edit", editing: "Editing", models: "Models", baseUrl: "Base URL", apiKeys: "API Keys",
     temperature: "Temperature", maxTokens: "Max Tokens", memory: "Memory", newMemory: "New Memory",
     cancel: "Cancel", save: "Save", skills: "Skills", system: "System", deleteSkill: "Delete Skill",
-    light: "Light", dark: "Dark", followSystem: "Follow System",
+    light: "Light", dark: "Dark", followSystem: "System",
     newFolder: "New Folder", refreshFiles: "Refresh Files",
     availableModels: "Available Models", refreshModels: "Refresh Models",
     systemPromptHint: "This serves as the Agent's system prompt", resetDefault: "Reset to Default",

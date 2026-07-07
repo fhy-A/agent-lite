@@ -1617,14 +1617,14 @@ const I18N = {
     dragSidebar: "拖拽调整侧栏宽度", dragSessions: "拖拽调整会话与文件区域高度", toggleSidebar: "收起/展开侧栏", goUp: "上一层",
     manageProjectDir: "点击管理项目目录", filePreview: "文件预览",
     selectModel: "选择模型", reasoningEffort: "推理强度", pauseBtn: "暂停", sendTip: "发送消息", emptyTip: "请输入内容",
-    addKey: "添加 Key", editing: "编辑中", models: "模型", baseUrl: "Base URL", apiKeys: "API Keys",
+    addKey: "添加 Key", edit: "编辑", editing: "编辑中", models: "模型", baseUrl: "Base URL", apiKeys: "API Keys",
     temperature: "Temperature", maxTokens: "Max Tokens", memory: "记忆", newMemory: "新建记忆",
     cancel: "取消", save: "保存", skills: "Skills", system: "系统",
     light: "浅色", dark: "深色", followSystem: "跟随系统",
     newFolder: "新建文件夹", refreshFiles: "刷新文件",
     availableModels: "可用模型", refreshModels: "刷新模型",
     systemPromptHint: "这里作为 Agent 的系统提示词", resetDefault: "恢复默认",
-    language: "语言", theme: "主题",
+    language: "语言", theme: "主题", settings: "设置",
     dragSort: "拖拽排序", keyNamePlaceholder: "名称（可选）",
     toggleVisibility: "显示/隐藏", enabledStatus: "已启用", disabledStatus: "已禁用",
   },
@@ -1678,14 +1678,14 @@ const I18N = {
     dragSidebar: "Drag to resize sidebar", dragSessions: "Drag to resize sections", toggleSidebar: "Toggle sidebar", goUp: "Go up",
     manageProjectDir: "Manage project directory", filePreview: "File preview",
     selectModel: "Select model", reasoningEffort: "Reasoning effort", pauseBtn: "Pause", sendTip: "Send", emptyTip: "Type a message",
-    addKey: "Add Key", editing: "Editing", models: "Models", baseUrl: "Base URL", apiKeys: "API Keys",
+    addKey: "Add Key", edit: "Edit", editing: "Editing", models: "Models", baseUrl: "Base URL", apiKeys: "API Keys",
     temperature: "Temperature", maxTokens: "Max Tokens", memory: "Memory", newMemory: "New Memory",
     cancel: "Cancel", save: "Save", skills: "Skills", system: "System",
     light: "Light", dark: "Dark", followSystem: "Follow System",
     newFolder: "New Folder", refreshFiles: "Refresh Files",
     availableModels: "Available Models", refreshModels: "Refresh Models",
     systemPromptHint: "This serves as the Agent's system prompt", resetDefault: "Reset to Default",
-    language: "Language", theme: "Theme",
+    language: "Language", theme: "Theme", settings: "Settings",
     dragSort: "Drag to sort", keyNamePlaceholder: "Name (optional)",
     toggleVisibility: "Show/Hide", enabledStatus: "Enabled", disabledStatus: "Disabled",
   },
@@ -2239,7 +2239,7 @@ function showSkillDetail(skill) {
 
       <div class="skill-detail-head-actions">
 
-        <label class="toggle-switch" title="${isOn ? '已启用' : '已禁用'}">
+        <label class="toggle-switch" title="${isOn ? t("enabledStatus") : t("disabledStatus")}">
 
           <input type="checkbox" ${isOn ? 'checked' : ''} id="skillToggleBtn" />
 
@@ -2247,7 +2247,7 @@ function showSkillDetail(skill) {
 
         </label>
 
-        <button class="skill-edit-icon" id="skillEditBtn" title="编辑">
+        <button class="skill-edit-icon" id="skillEditBtn" title="${t("edit")}">
 
             <svg class="icon" viewBox="0 0 1097 1024" width="14" height="14"><path d="M925.72 1024H161.13C72 1024 0 952.32 0 863.57V160.43C0 71.68 72 0 161.16 0h613.67c20.58 0 34.3 13.65 34.3 34.13s-13.72 34.14-34.3 34.14H161.16a91.99 91.99 0 00-92.55 92.16v699.73c0 54.61 41.13 95.57 92.55 95.57h764.59c51.44 0 92.57-40.96 92.57-92.16V337.92c0-20.48 13.7-34.13 34.28-34.13s34.28 13.65 34.28 34.13v525.65c3.41 88.75-72 160.43-161.16 160.43zM456 658.77c-10.29 0-17.14-3.41-24-10.24-13.72-13.65-13.72-34.13 0-47.78L1038.85 23.89a33.26 33.26 0 0148.03 0c13.7 13.66 13.7 34.14 0 47.79L479.96 648.53c-6.83 6.83-13.7 10.24-24 10.24z" fill="currentColor"/></svg>
 
@@ -5888,7 +5888,7 @@ function renderImageThumbs() {
 
       <img src="data:${img.mime};base64,${img.base64}" alt="${escapeHtml(img.name)}" />
 
-      <button class="img-thumb-remove" type="button" title="删除" data-index="${i}">?</button>
+      <button class="img-thumb-remove" type="button" title="${t("delete")}" data-index="${i}">?</button>
 
     </div>
 
@@ -8351,7 +8351,7 @@ async function renderMemoryList() {
 
         <span class="memory-item-name">${escapeHtml(mem.name)}</span>
 
-        <button class="memory-item-btn" data-memory-edit="${escapeHtml(mem.name)}">编辑</button>
+        <button class="memory-item-btn" data-memory-edit="${escapeHtml(mem.name)}">${t("edit")}</button>
 
         <button class="memory-item-btn danger" data-memory-delete="${escapeHtml(mem.name)}">${t("delete")}</button>
 
@@ -9495,13 +9495,13 @@ async function refreshSettingsMemoryList() {
 
         <div class="memory-item-actions">
 
-          <button class="memory-item-btn" data-edit="${escapeHtml(m.name)}" title="编辑">
+          <button class="memory-item-btn" data-edit="${escapeHtml(m.name)}" title="${t("edit")}">
 
             <svg width="14" height="14" viewBox="0 0 1097 1024"><path d="M925.72 1024H161.13C72 1024 0 952.32 0 863.57V160.43C0 71.68 72 0 161.16 0h613.67c20.58 0 34.3 13.65 34.3 34.13s-13.72 34.14-34.3 34.14H161.16a91.99 91.99 0 00-92.55 92.16v699.73c0 54.61 41.13 95.57 92.55 95.57h764.59c51.44 0 92.57-40.96 92.57-92.16V337.92c0-20.48 13.7-34.13 34.28-34.13s34.28 13.65 34.28 34.13v525.65c3.41 88.75-72 160.43-161.16 160.43zM456 658.77c-10.29 0-17.14-3.41-24-10.24-13.72-13.65-13.72-34.13 0-47.78L1038.85 23.89a33.26 33.26 0 0148.03 0c13.7 13.66 13.7 34.14 0 47.79L479.96 648.53c-6.83 6.83-13.7 10.24-24 10.24z" fill="currentColor"/></svg>
 
           </button>
 
-          <button class="memory-item-btn danger" data-del="${escapeHtml(m.name)}" title="删除">
+          <button class="memory-item-btn danger" data-del="${escapeHtml(m.name)}" title="${t("delete")}">
 
             ${trashIcon()}
 
@@ -9694,11 +9694,11 @@ function showSkillDetailInSettings(skill) {
     <div class="skill-detail-head">
       <div class="skill-detail-name">${escapeHtml(skill.name)}</div>
       <div class="skill-detail-head-actions">
-        <label class="toggle-switch" title="${isOn ? '已启用' : '已禁用'}">
+        <label class="toggle-switch" title="${isOn ? t("enabledStatus") : t("disabledStatus")}">
           <input type="checkbox" ${isOn ? 'checked' : ''} id="settingsSkillToggle" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
-        <button class="skill-edit-icon" id="settingsSkillEdit" title="编辑">
+        <button class="skill-edit-icon" id="settingsSkillEdit" title="${t("edit")}">
 
             <svg class="icon" viewBox="0 0 1097 1024" width="14" height="14"><path d="M925.72 1024H161.13C72 1024 0 952.32 0 863.57V160.43C0 71.68 72 0 161.16 0h613.67c20.58 0 34.3 13.65 34.3 34.13s-13.72 34.14-34.3 34.14H161.16a91.99 91.99 0 00-92.55 92.16v699.73c0 54.61 41.13 95.57 92.55 95.57h764.59c51.44 0 92.57-40.96 92.57-92.16V337.92c0-20.48 13.7-34.13 34.28-34.13s34.28 13.65 34.28 34.13v525.65c3.41 88.75-72 160.43-161.16 160.43zM456 658.77c-10.29 0-17.14-3.41-24-10.24-13.72-13.65-13.72-34.13 0-47.78L1038.85 23.89a33.26 33.26 0 0148.03 0c13.7 13.66 13.7 34.14 0 47.79L479.96 648.53c-6.83 6.83-13.7 10.24-24 10.24z" fill="currentColor"/></svg>
         </button>

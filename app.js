@@ -2777,12 +2777,13 @@ async function apiJson(url, options = {}) {
 
   });
 
-  const text = await res.text();
   let data;
   try {
-    data = JSON.parse(text);
+    data = await res.json();
   } catch (e) {
-    throw new Error(`Invalid JSON from ${url}: ${e.message}`);
+    // response body is not valid JSON — likely a server error page
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    data = {};
   }
 
   if (!res.ok) throw new Error(data.error || data?.error?.message || `HTTP ${res.status}`);

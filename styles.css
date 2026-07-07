@@ -2954,14 +2954,13 @@ body.theme-dark .syn-fn { color: #61afef; }
 }
 
 .settings-theme-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  max-width: 320px;
 }
 .theme-opt {
   height: 48px;
-  padding: 0;
+  padding: 0 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
   font-size: 14px;
@@ -2969,6 +2968,7 @@ body.theme-dark .syn-fn { color: #61afef; }
   color: var(--text);
   background: var(--panel-3);
   cursor: pointer;
+  white-space: nowrap;
 }
 .theme-opt:hover { background: var(--panel-2); }
 .theme-opt.active { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }

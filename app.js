@@ -1657,6 +1657,7 @@ const I18N = {
     fmtDir: "目录", fmtFileCount: "文件数量", fmtTruncatedList: "结果较多，已截断显示",
     fmtEmptyDir: "目录为空", fmtLineRange: "行范围", fmtReadFile: "已读取文件",
     fmtTruncatedFile: "，内容已截断", fmtRegexSearch: "正则搜索", fmtSearch: "搜索",
+    fmtToolLogSep: "路",
     toggleVisibility: "显示/隐藏", enabledStatus: "已启用", disabledStatus: "已禁用",
   },
   en: {
@@ -1749,6 +1750,7 @@ const I18N = {
     fmtDir: "Directory", fmtFileCount: "File count", fmtTruncatedList: "Many results, truncated",
     fmtEmptyDir: "Directory empty", fmtLineRange: "Line range", fmtReadFile: "File read",
     fmtTruncatedFile: ", content truncated", fmtRegexSearch: "Regex search", fmtSearch: "Search",
+    fmtToolLogSep: "via",
     toggleVisibility: "Show/Hide", enabledStatus: "Enabled", disabledStatus: "Disabled",
   },
 };
@@ -3755,8 +3757,8 @@ function renderMessages() {
   for (const idx of toolSectionIndices) {
     const tools = segments[idx].tools;
     totalCalls += tools.filter((t) => t.callMsg).length;
-    totalFail += tools.filter((t) => t.resultMsg && (getMsgText(t.resultMsg)).startsWith("工具执行失败")).length;
-    totalFail += tools.filter((t) => t.resultMsg && (getMsgText(t.resultMsg)).startsWith("工具执行失败")).length;
+    totalFail += tools.filter((t) => t.resultMsg && (getMsgText(t.resultMsg)).startsWith(t("toolExecFailed"))).length;
+    totalFail += tools.filter((t) => t.resultMsg && (getMsgText(t.resultMsg)).startsWith(t("toolExecFailed"))).length;
   }
 
   let html = segments.map((seg, segIdx) => {
@@ -4100,7 +4102,7 @@ function renderToolLog() {
 
   const resultCount = items.filter(({ msg }) => msg.role === "tool-result").length;
 
-  const errorCount = items.filter(({ msg }) => (getMsgText(msg)).startsWith("工具执行失败")).length;
+  const errorCount = items.filter(({ msg }) => (getMsgText(msg)).startsWith(t("toolExecFailed"))).length;
 
   els.toolLogSummary.textContent = `${items.length} ${t("toolActions")}: ${callCount} ${t("toolCalls")}, ${resultCount} ${t("toolResults")}${errorCount ? `, ${errorCount} ${t("toolFailures")}` : ""}`;
 
@@ -4114,7 +4116,7 @@ function renderToolLog() {
 
       const isResult = msg.role === "tool-result";
 
-      const isError = isResult && (getMsgText(msg)).startsWith("工具执行失败");
+      const isError = isResult && (getMsgText(msg)).startsWith(t("toolExecFailed"));
 
       const kind = isResult ? "result" : "call";
 
@@ -4130,7 +4132,7 @@ function renderToolLog() {
 
           <div class="tool-log-detail" title="${escapeHtml(detail)}">#${index + 1} ${escapeHtml(detail)}</div>
 
-          <span class="tool-log-pill">${isError ? "error" : kind} 路 ${source}</span>
+          <span class="tool-log-pill">${isError ? "error" : kind} ${t("fmtToolLogSep")} ${source}</span>
 
         </div>
 
@@ -7679,10 +7681,12 @@ async function runAgentLoop(ctx = null) {
 
         // ── Consecutive failure detection ──
         const FAIL_SIGNALS = ["工具执行失败", "已被安全策略拦截", "文件不存在", "路径不存在",
+                              "Tool execution failed", "Blocked by security policy",
+                              "File not found", "Path not found",
                               "unknown error", "binary file is not supported"];
         const isFailure = (msg) => {
           const c = msg.content || "";
-          if (msg.meta && msg.meta.action === "run_command" && !c.includes("工具执行失败")) {
+          if (msg.meta && msg.meta.action === "run_command" && !c.includes("工具执行失败") && !c.includes("Tool execution failed")) {
             return false; // commands that ran but had non-zero exit are not hard failures
           }
           return FAIL_SIGNALS.some(s => c.includes(s));

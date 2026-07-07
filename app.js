@@ -1775,11 +1775,12 @@ function setLang(lang) {
 
 
 function applyI18n() {
+  const _managed = new Set(["modelPillLabel", "thinkingPillLabel", "permPillLabel", "sessionTitle"]);
   document.querySelectorAll("[data-i18n]").forEach(el => {
+    if (_managed.has(el.id)) return;
     const key = el.dataset.i18n;
     if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
       el.placeholder = t(key);
-      if (el.type === "text" && el.id === "sessionTitle") el.value = t(key);
     } else if (el.childNodes.length === 1 && el.childNodes[0].nodeType === 3) {
       el.textContent = t(key);
     } else {
@@ -10313,6 +10314,7 @@ async function init() {
   els.systemPromptText.value = localStorage.getItem("agent-lite-system-prompt") || defaultSystemPrompt;
 
   applyI18n(); // run early, before async ops, to prevent flicker
+  setSelectedModel(getSelectedModel()); // sync model pill (excluded from applyI18n)
 
   updateModePromptPreview();
 

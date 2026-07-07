@@ -2,12 +2,71 @@
 Agent Lite launcher — entry point for PyInstaller bundle.
 """
 import os
+import subprocess
 import sys
 import webbrowser
 import tkinter as tk
 from pathlib import Path
 
 GITHUB_REPO = "fhy-A/agent-lite"
+
+
+def kill_existing():
+    """Kill any already-running AgentLite.exe or pythonw server processes."""
+    import signal
+    current_pid = os.getpid()
+    killed = 0
+    try:
+        result = subprocess.run(
+            ["wmic", "process", "where",
+             "name='AgentLite.exe' or name='pythonw.exe' or name='python.exe'",
+             "get", "ProcessId,CommandLine"],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if not parts:
+                continue
+            pid_str = parts[-1]
+            if not pid_str.isdigit():
+                continue
+            pid = int(pid_str)
+            if pid == current_pid:
+                continue
+            # Only kill if it's an agent-lite process
+            cmdline = " ".join(parts[:-1]).lower()
+            if "agent-lite" in cmdline or "agentlite" in cmdline or "launcher" in cmdline:
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                    killed += 1
+                except Exception:
+                    pass
+            elif "server.py" in cmdline:
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                    killed += 1
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return killed
+
+
+def apply_pending_update():
+    """If AgentLite.exe.new exists, replace the current exe with it."""
+    if not getattr(sys, 'frozen', False):
+        return
+    current_exe = Path(sys.executable)
+    new_exe = current_exe.parent / "AgentLite.exe.new"
+    if new_exe.exists():
+        old_exe = current_exe.parent / "AgentLite.exe.old"
+        try:
+            if old_exe.exists():
+                old_exe.unlink()
+            current_exe.rename(old_exe)
+            new_exe.rename(current_exe)
+        except Exception:
+            pass
 VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/master/VERSION"
 RELEASE_EXE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest/download/AgentLite.exe"
 
@@ -61,24 +120,24 @@ def check_and_update():
         return False
 
     import tkinter.messagebox as mb
-    import threading
     root = tk.Tk()
     root.withdraw()
-    if not mb.askyesno("Agent Lite Update", f"New version {remote} available (current: {local}).\n\nUpdate now?"):
+    if not mb.askyesno("Agent Lite 更新", f"发现新版本 v{remote}（当前 v{local}）\n\n是否立即更新？"):
         return False
 
     # Show progress window
     pw = tk.Toplevel()
-    pw.title("Agent Lite Update")
-    pw.geometry("320x100")
+    pw.title("Agent Lite 更新中")
+    pw.geometry("420x130")
     pw.resizable(False, False)
-    lbl = tk.Label(pw, text=f"Downloading v{remote}...")
-    lbl.pack(pady=20)
+    lbl = tk.Label(pw, text=f"正在下载 v{remote}...", font=("Microsoft YaHei UI", 10))
+    lbl.pack(pady=(24, 6))
+    progress = tk.Label(pw, text="0%", font=("Microsoft YaHei UI", 9), fg="#888")
+    progress.pack()
     pw.update()
 
     try:
         import urllib.request
-        # Use the actual exe directory (not the PyInstaller temp dir)
         if getattr(sys, 'frozen', False):
             target_dir = Path(sys.executable).parent
         else:
@@ -86,26 +145,41 @@ def check_and_update():
         target_dir.mkdir(parents=True, exist_ok=True)
         new_exe = target_dir / "AgentLite.exe.new"
 
-        lbl.config(text=f"Downloading AgentLite v{remote}...")
-        pw.update()
-        urllib.request.urlretrieve(RELEASE_EXE_URL, str(new_exe))
+        last_pct = [0]
+        def report_progress(block_count, block_size, total_size):
+            if total_size <= 0:
+                return
+            pct = min(int(block_count * block_size / total_size * 100), 100)
+            if pct - last_pct[0] >= 5:
+                last_pct[0] = pct
+                progress.config(text=f"{pct}%")
+                pw.update()
+
+        urllib.request.urlretrieve(RELEASE_EXE_URL, str(new_exe), reporthook=report_progress)
 
         pw.destroy()
         root.destroy()
 
-        mb.showinfo("Update Ready", f"AgentLite v{remote} downloaded to:\n{target_dir}\n\nRestart to apply the update.")
-        root.destroy()
+        mb.showinfo("更新完成", f"Agent Lite v{remote} 已下载至：\n{target_dir}\n\n请重启应用以完成更新。")
     except Exception as e:
         pw.destroy()
         root.destroy()
-        mb.showwarning("Update Failed", f"Could not download update:\n{e}\n\nPlease check your network or try again later.")
-        root.destroy()
+        mb.showwarning("更新失败", f"下载失败：{e}\n\n请检查网络后重试。")
         return False
 
     return True
 
 
 def main():
+    # Apply pending update if downloaded
+    apply_pending_update()
+
+    # Kill any existing agent-lite processes before starting
+    killed = kill_existing()
+    if killed:
+        import time
+        time.sleep(0.5)  # Wait for port to be released
+
     # Start server first, then check for updates in background
     import threading
     threading.Thread(target=check_and_update, daemon=True).start()

@@ -2415,9 +2415,24 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     os.chdir(APP_DIR)
+
+    # Kill any existing agent-lite process using our port
+    import subprocess as _sp
+    try:
+        result = _sp.run(["netstat","-ano","-p","TCP"], capture_output=True, text=True, timeout=5)
+        for line in result.stdout.splitlines():
+            if "127.0.0.1:3010" in line and "LISTENING" in line:
+                parts = line.split()
+                pid = int(parts[-1])
+                if pid != os.getpid():
+                    _sp.run(["taskkill","/PID",str(pid),"/F"], capture_output=True, timeout=5)
+                    import time as _time
+                    _time.sleep(0.5)
+    except Exception:
+        pass
+
     ThreadingHTTPServer.daemon_threads = True
     server = ThreadingHTTPServer(("127.0.0.1", PORT), AgentLiteHandler)
-    # Prevent accept() from blocking indefinitely; also keeps Ctrl+C responsive
     server.socket.settimeout(2.0)
     print(f"Agent Lite is running: http://127.0.0.1:{PORT}")
     print(f"Proxy upstream: {NEW_API_BASE_URL}")

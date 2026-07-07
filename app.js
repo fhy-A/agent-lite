@@ -2777,7 +2777,13 @@ async function apiJson(url, options = {}) {
 
   });
 
-  const data = await res.json().catch(() => ({}));
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (e) {
+    throw new Error(`Invalid JSON from ${url}: ${e.message}`);
+  }
 
   if (!res.ok) throw new Error(data.error || data?.error?.message || `HTTP ${res.status}`);
 
@@ -4572,9 +4578,13 @@ function closeAllSessionMenus() {
 
 async function refreshSessions() {
 
-  const data = await apiJson("/api/sessions");
-
-  state.sessions = data.data || [];
+  try {
+    const data = await apiJson("/api/sessions");
+    state.sessions = data.data || [];
+  } catch (err) {
+    console.error("Failed to refresh sessions:", err);
+    // Keep existing sessions on error — don't wipe the list
+  }
 
   renderSessions();
 

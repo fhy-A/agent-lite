@@ -2954,13 +2954,14 @@ body.theme-dark .syn-fn { color: #61afef; }
 }
 
 .settings-theme-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 8px;
+  max-width: 480px;
 }
 .theme-opt {
-  flex: 1;
   height: 48px;
-  padding: 0 12px;
+  padding: 0 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
   font-size: 14px;

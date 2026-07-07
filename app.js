@@ -1621,6 +1621,14 @@ const I18N = {
     temperature: "Temperature", maxTokens: "Max Tokens", memory: "记忆", newMemory: "新建记忆",
     cancel: "取消", save: "保存", skills: "Skills", system: "系统", deleteSkill: "删除 Skill",
     keyBulkPlaceholder: "每行输入一个 key，可以粘贴多个 key；空行会自动跳过。",
+    selectSkillHint: "选择 Skill 查看详情",
+    deleteConfirmMsg: "确定删除「{name}」？",
+    deleteMemoryMsg: "删除记忆「{name}」？此操作不可恢复。",
+    noProjectContext: "📄 无项目上下文",
+    noSessions: "暂无历史会话", noProjectDir: "未选择项目目录",
+    projectContextHint: "在项目根目录放置 CLAUDE.md 或 AGENT.md 文件，描述项目结构和约定",
+    noMemoryContext: "🧠 无长期记忆",
+    memoryContextHint: "通过 Memory 面板添加跨会话保留的知识，Agent 每次对话都能引用",
     light: "浅色", dark: "深色", followSystem: "跟随系统",
     newFolder: "新建文件夹", refreshFiles: "刷新文件",
     availableModels: "可用模型", refreshModels: "刷新模型",
@@ -1683,6 +1691,14 @@ const I18N = {
     temperature: "Temperature", maxTokens: "Max Tokens", memory: "Memory", newMemory: "New Memory",
     cancel: "Cancel", save: "Save", skills: "Skills", system: "System", deleteSkill: "Delete Skill",
     keyBulkPlaceholder: "One key per line, paste multiple keys; blank lines are skipped.",
+    selectSkillHint: "Select a Skill to view details",
+    deleteConfirmMsg: "Delete 「{name}」?",
+    deleteMemoryMsg: "Delete memory 「{name}」? This cannot be undone.",
+    noProjectContext: "📄 No project context",
+    noSessions: "No sessions", noProjectDir: "No project directory selected",
+    projectContextHint: "Place CLAUDE.md or AGENT.md in project root to describe structure and conventions",
+    noMemoryContext: "🧠 No long-term memory",
+    memoryContextHint: "Add knowledge in Memory panel that persists across sessions",
     light: "Light", dark: "Dark", followSystem: "System",
     newFolder: "New Folder", refreshFiles: "Refresh Files",
     availableModels: "Available Models", refreshModels: "Refresh Models",
@@ -2053,7 +2069,7 @@ function updateProjectContextIndicator() {
 
   } else {
 
-    panel.innerHTML = `<span class="ctx-badge muted">📄 无项目上下文</span><span class="ctx-hint">在项目根目录放置 CLAUDE.md 或 AGENT.md 文件，描述项目结构和约定</span>`;
+    panel.innerHTML = `<span class="ctx-badge muted">${t("noProjectContext")}</span><span class="ctx-hint">${t("projectContextHint")}</span>`;
 
     panel.style.display = "flex";
 
@@ -2169,7 +2185,7 @@ function renderSkillsList() {
 
   if (sorted.length === 0) {
 
-    list.innerHTML = `<div class="muted-line" style="padding:12px; font-size:12px;">暂无 Skill</div>`;
+    list.innerHTML = `<div class="muted-line" style="padding:12px; font-size:12px;">${t("noSkills")}</div>`;
 
   } else {
 
@@ -2225,7 +2241,7 @@ function showSkillDetail(skill) {
 
   if (!skill) {
 
-    panel.innerHTML = '<div class="skills-detail-empty">选择 Skill 查看详情</div>';
+    panel.innerHTML = `<div class="skills-detail-empty">${t("selectSkillHint")}</div>`;
 
     return;
 
@@ -2416,11 +2432,11 @@ async function deleteSkillConfirm(name, btnId = "skillDeleteBtn") {
 
   confirm.innerHTML = `
 
-    <span>确定删除「${escapeHtml(name)}」？</span>
+    <span>${t("deleteConfirmMsg").replace("{name}", escapeHtml(name))}</span>
 
-    <button class="key-confirm-yes" type="button">确认</button>
+    <button class="key-confirm-yes" type="button">${t("confirmDelete")}</button>
 
-    <button class="key-confirm-no" type="button">取消</button>
+    <button class="key-confirm-no" type="button">${t("cancel")}</button>
 
   `;
 
@@ -2476,9 +2492,9 @@ function showInlineKeyDeleteConfirm(row, name, onConfirm) {
 
     <span>删除「${escapeHtml(name.slice(0, 20))}」？</span>
 
-    <button class="key-confirm-yes" type="button">确认</button>
+    <button class="key-confirm-yes" type="button">${t("confirmDelete")}</button>
 
-    <button class="key-confirm-no" type="button">取消</button>
+    <button class="key-confirm-no" type="button">${t("cancel")}</button>
 
   `;
 
@@ -2621,7 +2637,7 @@ function updateMemoryContextIndicator() {
 
   } else {
 
-    panel.innerHTML = `<span class="ctx-badge muted">🧠 无长期记忆</span><span class="ctx-hint">通过 Memory 面板添加跨会话保留的知识，Agent 每次对话都能引用</span>`;
+    panel.innerHTML = `<span class="ctx-badge muted">${t("noMemoryContext")}</span><span class="ctx-hint">${t("memoryContextHint")}</span>`;
 
     panel.style.display = "flex";
 
@@ -4026,9 +4042,9 @@ function renderToolLog() {
 
   if (items.length === 0) {
 
-    els.toolLogSummary.textContent = "暂无工具动作";
+    els.toolLogSummary.textContent = t("toolLogEmpty");
 
-    els.toolLogList.innerHTML = `<div class="muted-line">工具调用、搜索、读文件、修改确认和命令执行会显示在这里。</div>`;
+    els.toolLogList.innerHTML = `<div class="muted-line">${t("toolLogHint")}</div>`;
 
     return;
 
@@ -4296,7 +4312,7 @@ function renderSessions() {
 
   if (state.sessions.length === 0) {
 
-    els.sessionList.innerHTML = `<div class="muted-line" style="padding:12px;">暂无历史会话</div>`;
+    els.sessionList.innerHTML = `<div class="muted-line" style="padding:12px;">${t("noSessions")}</div>`;
 
     return;
 
@@ -5272,7 +5288,7 @@ function renderFileTree() {
 
   if (state._noProject) {
 
-    els.fileTree.innerHTML = `<div class="muted-line" style="padding:12px;">未选择项目目录</div>`;
+    els.fileTree.innerHTML = `<div class="muted-line" style="padding:12px;">${t("noProjectDir")}</div>`;
 
     els.goUp.disabled = true;
 
@@ -8377,9 +8393,9 @@ async function renderMemoryList() {
         const confirm = document.createElement("div");
         confirm.className = "key-delete-confirm";
         confirm.innerHTML = `
-          <span>删除记忆「${escapeHtml(name)}」？此操作不可恢复。</span>
-          <button class="key-confirm-yes" type="button">确认</button>
-          <button class="key-confirm-no" type="button">取消</button>
+          <span>${t("deleteMemoryMsg").replace("{name}", escapeHtml(name))}</span>
+          <button class="key-confirm-yes" type="button">${t("confirmDelete")}</button>
+          <button class="key-confirm-no" type="button">${t("cancel")}</button>
         `;
         btn.closest(".memory-item")?.after(confirm);
         confirm.querySelector(".key-confirm-yes").addEventListener("click", () => {
@@ -9553,11 +9569,11 @@ async function refreshSettingsMemoryList() {
 
       confirm.innerHTML = `
 
-        <span>确定删除「${escapeHtml(name)}」？</span>
+        <span>${t("deleteConfirmMsg").replace("{name}", escapeHtml(name))}</span>
 
-        <button class="key-confirm-yes" type="button">确认</button>
+        <button class="key-confirm-yes" type="button">${t("confirmDelete")}</button>
 
-        <button class="key-confirm-no" type="button">取消</button>
+        <button class="key-confirm-no" type="button">${t("cancel")}</button>
 
       `;
 

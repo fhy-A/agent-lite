@@ -3790,6 +3790,8 @@ function renderTimeline() {
 
     if (msg.role === "user") {
 
+      if (msg.meta?._system) continue; // skip hidden system messages
+
       nodes.push({ index: i, label: getMsgText(msg).replace(/\n/g, " "), type: "user" });
 
     } else if (msg.meta?.kind === "compact-summary") {

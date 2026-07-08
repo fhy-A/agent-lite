@@ -1658,6 +1658,8 @@ const I18N = {
     fmtEmptyDir: "目录为空", fmtLineRange: "行范围", fmtReadFile: "已读取文件",
     fmtTruncatedFile: "，内容已截断", fmtRegexSearch: "正则搜索", fmtSearch: "搜索",
     fmtToolLogSep: "路",
+    thoughtCollapsed: "思考已折叠", thoughtCategoryTool: "工具判断",
+    thoughtCategoryDebug: "排查判断", thoughtCategoryImpl: "实现判断",
     toggleVisibility: "显示/隐藏", enabledStatus: "已启用", disabledStatus: "已禁用",
   },
   en: {
@@ -1751,6 +1753,8 @@ const I18N = {
     fmtEmptyDir: "Directory empty", fmtLineRange: "Line range", fmtReadFile: "File read",
     fmtTruncatedFile: ", content truncated", fmtRegexSearch: "Regex search", fmtSearch: "Search",
     fmtToolLogSep: "via",
+    thoughtCollapsed: "Thought collapsed", thoughtCategoryTool: "Tool planning",
+    thoughtCategoryDebug: "Debugging", thoughtCategoryImpl: "Implementation",
     toggleVisibility: "Show/Hide", enabledStatus: "Enabled", disabledStatus: "Disabled",
   },
 };
@@ -3979,23 +3983,23 @@ function summarizeThought(thought = "") {
 
   if (/工具|tool|调用|read_file|list_files|search_files|propose_edit|run_command/i.test(thought)) {
 
-    return `思考已折叠 · 工具判断 · ${size}`;
+    return `${t("thoughtCollapsed")} · ${t("thoughtCategoryTool")} · ${size}`;
 
   }
 
   if (/错误|失败|异常|error|fail|debug|排查/i.test(thought)) {
 
-    return `思考已折叠 · 排查判断 · ${size}`;
+    return `${t("thoughtCollapsed")} · ${t("thoughtCategoryDebug")} · ${size}`;
 
   }
 
   if (/代码|实现|修改|diff|文件|函数|组件/i.test(thought)) {
 
-    return `思考已折叠 · 实现判断 · ${size}`;
+    return `${t("thoughtCollapsed")} · ${t("thoughtCategoryImpl")} · ${size}`;
 
   }
 
-  return `思考已折叠 · ${size}`;
+  return `${t("thoughtCollapsed")} · ${size}`;
 
 }
 

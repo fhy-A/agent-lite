@@ -1060,7 +1060,7 @@ def run_subagent(task_prompt, system_prompt, model, api_key):
 
 
 class AgentLiteHandler(BaseHTTPRequestHandler):
-    server_version = "AgentLite/0.3"
+    server_version = "AgentLite/0.4"
     protocol_version = "HTTP/1.1"
 
     def handle(self):

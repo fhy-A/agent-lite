@@ -1659,6 +1659,17 @@ const I18N = {
     fmtTruncatedFile: "，内容已截断", fmtRegexSearch: "正则搜索", fmtSearch: "搜索",
     fmtToolLogSep: "路",
     thoughtCollapsed: "思考已折叠", thoughtCategoryTool: "工具判断",
+    srvFileNotFound: "文件不存在", srvDirNotFound: "目录不存在", srvPathNotFound: "路径不存在",
+    srvCmdEmpty: "命令不能为空", srvCmdBlocked: "命令包含写入、删除、重定向或危险操作，已被安全策略拦截",
+    srvSearchEmpty: "搜索关键词不能为空", srvRegexInvalid: "正则无效",
+    srvGlobEmpty: "glob 模式不能为空", srvGlobInvalid: "glob 模式无效",
+    srvUnknownTool: "未知工具", srvToolFail: "工具执行失败",
+    srvNoProject: "项目目录不存在", srvNoProjectDir: "项目目录不存在或不是文件夹",
+    srvFileNameEmpty: "文件名不能为空", srvAttachEmpty: "附件内容不能为空",
+    srvTaskEmpty: "子任务描述不能为空", srvFilePathEmpty: "文件路径不能为空",
+    srvUrlEmpty: "URL 不能为空", srvFolderNameEmpty: "文件夹名称不能为空",
+    srvParentNotExist: "父目录不存在", srvBinaryFile: "binary file is not supported",
+    srvNoFilePicker: "当前环境无法打开文件选择窗口",
     thoughtCategoryDebug: "排查判断", thoughtCategoryImpl: "实现判断",
     toggleVisibility: "显示/隐藏", enabledStatus: "已启用", disabledStatus: "已禁用",
   },
@@ -1754,6 +1765,17 @@ const I18N = {
     fmtTruncatedFile: ", content truncated", fmtRegexSearch: "Regex search", fmtSearch: "Search",
     fmtToolLogSep: "via",
     thoughtCollapsed: "Thought collapsed", thoughtCategoryTool: "Tool planning",
+    srvFileNotFound: "File not found", srvDirNotFound: "Directory not found", srvPathNotFound: "Path not found",
+    srvCmdEmpty: "Command cannot be empty", srvCmdBlocked: "Command blocked by security policy",
+    srvSearchEmpty: "Search query cannot be empty", srvRegexInvalid: "Invalid regex",
+    srvGlobEmpty: "Glob pattern cannot be empty", srvGlobInvalid: "Invalid glob pattern",
+    srvUnknownTool: "Unknown tool", srvToolFail: "Tool execution failed",
+    srvNoProject: "Project directory not found", srvNoProjectDir: "Project directory not found or not a folder",
+    srvFileNameEmpty: "File name cannot be empty", srvAttachEmpty: "Attachment content cannot be empty",
+    srvTaskEmpty: "Sub-task description cannot be empty", srvFilePathEmpty: "File path cannot be empty",
+    srvUrlEmpty: "URL cannot be empty", srvFolderNameEmpty: "Folder name cannot be empty",
+    srvParentNotExist: "Parent directory not found", srvBinaryFile: "Binary file is not supported",
+    srvNoFilePicker: "Cannot open file picker in current environment",
     thoughtCategoryDebug: "Debugging", thoughtCategoryImpl: "Implementation",
     toggleVisibility: "Show/Hide", enabledStatus: "Enabled", disabledStatus: "Disabled",
   },
@@ -7015,11 +7037,32 @@ function formatToolCall(tool) {
 
 
 
+const _serverErrorMap = {
+  "文件不存在":"srvFileNotFound","目录不存在":"srvDirNotFound","路径不存在":"srvPathNotFound",
+  "命令不能为空":"srvCmdEmpty","命令包含写入、删除、重定向或危险操作，已被安全策略拦截":"srvCmdBlocked",
+  "搜索关键词不能为空":"srvSearchEmpty","搜索关键词或正则表达式不能为空":"srvSearchEmpty","正则无效":"srvRegexInvalid","正则表达式无效":"srvRegexInvalid",
+  "glob 模式不能为空":"srvGlobEmpty","glob 模式无效":"srvGlobInvalid",
+  "未知工具":"srvUnknownTool","工具执行失败":"srvToolFail",
+  "项目目录不存在":"srvNoProject","项目目录不存在或不是文件夹":"srvNoProjectDir",
+  "文件名不能为空":"srvFileNameEmpty","附件内容不能为空":"srvAttachEmpty",
+  "子任务描述不能为空":"srvTaskEmpty","文件路径不能为空":"srvFilePathEmpty",
+  "URL 不能为空":"srvUrlEmpty","文件夹名称不能为空":"srvFolderNameEmpty",
+  "父目录不存在":"srvParentNotExist","binary file is not supported":"srvBinaryFile",
+  "当前环境无法打开文件选择窗口":"srvNoFilePicker",
+};
+const _serverErrorKeys = Object.keys(_serverErrorMap).sort((a, b) => b.length - a.length);
+function _translateServerError(msg = "") {
+  for (const cn of _serverErrorKeys) {
+    if (msg.includes(cn)) return msg.replace(cn, t(_serverErrorMap[cn]));
+  }
+  return msg;
+}
+
 function formatToolResult(result) {
 
   if (!result.ok) {
 
-    return `${t("toolExecFailed")}：${result.error || "unknown error"}`;
+    return `${t("toolExecFailed")}：${_translateServerError(result.error) || "unknown error"}`;
 
   }
 

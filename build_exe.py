@@ -13,7 +13,7 @@ for d in ["data", "data/sessions", "data/memory", "data/skills", "data/attachmen
     (APP_DIR / d).mkdir(exist_ok=True)
 
 version = (APP_DIR / "VERSION").read_text().strip()
-name = f"AgentLite-{version}"
+name = f"AgentLite-v{version}"
 
 cmd = [
     sys.executable, "-m", "PyInstaller",

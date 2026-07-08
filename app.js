@@ -978,6 +978,7 @@ const defaultSystemPrompt = `
 - 只改任务要求的代码，不顺手重构，不额外扩展功能
 - 匹配项目现有风格：命名、缩进、注释密度和代码组织
 - 读过的文件才能改。改完要验证，失败就说明失败原因
+- python -c / 脚本中所有变量必须自行定义。每个 python -c 是独立环境，不共享变量。严禁引用未定义的变量（如 msgs、data、result），违者会被强制终止
 - 发现更简单方案时直接提出，不盲从
 
 ### 回复风格
@@ -993,7 +994,7 @@ const defaultSystemPrompt = `
 
 ## 运行环境
 
-Windows + PowerShell。命令优先使用 Windows 语法。Git Bash 也可用，但每个工具要明确命令环境。
+Windows + PowerShell。所有命令通过 PowerShell 执行，不要使用 CMD 语法（如 if not exist）。创建目录用 mkdir 或 python 的 os.makedirs。Git Bash 也可用。
 
 ## 可用工具
 
@@ -3080,13 +3081,13 @@ function splitThoughtContent(text = "") {
 
   if (!match) return { thought: "", content: text };
 
-  return {
+  const thought = match[1].trim();
+  const rest = text.replace(thinkRegex, "").trim();
 
-    thought: match[1].trim(),
+  // If everything was inside <think> tags with nothing outside, show it all as content
+  if (!rest) return { thought: "", content: thought };
 
-    content: text.replace(thinkRegex, "").trim(),
-
-  };
+  return { thought, content: rest };
 
 }
 
@@ -7169,7 +7170,7 @@ function formatToolResult(result) {
 
   if (!result.ok) {
 
-    return `${t("toolExecFailed")}：${_translateServerError(result.error) || "unknown error"}`;
+    return `${t("toolExecFailed")}：${result.error || result.stderr || "unknown error"}`;
 
   }
 
@@ -7858,12 +7859,19 @@ async function runAgentLoop(ctx = null) {
                               "Tool execution failed", "Blocked by security policy",
                               "File not found", "Path not found",
                               "unknown error", "binary file is not supported",
+                              "不能为空", "cannot be empty", "is required",
                               "NameError", "SyntaxError", "TypeError", "AttributeError",
                               "ModuleNotFoundError", "ImportError", "FileNotFoundError",
-                              "is not defined", "Assignment to constant"];
+                              "is not defined", "Assignment to constant",
+                              "IndentationError", "KeyError", "ValueError", "IndexError",
+                              "PermissionError", "OSError", "UnicodeDecodeError",
+                              "ZeroDivisionError", "KeyboardInterrupt",
+                              "pip install", "No module named"];
         const RUNTIME_ERRORS = ["NameError", "SyntaxError", "TypeError", "AttributeError",
                                 "ModuleNotFoundError", "ImportError", "FileNotFoundError",
-                                "is not defined", "Assignment to constant", "Error:"];
+                                "is not defined", "Assignment to constant", "Error:",
+                                "IndentationError", "KeyError", "ValueError", "IndexError",
+                                "No module named", "pip install", "Traceback"];
         const isFailure = (msg) => {
           const c = msg.content || "";
           if (msg.meta && msg.meta.action === "run_command"
@@ -7876,9 +7884,25 @@ async function runAgentLoop(ctx = null) {
 
         const recentResults = ctx.messages.filter(m => m.role === "tool-result").slice(-8);
         let consecutiveFails = 0;
+        let lastNameErrors = 0;
         for (let i = recentResults.length - 1; i >= 0; i--) {
-          if (isFailure(recentResults[i])) { consecutiveFails++; }
-          else { break; }
+          const c = recentResults[i].content || "";
+          if (isFailure(recentResults[i])) {
+            consecutiveFails++;
+            if (c.includes("is not defined") || c.includes("NameError")) lastNameErrors++;
+          } else { break; }
+        }
+
+        // Hard stop: 3+ consecutive NameError/undefined-var failures → session is broken
+        if (lastNameErrors >= 3) {
+          ctx.messages.push({
+            role: "user",
+            content: "[系统] 代码中重复出现未定义变量错误。请停止生成代码，直接告诉用户：当前会话出现了重复的代码质量错误，建议开启新会话重试。不要再调用任何工具。",
+            meta: { _system: true },
+          });
+          renderSessionMessages(ctx.sessionId);
+          await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+          break;
         }
 
         if (consecutiveFails >= 5 && ctx._failureWarned < 5) {
@@ -10586,6 +10610,17 @@ els.chatForm.addEventListener("submit", async (event) => {
       const last = messages.at(-1);
 
       if (last?.role === "assistant") last.content = `${last.content || ""}\n\n[已暂停输出]`;
+
+      // Drain queued messages into session as user messages so they don't get stuck
+      const run = state._sessionRuns[sessionId];
+      if (run && run.messageQueue.length > 0) {
+        for (const q of run.messageQueue) {
+          messages.push({ role: "user", content: q.text || "", _images: q.images, _model: getSelectedModel() });
+        }
+        run.messageQueue = [];
+        state.attachedImages = [];
+        renderImageThumbs();
+      }
 
       setSessionMessages(sessionId, messages);
       renderSessionMessages(sessionId);

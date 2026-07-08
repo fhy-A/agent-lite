@@ -215,14 +215,41 @@ SAFE_COMMAND_PREFIXES = (
 )
 
 DENIED_COMMAND_PATTERN = re.compile(
-    # Only block: deletion, system destruction, command chaining / esca
+    # ── File destruction ──
     r"(^|\s)(del|erase|rmdir|rd|rm|remove-item|Remove-Item|Remove-ItemProperty|"
-    r"format|shutdown|restart-computer|reg|takeown|icacls|net\s+user|"
-    r"sc\s+|net\s+start|net\s+stop|stop-process|kill|"
-    r"rmdir\s+/s|del\s+/f|rd\s+/s)\b|"
-    r"[&`]",
+    r"Clear-Content|"
+    # ── Disk / filesystem ──
+    r"format|diskpart|fsutil|mountvol|"
+    # ── System destruction ──
+    r"shutdown|restart-computer|bcdedit|bootcfg|"
+    # ── Permission changes ──
+    r"takeown|icacls|cacls|xcacls|subinacl|"
+    # ── Registry modification ──
+    r"reg\s+(add|delete|import|save|load|export)\b|"
+    # ── Process / service tampering ──
+    r"stop-process|taskkill|tskill|kill|"
+    r"sc\s+(stop|delete|config|create)\b|"
+    r"net\s+(user|start|stop|share|use)\b|"
+    # ── Security tampering ──
+    r"Add-MpPreference|Set-MpPreference|Remove-MpPreference|"
+    r"netsh\s+advfirewall|netsh\s+firewall|"
+    # ── Scheduled tasks / persistence ──
+    r"schtasks\s+/create|"
+    # ── Code execution / obfuscation ──
+    r"Invoke-Expression\b|iex\b|Invoke-Obfuscation|"
+    r"-EncodedCommand\b|-Enc\b|-e\s+\S+|"
+    r"rundll32|mshta|"
+    # ── Destructive Git ──
+    r"git\s+push\s+--force|git\s+reset\s+--hard|git\s+clean\s+-fdx|"
+    # ── Pipe-to-shell (curl|bash, wget|sh, etc.) ──
+    r"curl\s+\S+\s*\|\s*(ba)?sh\b|wget\s+\S+\s*\|\s*(ba)?sh\b|"
+    # ── Force-flag deletion ──
+    r"rmdir\s+/s|del\s+/f|rd\s+/s|rm\s+-rf|rm\s+-fr)\b",
     re.IGNORECASE,
 )
+
+# Characters we never allow at top level (background exec, command substitution)
+UNSAFE_CHARS = re.compile(r"[`]")  # backtick = command substitution / PS escape
 
 def _set_dpi_aware():
     """Enable high-DPI awareness on Windows to prevent blurry tkinter dialogs."""
@@ -602,7 +629,10 @@ def resolve_project_path(relative_path=""):
         if home_target.exists():
             return home, home_target
 
-    raise ValueError("path is outside project root")
+    # Fall back to project output directory for paths outside scope
+    fallback = root / "output" / target.name if rel else root / "output"
+    fallback.parent.mkdir(parents=True, exist_ok=True)
+    return root, fallback
 
 
 def to_project_relative(root, target):
@@ -661,17 +691,15 @@ def make_unified_diff(old_text, new_text, rel_path):
 
 
 def is_safe_command(command):
+    """Only block explicitly dangerous operations. Everything else is allowed."""
     normalized = re.sub(r"\s+", " ", command.strip())
-    lower = normalized.lower()
     if not normalized:
         return False, "命令不能为空"
+    if UNSAFE_CHARS.search(normalized):
+        return False, "命令包含不安全的字符"
     if DENIED_COMMAND_PATTERN.search(normalized):
         return False, "命令包含写入、删除、重定向或危险操作，已被安全策略拦截"
-    # python -c / node -e allowed; destructive ops caught by DENIED_COMMAND_PATTERN
-    if not any(lower == prefix.strip() or lower.startswith(prefix) for prefix in SAFE_COMMAND_PREFIXES):
-        return False, "当前只允许查看、测试、构建、git diff/status/log、docker compose 查询等低风险命令"
     return True, ""
-
 
 def open_native_folder_picker(root):
     """Open a native folder browser dialog and return the selected path."""
@@ -1576,7 +1604,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         name = sanitize_filename(body.get("name"))
         content_base64 = body.get("contentBase64") or ""
         if not content_base64:
-            raise ValueError("附件内容不能为空")
+            raise ValueError("附件内容不能为空。请提供文件内容和附件名称。")
         try:
             data = base64.b64decode(content_base64, validate=True)
         except Exception as exc:
@@ -2065,7 +2093,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         body = self.read_body_json()
         task_prompt = (body.get("prompt") or body.get("description") or "").strip()
         if not task_prompt:
-            raise ValueError("子任务描述不能为空")
+            raise ValueError("子任务描述不能为空。请提供 task prompt 参数描述子 Agent 的任务。")
 
         # Build system prompt for sub-agent
         sub_system = (
@@ -2106,6 +2134,13 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             }, 400)
             return
         command = (body.get("command") or "").strip()
+        if not command:
+            self.send_json({
+                "ok": False,
+                "action": "run_command",
+                "error": "命令不能为空。请提供 command 参数。脚本超过 2000 字符请用 write_file 写入文件后 python 执行。",
+            }, 400)
+            return
         ok, reason = is_safe_command(command)
         if not ok:
             self.send_json({
@@ -2127,14 +2162,17 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             timeout=MAX_COMMAND_SECONDS,
             **_hidden_subprocess_kwargs(),
         )
+        ok = completed.returncode == 0
+        error = None if ok else (completed.stderr.strip() or f"Exit code {completed.returncode}")
         self.send_json({
-            "ok": completed.returncode == 0,
+            "ok": ok,
             "action": "run_command",
             "command": command,
             "cwd": str(root),
             "exitCode": completed.returncode,
             "stdout": completed.stdout[-20000:],
             "stderr": completed.stderr[-20000:],
+            "error": error,
         })
 
     def tool_write_file(self):
@@ -2142,7 +2180,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         path = (body.get("path") or "").strip()
         content = body.get("content") or ""
         if not path:
-            raise ValueError("文件路径不能为空")
+            raise ValueError("文件路径不能为空。请提供 path 参数。脚本超过 2000 字符时先 write_file 再 python 执行，不要塞进 python -c。")
         root, target = resolve_project_path(path)
         rel = to_project_relative(root, target)
 
@@ -2179,15 +2217,15 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         body = self.read_body_json()
         path = (body.get("path") or "").strip()
         if not path:
-            raise ValueError("文件路径不能为空")
+            raise ValueError("文件路径不能为空。请提供 path 参数，例如：path='output/old-script.py'。")
         root, target = resolve_project_path(path)
         if not target.exists():
-            raise ValueError("文件不存在")
+            raise ValueError(f"文件不存在：{path}。请检查路径是否正确，或先 list_files 确认。")
         is_dir = target.is_dir()
         if not is_dir and not target.is_file():
-            raise ValueError("只能删除文件或空目录")
+            raise ValueError(f"目标路径不是常规文件或目录：{path}")
         if is_dir and any(target.iterdir()):
-            raise ValueError("目录不为空，无法删除")
+            raise ValueError(f"目录不为空：{path}。请先清空目录内容再删除，或使用 rmdir 删除整个目录。")
         rel = to_project_relative(root, target)
 
         # Backup before deleting (files only)
@@ -2225,7 +2263,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         body = self.read_body_json()
         url = (body.get("url") or "").strip()
         if not url:
-            raise ValueError("URL 不能为空")
+            raise ValueError("URL 不能为空。请提供要抓取的网页链接，例如：https://example.com")
         if not url.startswith("http://") and not url.startswith("https://"):
             url = "https://" + url
 
@@ -2306,7 +2344,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         description = (body.get("description") or "").strip()
         content = (body.get("body") or "").strip()
         if not name or not content:
-            raise ValueError("name and body are required")
+            raise ValueError("name 和 body 参数不能为空。name 用英文 kebab-case，body 写记忆内容。")
         safe = re.sub(r"[^a-zA-Z0-9_-]", "", name)[:32]
         if not safe:
             raise ValueError("invalid memory name")
@@ -2322,7 +2360,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         name = (body.get("name") or "").strip()
         parent = (body.get("parent") or "").strip()
         if not name:
-            raise ValueError("文件夹名称不能为空")
+            raise ValueError("文件夹名称不能为空。请提供要创建的文件夹名称，例如：output")
         root, parent_dir = resolve_project_path(parent)
         if not parent_dir.exists() or not parent_dir.is_dir():
             raise ValueError("父目录不存在")

@@ -203,6 +203,18 @@ input:focus, select:focus, textarea:focus {
   padding: 0;
 }
 
+.mini-btn.icon-only.copied {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 45%, var(--line));
+  background: var(--green-bg);
+}
+
+.mini-btn.icon-only.failed {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 45%, var(--line));
+  background: var(--red-bg);
+}
+
 .cwd-inline {
   padding: 4px 10px 6px;
 }
@@ -1452,25 +1464,6 @@ input:focus, select:focus, textarea:focus {
   text-align: left;
 }
 
-.answer-divider {
-  width: min(920px, 100%);
-  margin: 10px auto 8px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.answer-divider::before,
-.answer-divider::after {
-  content: "";
-  height: 1px;
-  flex: 1;
-  background: var(--line);
-}
-
 .edit-suggestion {
   max-width: min(920px, 100%);
 }
@@ -2632,9 +2625,9 @@ input:focus, select:focus, textarea:focus {
   align-items: center;
   gap: 8px;
   margin-top: 10px;
-  padding: 4px 10px;
-  border-radius: 6px;
-  background: var(--panel);
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--muted);
   font-size: 11px;
   font-weight: 600;

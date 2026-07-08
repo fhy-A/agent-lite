@@ -179,6 +179,7 @@ function buildRunContext(sessionId) {
     messages,
     stats: getSessionStats(sessionId),
     responseUsage: { input: 0, output: 0, cache: 0 },
+    taskUsage: { input: 0, output: 0, cache: 0 },
     autoCompacted: 0,
     apiKey: els.apiKey.value.trim(),
     model,
@@ -3654,6 +3655,29 @@ function hasUsageStats(usage) {
   return !!(normalized && (normalized.input || normalized.output || normalized.cache));
 }
 
+function cloneUsageStats(usage) {
+  const normalized = normalizeResponseUsage(usage);
+  if (!normalized) return { input: 0, output: 0, cache: 0 };
+  return {
+    input: normalized.input || 0,
+    output: normalized.output || 0,
+    cache: normalized.cache || 0,
+  };
+}
+
+function attachTaskUsageToAssistant(ctx, assistantIndex) {
+  if (!ctx || assistantIndex == null || assistantIndex < 0) return;
+  const taskUsage = cloneUsageStats(ctx.taskUsage || ctx.responseUsage);
+  if (!hasUsageStats(taskUsage)) return;
+  const msg = ctx.messages?.[assistantIndex];
+  if (!msg) return;
+  msg.meta = {
+    ...(msg.meta || {}),
+    _usage: taskUsage,
+    _usageScope: "task",
+  };
+}
+
 function findLastAssistantMessage(messages = state.messages) {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     if (messages[i]?.role === "assistant") return messages[i];
@@ -3729,6 +3753,31 @@ function isInternalMessage(msg) {
   return false;
 }
 
+function renderCopyIconSvg() {
+  return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+}
+
+function resetIconCopyButton(btn, label = "Copy") {
+  if (!btn) return;
+  btn.classList.remove("copied", "failed");
+  btn.innerHTML = renderCopyIconSvg();
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+}
+
+function showIconCopyFeedback(btn, ok) {
+  if (!btn) return;
+  const label = ok ? t("copiedLabel") : t("failedBtn");
+  btn.classList.toggle("copied", ok);
+  btn.classList.toggle("failed", !ok);
+  btn.innerHTML = ok
+    ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>`
+    : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>`;
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+  setTimeout(() => resetIconCopyButton(btn), 1200);
+}
+
 function isToolPlanningPlaceholder(text) {
   const s = (text || "").trim();
   if (!s) return true;
@@ -3757,9 +3806,9 @@ function renderUserProjection(msg, index) {
 function renderThinkingProjection(items, serial) {
   if (!items.length) return "";
   const text = items
-    .map((item) => (item.text || "").trim())
+    .map((item) => (item.text || "").replace(/\s+/g, " ").trim())
     .filter(Boolean)
-    .join("\n\n");
+    .join(" ");
   if (!text) return "";
   return `
     <article class="msg assistant thinking-process" data-thinking-block="${serial}">
@@ -3767,10 +3816,6 @@ function renderThinkingProjection(items, serial) {
       ${renderAssistantContent(text)}
     </article>
   `;
-}
-
-function renderAnswerDivider() {
-  return `<div class="answer-divider" role="separator"><span>最终回答</span></div>`;
 }
 
 function isEditSuggestionMessage(msg) {
@@ -3829,19 +3874,25 @@ function renderEditSuggestionProjection(msg, index) {
 function renderAssistantResponseInfo(msg) {
   const meta = msg.meta || {};
   const usage = meta._usage || msg._usage || null;
-  if (!hasUsageStats(usage)) return "";
   const elapsed = msg._responseTime || meta._responseTime || "";
+  if (!hasUsageStats(usage) && !elapsed) return "";
   return `<div class="response-info">${renderCompletedRunStatus(meta._model || msg._model || "", elapsed || "0s", usage)}</div>`;
 }
 
 function renderFinalAssistantProjection(msg, index) {
+  const model = msg._model || msg.meta?._model || getSelectedModel() || "Agent";
+  if (msg.streaming) {
+    return `
+      <article class="msg assistant" data-msg-index="${index}">
+        <div class="role">${escapeHtml(model)} ${renderThinkingBadge(state.sessionId)}</div>
+      </article>
+    `;
+  }
   const content = (getMsgText(msg) || "").trim();
   if (!content || isToolPlanningPlaceholder(content)) return "";
-  const model = msg._model || msg.meta?._model || getSelectedModel() || "Agent";
-  const status = msg.streaming ? renderThinkingBadge(state.sessionId) : "";
   return `
     <article class="msg assistant" data-msg-index="${index}">
-      <div class="role">${escapeHtml(model)} ${status}</div>
+      <div class="role">${escapeHtml(model)}</div>
       ${renderAssistantContent(content)}
       ${renderAssistantResponseInfo(msg)}
     </article>
@@ -3929,9 +3980,8 @@ function renderMessages() {
     }
 
     if (msg.role === "assistant") {
-      const hadThoughts = flushThoughts();
+      flushThoughts();
       const finalHtml = renderFinalAssistantProjection(msg, j);
-      if (hadThoughts && finalHtml) rows.push(renderAnswerDivider());
       rows.push(finalHtml);
       continue;
     }
@@ -3941,6 +3991,15 @@ function renderMessages() {
   flushThoughts();
 
   var html = rows.filter(Boolean).join("");
+  const stableHtml = html.replace(/<span class="streaming-timer">[^<]*<\/span>/g, '<span class="streaming-timer"></span>');
+  const renderKey = `${state.sessionId || ""}:${stableHtml}`;
+  if (state._lastRenderedHtml === renderKey) {
+    renderToolLog();
+    updateStatsPanel();
+    renderTimeline();
+    return;
+  }
+  state._lastRenderedHtml = renderKey;
   els.messages.innerHTML = html;
   bindCopyButtons();
   bindMessageActions();
@@ -6112,13 +6171,19 @@ function updateUsage(usage, sessionId = state.sessionId, ctx = null) {
 
   if (!usage) return;
 
+  const input = usage.prompt_tokens ?? usage.input ?? 0;
+
+  const output = usage.completion_tokens ?? usage.output ?? 0;
+
+  const cache = usage.prompt_cache_hit_tokens ?? usage.cache_read_tokens ?? usage.cache ?? 0;
+
   const stats = ctx?.stats || getSessionStats(sessionId);
 
-  stats.input += usage.prompt_tokens || 0;
+  stats.input += input;
 
-  stats.output += usage.completion_tokens || 0;
+  stats.output += output;
 
-  stats.cache += usage.prompt_cache_hit_tokens || usage.cache_read_tokens || 0;
+  stats.cache += cache;
 
   setSessionStats(sessionId, stats);
 
@@ -6126,11 +6191,21 @@ function updateUsage(usage, sessionId = state.sessionId, ctx = null) {
 
   if (responseUsage) {
 
-    responseUsage.input += usage.prompt_tokens || 0;
+    responseUsage.input += input;
 
-    responseUsage.output += usage.completion_tokens || 0;
+    responseUsage.output += output;
 
-    responseUsage.cache += usage.prompt_cache_hit_tokens || usage.cache_read_tokens || 0;
+    responseUsage.cache += cache;
+
+  }
+
+  if (ctx?.taskUsage) {
+
+    ctx.taskUsage.input += input;
+
+    ctx.taskUsage.output += output;
+
+    ctx.taskUsage.cache += cache;
 
   }
 
@@ -7396,6 +7471,8 @@ async function runAgentLoop(ctx = null) {
   setSessionMessages(ctx.sessionId, ctx.messages);
   setSessionStats(ctx.sessionId, ctx.stats);
 
+  if (!ctx.taskUsage) ctx.taskUsage = { input: 0, output: 0, cache: 0 };
+
   ctx.autoCompacted = 0;
 
 
@@ -7492,15 +7569,22 @@ async function runAgentLoop(ctx = null) {
 
     const modelResult = await callModelOnce(assistantIndex, true, ctx);
 
-    ctx.messages[assistantIndex].meta = {
-      ...(ctx.messages[assistantIndex].meta || {}),
-      _usage: { ...ctx.responseUsage },
-    };
-
+    const turnUsage = ctx.responseUsage ? { ...ctx.responseUsage } : null;
     ctx.responseUsage = null;
 
     // Pull streaming updates (thought+content from SSE) into ctx.messages
     ctx.messages = getSessionMessages(ctx.sessionId);
+    if (turnUsage) {
+      const currentAssistant = ctx.messages[assistantIndex] || {};
+      ctx.messages[assistantIndex] = {
+        ...currentAssistant,
+        meta: {
+          ...(currentAssistant.meta || {}),
+          _usage: turnUsage,
+        },
+      };
+      setSessionMessages(ctx.sessionId, ctx.messages);
+    }
 
     const rawContent = modelResult.content || "";
 
@@ -7775,6 +7859,7 @@ async function runAgentLoop(ctx = null) {
     if (!hasToolMarker) {
       ctx.messages[assistantIndex].content = rawContent.trim();
       ctx.messages[assistantIndex].streaming = false;
+      attachTaskUsageToAssistant(ctx, assistantIndex);
       renderSessionMessages(ctx.sessionId);
       setStreaming(false, ctx.sessionId);
       await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
@@ -7786,6 +7871,8 @@ async function runAgentLoop(ctx = null) {
 
     if (!tool) {
 
+      ctx.messages[assistantIndex].streaming = false;
+      attachTaskUsageToAssistant(ctx, assistantIndex);
       setStreaming(false, ctx.sessionId);
       await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
       return;
@@ -8096,6 +8183,7 @@ async function sendMessage(userText) {
   const sessionId = state.sessionId;
   const run = ensureSessionRun(sessionId);
   const ctx = buildRunContext(sessionId);
+  ctx.taskUsage = { input: 0, output: 0, cache: 0 };
 
 
 
@@ -8218,6 +8306,8 @@ async function sendMessage(userText) {
     await saveSessionState(sessionId, ctx.messages, ctx.stats);
 
     // One API call to respond to all queued messages
+    ctx.taskUsage = { input: 0, output: 0, cache: 0 };
+    ctx.responseUsage = { input: 0, output: 0, cache: 0 };
     setStreaming(true, sessionId);
     let drainError = null;
     try {
@@ -9142,6 +9232,13 @@ els.refreshPreview.addEventListener("click", () => {
   loadFile(state.previewPath).catch((err) => showToast(err.message, "error"));
 
 });
+
+els.copyPreview.addEventListener("click", async (event) => {
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  const ok = await copyText(state.previewContent || "");
+  showIconCopyFeedback(els.copyPreview, ok);
+}, true);
 
 els.copyPreview.addEventListener("click", async () => {
 

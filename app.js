@@ -3721,6 +3721,133 @@ function renderToolSection(tools, isStreaming) {
   return `<details class="tool-section done"${needsReview ? " open" : ""}><summary class="tool-section-summary">${t("toolSection")}${escapeHtml(parts.join(" · "))}</summary><div class="tool-section-body">${cards}</div></details>`;
 }
 
+function isInternalMessage(msg) {
+  if (!msg) return true;
+  if (msg.meta?._system) return true;
+  if (msg.meta?.kind === "key-fallback") return true;
+  if (msg.meta?.kind === "tool-round-limit") return true;
+  return false;
+}
+
+function isToolPlanningPlaceholder(text) {
+  const s = (text || "").trim();
+  if (!s) return true;
+  if (/^准备调用\s*\d*\s*个?工具/.test(s)) return true;
+  if (/^准备调用工具/.test(s)) return true;
+  if (/^Preparing\s+to\s+call\s+\d*\s*tools?/i.test(s)) return true;
+  if (/^Calling\s+\d*\s*tools?/i.test(s)) return true;
+  return false;
+}
+
+function isAssistantThinkingMessage(msg) {
+  return msg?.role === "assistant" && Array.isArray(msg.meta?.toolCalls) && msg.meta.toolCalls.length > 0;
+}
+
+function renderUserProjection(msg, index) {
+  const text = Array.isArray(msg.content)
+    ? (msg.content.find((item) => item.type === "text")?.text || "")
+    : getMsgText(msg);
+  const images = (msg._images || [])
+    .map((img) => `<img class="msg-img" src="data:${img.mime};base64,${img.base64}" alt="${escapeHtml(img.name)}">`)
+    .join("");
+  if (!text && !images) return "";
+  return `<article class="msg user" data-msg-index="${index}"><div class="bubble">${renderMarkdownLite(text)}${images}</div></article>`;
+}
+
+function renderThinkingProjection(items, serial) {
+  if (!items.length) return "";
+  const text = items
+    .map((item) => (item.text || "").trim())
+    .filter(Boolean)
+    .join("\n\n");
+  if (!text) return "";
+  return `
+    <article class="msg assistant thinking-process" data-thinking-block="${serial}">
+      <div class="role">思考过程</div>
+      ${renderAssistantContent(text)}
+    </article>
+  `;
+}
+
+function renderAnswerDivider() {
+  return `<div class="answer-divider" role="separator"><span>最终回答</span></div>`;
+}
+
+function isEditSuggestionMessage(msg) {
+  if (!msg || msg.role !== "tool-result") return false;
+  const meta = msg.meta || {};
+  const action = meta.action || meta.tool?.action || "";
+  return !!meta.pendingEditId && (action === "propose_edit" || action === "write_file" || !!meta.newContent);
+}
+
+function renderEditSuggestionProjection(msg, index) {
+  const meta = msg.meta || {};
+  const pendingId = meta.pendingEditId;
+  const action = meta.action || meta.tool?.action || "propose_edit";
+  const target = meta.path || meta.tool?.path || "";
+  const content = (getMsgText(msg) || "").trim();
+  if (!pendingId || !content) return "";
+
+  const editState = state.pendingEdits[pendingId] || {};
+  const applied = !!(meta.applied || editState.applied);
+  const rejected = !!(meta.rejected || editState.rejected || editState.resolved && !editState.applied);
+  const isDiff = /(^|\n)(--- |\+\+\+ |@@ |\+|-)/.test(content);
+  const body = isDiff ? renderDiff(content) : `<div class="tool-edit-markdown">${renderMarkdownLite(content)}</div>`;
+  const canReject = getPermissionProfile() !== "bypass";
+  const status = applied ? "Applied" : (rejected ? "Rejected" : "Review");
+
+  let actions = "";
+  if (!applied && !rejected) {
+    actions = `
+      <div class="apply-edit-bar">
+        <button class="apply-edit-btn" type="button" data-edit-id="${escapeHtml(pendingId)}">Apply</button>
+        ${canReject ? `<button class="reject-edit-btn" type="button" data-edit-id="${escapeHtml(pendingId)}">Reject</button>` : ""}
+        <span class="apply-edit-hint">Confirm before writing changes</span>
+      </div>
+    `;
+  } else if (applied) {
+    actions = `<div class="apply-edit-bar done"><span class="apply-edit-done">Applied</span></div>`;
+  } else {
+    actions = `<div class="apply-edit-bar rejected"><span class="apply-edit-rejected">Rejected</span></div>`;
+  }
+
+  return `
+    <article class="msg assistant edit-suggestion" data-msg-index="${index}">
+      <div class="tool-edit-card">
+        <div class="tool-edit-head">
+          <span class="tool-edit-status">${escapeHtml(status)}</span>
+          <span class="tool-edit-title">${action === "write_file" ? "文件写入建议" : "编辑建议"}</span>
+          ${target ? `<span class="tool-edit-target">${escapeHtml(target)}</span>` : ""}
+        </div>
+        <div class="tool-edit-diff">${body}</div>
+        ${actions}
+      </div>
+    </article>
+  `;
+}
+
+function renderAssistantResponseInfo(msg) {
+  const meta = msg.meta || {};
+  const usage = meta._usage || msg._usage || null;
+  if (!hasUsageStats(usage)) return "";
+  const elapsed = msg._responseTime || meta._responseTime || "";
+  return `<div class="response-info">${renderCompletedRunStatus(meta._model || msg._model || "", elapsed || "0s", usage)}</div>`;
+}
+
+function renderFinalAssistantProjection(msg, index) {
+  const content = (getMsgText(msg) || "").trim();
+  if (!content || isToolPlanningPlaceholder(content)) return "";
+  const model = msg._model || msg.meta?._model || getSelectedModel() || "Agent";
+  const status = msg.streaming ? renderThinkingBadge(state.sessionId) : "";
+  return `
+    <article class="msg assistant" data-msg-index="${index}">
+      <div class="role">${escapeHtml(model)} ${status}</div>
+      ${renderAssistantContent(content)}
+      ${renderAssistantResponseInfo(msg)}
+    </article>
+  `;
+}
+
 function renderMessages() {
 
   // Ensure state.messages reflects current session (syncs ctx.messages changes)
@@ -3746,7 +3873,11 @@ function renderMessages() {
       </div>
     `;
 
-    document.getElementById("chatTimeline").innerHTML = "";
+    const timeline = document.getElementById("chatTimeline");
+    if (timeline) {
+      timeline.innerHTML = "";
+      timeline.classList.remove("visible");
+    }
 
     updateStatsPanel();
 
@@ -3762,378 +3893,67 @@ function renderMessages() {
 
   els.chatPane.classList.remove("empty-chat");
 
+  const msgs = state.messages;
+  const rows = [];
+  let pendingThoughts = [];
+  let thoughtSerial = 0;
 
+  const flushThoughts = () => {
+    if (!pendingThoughts.length) return false;
+    thoughtSerial += 1;
+    rows.push(renderThinkingProjection(pendingThoughts, thoughtSerial));
+    pendingThoughts = [];
+    return true;
+  };
 
-  // Parse messages into segments: tool-sections and standalone messages
+  for (let j = 0; j < msgs.length; j += 1) {
+    const msg = msgs[j];
+    if (isInternalMessage(msg)) continue;
 
-  const segments = [];
-
-  let i = 0;
-
-  while (i < state.messages.length) {
-
-    const msg = state.messages[i];
-
-    // Collect consecutive tool messages into a section
-
-    if (msg.role === "tool-call" || msg.role === "tool-result" || isProcessMessage(msg)) {
-
-      const tools = [];
-
-      while (i < state.messages.length) {
-
-        const m = state.messages[i];
-
-        if (m.role === "tool-call") {
-
-          const callMsg = m;
-
-          i++;
-
-          // Look for matching result
-
-          let resultMsg = null;
-
-          const intermediate = [];
-
-          while (i < state.messages.length) {
-
-            const next = state.messages[i];
-
-            if (next.role === "tool-result") {
-
-              resultMsg = next;
-
-              i++;
-
-              break;
-
-            } else if (next.role === "tool-call") {
-
-              break; // next tool call without result
-
-            } else if (isProcessMessage(next)) {
-
-              intermediate.push(next);
-
-              i++;
-
-              // Skip placeholder assistant messages between tool groups — don't break
-              // Skip placeholder assistant messages between tool groups; don't break.
-              i++;
-            } else {
-
-              break;
-
-            }
-
-          }
-
-          tools.push({ callMsg, resultMsg, intermediate });
-
-        } else if (m.role === "tool-result") {
-
-          // Orphan result — skip apply_edit (user-triggered, already shown on its propose_edit card)
-          if (m.meta?.action === "apply_edit") { i++; continue; }
-
-          tools.push({ callMsg: null, resultMsg: m });
-
-          i++;
-
-        } else if (isProcessMessage(m)) {
-
-          tools.push({ callMsg: null, resultMsg: null, intermediate: [m] });
-
-          i++;
-
-        } else {
-
-          break;
-
-        }
-
-      }
-
-      segments.push({ type: "tools", tools });
-
+    if (isAssistantThinkingMessage(msg)) {
+      const text = (getMsgText(msg) || "").trim();
+      if (!isToolPlanningPlaceholder(text)) pendingThoughts.push({ index: j, text });
       continue;
-
-    }
-
-
-
-    // Standalone message (user, assistant, etc.)
-
-    segments.push({ type: "msg", msg });
-
-    i++;
-
-  }
-
-  // Render segments
-
-  const activeRun = ensureSessionRun(state.sessionId);
-  const streaming = Boolean(activeRun?.isStreaming || state.isStreaming);
-
-  // Detect if there's a real final answer after tool sections
-  const hasFinalAnswer = segments.some((seg, idx) => {
-    if (seg.type !== "msg") return false;
-    const msg = seg.msg;
-    if (msg.role !== "assistant") return false;
-    // Has real content (not just a placeholder)
-    const c = getMsgText(msg);
-    return c && !/^准备调用/.test(c) && !/^$/.test(c);
-  });
-
-  // Find the index of the first real answer
-  const finalAnswerIdx = segments.findIndex((seg) => {
-    if (seg.type !== "msg") return false;
-    const msg = seg.msg;
-    if (msg.role !== "assistant") return false;
-    const c = getMsgText(msg);
-    return c && !/^准备调用/.test(c);
-  });
-
-  // Collect tool section indices before final answer
-  const toolSectionIndices = [];
-  segments.forEach((seg, idx) => {
-    if (seg.type === "tools" && (finalAnswerIdx < 0 || idx < finalAnswerIdx)) {
-      toolSectionIndices.push(idx);
-    }
-  });
-
-  // Calculate total stats across all tool sections
-  let totalCalls = 0, totalSuccess = 0, totalFail = 0;
-  for (const idx of toolSectionIndices) {
-    const tools = segments[idx].tools;
-    totalCalls += tools.filter((t) => t.callMsg).length;
-    totalFail += tools.filter((x) => x.resultMsg && (getMsgText(x.resultMsg)).startsWith(t("toolExecFailed"))).length;
-    totalFail += tools.filter((x) => x.resultMsg && (getMsgText(x.resultMsg)).startsWith(t("toolExecFailed"))).length;
-  }
-
-  let html = segments.map((seg, segIdx) => {
-
-    if (seg.type === "tools") {
-      return renderToolSection(seg.tools, streaming);
-    }
-
-    const msg = seg.msg;
-
-    if (msg.meta?.kind === "tool-round-limit") return renderRoundLimitMessage();
-
-    if (msg.role === "assistant" && msg.meta?.toolCalls) {
-      return "";
     }
 
     if (msg.role === "user") {
-
-      if (msg.meta?._system) return ""; // hide system injection messages
-
-      const origIdx = state.messages.indexOf(msg);
-
-      const text = Array.isArray(msg.content) ? (msg.content.find((c) => c.type === "text")?.text || "") : (getMsgText(msg));
-
-      const imagesHtml = (msg._images || []).map((img) =>
-
-        `<img class="msg-img" src="data:${img.mime};base64,${img.base64}" alt="${escapeHtml(img.name)}" title="${escapeHtml(img.name)}" />`
-
-      ).join("");
-
-      return `<article class="msg user" data-msg-index="${origIdx}"><div class="bubble">${renderMarkdownLite(text)}${imagesHtml}</div></article>`;
-
+      flushThoughts();
+      rows.push(renderUserProjection(msg, j));
+      continue;
     }
 
-    const thought = msg.thought || "";
+    if (isEditSuggestionMessage(msg)) {
+      flushThoughts();
+      rows.push(renderEditSuggestionProjection(msg, j));
+      continue;
+    }
 
-    const content = getMsgText(msg);
+    if (msg.role === "assistant") {
+      const hadThoughts = flushThoughts();
+      const finalHtml = renderFinalAssistantProjection(msg, j);
+      if (hadThoughts && finalHtml) rows.push(renderAnswerDivider());
+      rows.push(finalHtml);
+      continue;
+    }
 
-    const thoughtHtml = thought
-
-      ? `<details class="thought"${msg.streaming ? " open" : ""}><summary>${escapeHtml(summarizeThought(thought))}</summary><div>${renderMarkdownLite(thought)}</div></details>`
-
-      : "";
-
-    const status = msg.streaming ? renderThinkingBadge(state.sessionId) : "";
-
-    const asstIdx = state.messages.indexOf(msg);
-
-    return `
-
-      <article class="msg assistant" data-msg-index="${asstIdx}">
-
-        <div class="role">${escapeHtml(msg._model || getSelectedModel() || "Agent")} ${status}</div>
-
-        ${thoughtHtml}
-
-        ${renderAssistantContent(content)}
-
-        ${(() => {
-
-          const parts = [];
-
-          const usage = msg._usage || (msg.meta || {})._usage;
-
-          const respTime = msg._responseTime || (msg.meta || {})._responseTime;
-
-          const hasUsage = hasUsageStats(usage);
-
-          parts.push(...renderUsageParts(usage));
-
-          if (respTime && hasUsage) parts.push(`<span class="response-token"><svg class="stat-icon stat-time-svg" viewBox="0 0 1024 1024" width="14" height="14"><path d="M711.7 655.4c-5.1 0-10.2-1.5-14.8-4.1l-199.7-112.6c-9.7-5.6-15.9-15.9-15.9-26.6V276.5c0-16.9 13.8-30.7 30.7-30.7s30.7 13.8 30.7 30.7v217.6l183.8 103.9c14.8 8.2 20 27.1 11.8 42-5.6 9.7-15.9 15.4-26.6 15.4z" fill="currentColor"/><circle cx="512" cy="512" r="378.9" fill="none" stroke="currentColor" stroke-width="61.4"/></svg>${escapeHtml(respTime)}</span>`);
-
-          return parts.length ? `<div class="response-info">${parts.join(" · ")}</div>` : "";
-
-        })()}
-
-      </article>
-
-    `;
-
-  }).join("");
-
-
-
-  // Skip DOM update if HTML unchanged (prevents flicker during streaming)
-  // ── Render queued messages (waiting to be sent after current task) ──
-  let queueHtml = "";
-  const hasInlineStreamingStatus = segments.some((seg) => seg.type === "msg" && seg.msg?.role === "assistant" && seg.msg.streaming);
-  if (streaming && !hasInlineStreamingStatus) {
-    html += `<div class="active-run-status">${renderRunStatus(activeRun?.model || getSelectedModel(), state.sessionId)}</div>`;
+    // Deliberately omit tool-call/tool-result details from the conversation.
   }
+  flushThoughts();
 
-  const activeQueue = activeRun?.messageQueue || state.messageQueue;
-  if (activeQueue.length > 0 && state.isStreaming) {
-    queueHtml = activeQueue.map((q) => {
-      const imagesHtml = (q.images || []).map((img) =>
-        `<div class="queue-img-thumb"><img src="data:${img.mime};base64,${img.base64}" alt="${escapeHtml(img.name)}" /></div>`
-      ).join("");
-      return `
-        <article class="msg queued">
-          <div class="bubble queue-bubble">${imagesHtml}${renderMarkdownLite(q.text || "(image)")}</div>
-        </article>`;
-    }).join("");
-    html += queueHtml;
-  }
-
-  // Skip DOM update if HTML unchanged (prevents flicker during streaming)
-  // But always update if queue state changed
-  const queueKey = activeQueue.length;
-  if (state._lastRenderedHtml === html && state._lastQueueLen === queueKey) return;
-  state._lastRenderedHtml = html;
-  state._lastQueueLen = queueKey;
-
+  var html = rows.filter(Boolean).join("");
   els.messages.innerHTML = html;
-
-  bindCopyButtons(); bindClickablePaths();
-
+  bindCopyButtons();
   bindMessageActions();
-
-  // Auto-scroll only if user hasn't scrolled up (within 80px of bottom)
-
-  if (state.isStreaming) {
-
-    if (state._followOutput !== false) {
-
-      els.messages.scrollTop = els.messages.scrollHeight;
-
-    }
-
-  } else {
-
-    els.messages.scrollTop = els.messages.scrollHeight;
-
-    state._followOutput = true;
-
-  }
-
-  updateStatsPanel();
-
+  bindClickablePaths();
   renderToolLog();
-
+  updateStatsPanel();
   renderTimeline();
+  return;
+
 
 }
-
-
-
-function getToolLogDetail(msg) {
-
-  const meta = msg.meta || {};
-
-  const tool = meta.tool || {};
-
-  const action = meta.action || tool.action || "tool";
-
-  if (tool.path || meta.path) return tool.path || meta.path;
-
-  if (tool.query || tool.pattern) return tool.query || tool.pattern;
-
-  if (tool.command) return tool.command;
-
-  if (meta.backupPath) return `backup: ${meta.backupPath}`;
-
-  const firstLine = (getMsgText(msg)).split("\n").find(Boolean);
-
-  return firstLine || action;
-
-}
-
-
-
-function formatCharCount(text) {
-  const length = (text || "").trim().length;
-  if (length < 1000) return `${length} chars`;
-  return `${(length / 1000).toFixed(1)}k chars`;
-}
-
-function summarizeText(text, max = 120) {
-  const normalized = (text || "")
-    .replace(/```[\s\S]*?```/g, "[code]")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!normalized) return "No summary";
-  return normalized.length > max ? `${normalized.slice(0, max)}...` : normalized;
-}
-
-function hasLargeCodeSection(text) {
-
-  const matches = Array.from((text || "").matchAll(/```(\w+)?\n?([\s\S]*?)```/g));
-
-  if (matches.length >= 3) return true;
-
-  return matches.some((match) => (match[2] || "").length > 1200);
-
-}
-
-
-
-function summarizeThought(thought = "") {
-
-  const size = formatCharCount(thought);
-
-  if (/工具|tool|调用|read_file|list_files|search_files|propose_edit|run_command/i.test(thought)) {
-
-    return `${t("thoughtCollapsed")} · ${t("thoughtCategoryTool")} · ${size}`;
-
-  }
-
-  if (/错误|失败|异常|error|fail|debug|排查/i.test(thought)) {
-
-    return `${t("thoughtCollapsed")} · ${t("thoughtCategoryDebug")} · ${size}`;
-
-  }
-
-  if (/代码|实现|修改|diff|文件|函数|组件/i.test(thought)) {
-
-    return `${t("thoughtCollapsed")} · ${t("thoughtCategoryImpl")} · ${size}`;
-
-  }
-
-  return `${t("thoughtCollapsed")} · ${size}`;
-
-}
-
-
+  // (legacy code preserved below, not reached)
+  // Parse messages into segments: tool-sections and standalone messages
 
 function isProcessMessage(msg) {
 
@@ -4176,17 +3996,19 @@ function renderTimeline() {
 
       if (msg.meta?._system) continue; // skip hidden system messages
 
-      nodes.push({ index: i, label: getMsgText(msg).replace(/\n/g, " "), type: "user" });
-
-    } else if (msg.meta?.kind === "compact-summary") {
-
-      nodes.push({ index: i, label: "📋 上下文已压缩", type: "compact" });
+      const rawLabel = getMsgText(msg).replace(/\n/g, " ").trim();
+      const label = rawLabel.length > 80 ? `${rawLabel.slice(0, 80)}...` : rawLabel;
+      nodes.push({ index: i, label, type: "user" });
 
     }
 
   }
 
-  if (nodes.length === 0) { tl.innerHTML = ""; return; }
+  if (nodes.length < 2) {
+    tl.innerHTML = "";
+    tl.classList.remove("visible");
+    return;
+  }
 
 
 
@@ -4199,6 +4021,7 @@ function renderTimeline() {
 
 
   tl.innerHTML = `<div class="tl-track">${dots}</div>`;
+  tl.classList.add("visible");
 
 
 
@@ -4223,6 +4046,15 @@ function renderTimeline() {
 }
 
 
+
+function getToolLogDetail(msg) {
+  var meta = msg.meta || {};
+  var tool = meta.tool || {};
+  if (tool.path || meta.path) return tool.path || meta.path;
+  if (tool.query || tool.pattern) return tool.query || tool.pattern;
+  if (tool.command) return tool.command;
+  return (getMsgText(msg)).split("\n")[0] || "tool";
+}
 
 function renderToolLog() {
 
@@ -7667,8 +7499,8 @@ async function runAgentLoop(ctx = null) {
 
     ctx.responseUsage = null;
 
-    // Sync ctx.messages back to state.messages so render sees usage data
-    setSessionMessages(ctx.sessionId, ctx.messages);
+    // Pull streaming updates (thought+content from SSE) into ctx.messages
+    ctx.messages = getSessionMessages(ctx.sessionId);
 
     const rawContent = modelResult.content || "";
 
@@ -7690,7 +7522,7 @@ async function runAgentLoop(ctx = null) {
 
         role: "assistant",
 
-        content: (current.content || "").trim() || `准备调用 ${nativeCalls.length} 个工具`,
+        content: (current.content || "").trim() || "",
 
         streaming: false,
         ...(_prevTimer ? { _responseTime: _prevTimer } : {}),

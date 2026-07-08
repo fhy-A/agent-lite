@@ -1438,11 +1438,96 @@ input:focus, select:focus, textarea:focus {
   font-size: 11px;
 }
 
+.thinking-process {
+  max-width: min(920px, 100%);
+}
+
+.thinking-process .role {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.thinking-process .bubble {
+  color: var(--muted);
+  text-align: left;
+}
+
+.answer-divider {
+  width: min(920px, 100%);
+  margin: 10px auto 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.answer-divider::before,
+.answer-divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: var(--line);
+}
+
+.edit-suggestion {
+  max-width: min(920px, 100%);
+}
+
+.tool-edit-card {
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  overflow: hidden;
+}
+
+.tool-edit-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tool-edit-status {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.tool-edit-title {
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.tool-edit-target {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-edit-diff {
+  padding: 12px;
+}
+
+.tool-edit-markdown {
+  color: var(--text);
+  line-height: 1.7;
+}
+
 .apply-edit-bar {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: 8px;
+  margin: 0 12px 12px;
   padding: 10px 14px;
   border: 1px solid color-mix(in srgb, var(--green) 35%, var(--line));
   border-radius: 10px;
@@ -3188,14 +3273,22 @@ body.theme-dark .syn-fn { color: #61afef; }
 
 .chat-timeline {
   position: absolute;
-  left: 20px;
-  top: 0;
-  bottom: 104px;
+  left: 14px;
+  top: 52px;
+  bottom: 128px;
   z-index: 2;
   overflow: visible;
-  display: flex;
+  display: none;
   align-items: center;
   pointer-events: none;
+  opacity: .45;
+  transition: opacity .12s;
+}
+.chat-timeline.visible {
+  display: flex;
+}
+.chat-timeline:hover {
+  opacity: 1;
 }
 .tl-track {
   display: flex;

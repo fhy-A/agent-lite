@@ -1908,6 +1908,21 @@ function showToast(msg, type = "error") {
 const _originalTitle = document.title;
 let _pendingPermNotify = false;
 
+function _notify(title, body) {
+  try {
+    if ("Notification" in window && Notification.permission === "granted") {
+      new Notification(title, { body, icon: "agent-lite-icon.png" });
+    }
+  } catch (_) {}
+}
+
+function notifyTaskComplete(sessionId) {
+  if (!document.hidden) return;
+  const title = els.sessionTitle.value || t("sessionTitleDefault");
+  document.title = `[${t("permNotifyDone") || "Done"}] ${title}`;
+  _notify("Agent Lite - " + (t("notifyTaskDoneBody") || "已完成"), title);
+}
+
 function notifyPermissionNeeded(action, path) {
   if (!document.hidden) return;
   const label = action === "propose_edit" ? t("permNotifyEdit") : t("permNotifyWrite");
@@ -1919,11 +1934,7 @@ function notifyPermissionNeeded(action, path) {
       document.title = document.title.startsWith("[") ? document.title.replace(`[${t("permNotifyPending")}]`, "") : `[${t("permNotifyPending")}]${document.title}`;
     }, 2000);
   }
-  try {
-    if ("Notification" in window && Notification.permission === "granted") {
-      new Notification(t("permNotifyTitle"), { body: `${label}: ${path}` });
-    }
-  } catch (_) {}
+  _notify(t("permNotifyTitle"), `${label}: ${path}`);
 }
 
 function clearPermissionNotify() {
@@ -3346,7 +3357,22 @@ function renderMarkdownLite(text) {
 
   if (!text) return "";
 
-  return marked.parse(text);
+  let html = marked.parse(text);
+
+  // Make inline code (file paths) clickable
+  html = html.replace(/<code>([^<]+)<\/code>/g, (_, code) => {
+    const s = code.trim();
+    // File with extension, or Windows/Unix path pattern
+    if (/\.\w{1,8}$/.test(s) || /^[\/\\]|[A-Za-z]:[\/\\]/.test(s)) {
+      return '<code class="clickable-path" data-path="' + escapeHtml(s) + '" title="Click to open">' + code + '</code>';
+    }
+    return '<code>' + code + '</code>';
+  });
+
+  // Make all links open in new tab
+  html = html.replace(/<a /g, '<a target="_blank" rel="noopener" ');
+
+  return html;
 
 }
 
@@ -3420,6 +3446,21 @@ function bindCopyButtons() {
 }
 
 
+
+
+function bindClickablePaths() {
+  document.querySelectorAll(".clickable-path").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const p = el.dataset.path;
+      if (!p) return;
+      if (/^https?:\/\//i.test(p)) { window.open(p, "_blank"); return; }
+      let fp = p;
+      if (!/^[A-Za-z]:[\\/\\]/.test(fp)) { fp = (els.projectRoot?.value || "").replace(/[\\/\\]+$/, "") + "/" + fp; }
+      loadFile(fp).catch(() => {});
+    });
+  });
+}
 
 // ── Compact tool card labels ──
 
@@ -3982,7 +4023,7 @@ function renderMessages() {
 
   els.messages.innerHTML = html;
 
-  bindCopyButtons();
+  bindCopyButtons(); bindClickablePaths();
 
   bindMessageActions();
 
@@ -7758,7 +7799,7 @@ async function runAgentLoop(ctx = null) {
         renderSessionMessages(ctx.sessionId);
 
         // Notify if page is not visible and a permission-required action arrived
-        if (document.hidden && (result.action === "propose_edit" || result.action === "write_file")) {
+        if (document.hidden && (result.action === "propose_edit" || result.action === "write_file") && getPermissionProfile() !== "bypass") {
           notifyPermissionNeeded(result.action, result.path);
         }
 
@@ -7816,11 +7857,19 @@ async function runAgentLoop(ctx = null) {
         const FAIL_SIGNALS = ["工具执行失败", "已被安全策略拦截", "文件不存在", "路径不存在",
                               "Tool execution failed", "Blocked by security policy",
                               "File not found", "Path not found",
-                              "unknown error", "binary file is not supported"];
+                              "unknown error", "binary file is not supported",
+                              "NameError", "SyntaxError", "TypeError", "AttributeError",
+                              "ModuleNotFoundError", "ImportError", "FileNotFoundError",
+                              "is not defined", "Assignment to constant"];
+        const RUNTIME_ERRORS = ["NameError", "SyntaxError", "TypeError", "AttributeError",
+                                "ModuleNotFoundError", "ImportError", "FileNotFoundError",
+                                "is not defined", "Assignment to constant", "Error:"];
         const isFailure = (msg) => {
           const c = msg.content || "";
-          if (msg.meta && msg.meta.action === "run_command" && !c.includes("工具执行失败") && !c.includes("Tool execution failed")) {
-            return false; // commands that ran but had non-zero exit are not hard failures
+          if (msg.meta && msg.meta.action === "run_command"
+              && !c.includes("工具执行失败") && !c.includes("Tool execution failed")
+              && !RUNTIME_ERRORS.some(s => c.includes(s))) {
+            return false; // commands that ran cleanly but had non-zero exit are not hard failures
           }
           return FAIL_SIGNALS.some(s => c.includes(s));
         };
@@ -7952,7 +8001,7 @@ async function runAgentLoop(ctx = null) {
 
     renderSessionMessages(ctx.sessionId);
 
-    if (document.hidden && (result.action === "propose_edit" || result.action === "write_file")) {
+    if (document.hidden && (result.action === "propose_edit" || result.action === "write_file") && getPermissionProfile() !== "bypass") {
       notifyPermissionNeeded(result.action, result.path);
     }
 
@@ -8326,6 +8375,8 @@ async function sendMessage(userText) {
   setStreaming(false, sessionId);
   await saveSessionState(sessionId, ctx.messages, ctx.stats);
   renderSessions();
+
+  notifyTaskComplete(sessionId);
 
   if (loopError) throw loopError;  // propagate to chatForm handler
 }
@@ -9246,7 +9297,11 @@ els.copyPreview.addEventListener("click", async () => {
 
 });
 
-els.copySessionPath.addEventListener("click", () => copyText(sessionFilePath()));
+els.copySessionPath.addEventListener("click", async () => {
+  const ok = await copyText(sessionFilePath());
+  els.copySessionPath.textContent = ok ? t("copiedBtn") : t("failedBtn");
+  setTimeout(() => { els.copySessionPath.textContent = t("copyBtn"); }, 1200);
+});
 
 // Session ID now shown in File tooltip
 
@@ -10388,10 +10443,14 @@ els.confirmEditModal.addEventListener("click", (event) => {
 
 document.addEventListener("keydown", (event) => {
 
-  if (event.key === "Escape" && !els.confirmEditModal.classList.contains("hidden")) {
-
-    hideApplyConfirm();
-
+  if (event.key === "Escape") {
+    // Don't intercept when typing in input/textarea
+    if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") return;
+    // Pause current agent run if streaming
+    if (state.isStreaming) {
+      const run = ensureSessionRun(state.sessionId);
+      if (run?.abortController) run.abortController.abort();
+    }
   }
 
 });

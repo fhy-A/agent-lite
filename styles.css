@@ -903,7 +903,13 @@ input:focus, select:focus, textarea:focus {
   overflow: auto;
   min-height: 0;
   padding: 24px 28px 34px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128,128,128,0.25) transparent;
 }
+.messages::-webkit-scrollbar { width: 6px; }
+.messages::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.25); border-radius: 3px; }
+.messages::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.45); }
+.messages::-webkit-scrollbar-track { background: transparent; }
 
 .chat-pane.empty-chat {
   display: flex;
@@ -3555,3 +3561,6 @@ body.theme-dark .syn-fn { color: #61afef; }
 .update-progress-bg { flex: 1; height: 8px; border-radius: 4px; background: var(--panel-2); overflow: hidden; }
 .update-progress-fill { height: 100%; border-radius: 4px; background: var(--accent); width: 0%; transition: width .15s; }
 .update-progress-txt { font-size: 13px; color: var(--muted); min-width: 36px; text-align: right; }
+
+.clickable-path { cursor: pointer; }
+.clickable-path:hover { color: var(--accent); text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; }

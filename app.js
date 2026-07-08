@@ -3773,8 +3773,8 @@ function renderMessages() {
   for (const idx of toolSectionIndices) {
     const tools = segments[idx].tools;
     totalCalls += tools.filter((t) => t.callMsg).length;
-    totalFail += tools.filter((t) => t.resultMsg && (getMsgText(t.resultMsg)).startsWith(t("toolExecFailed"))).length;
-    totalFail += tools.filter((t) => t.resultMsg && (getMsgText(t.resultMsg)).startsWith(t("toolExecFailed"))).length;
+    totalFail += tools.filter((x) => x.resultMsg && (getMsgText(x.resultMsg)).startsWith(t("toolExecFailed"))).length;
+    totalFail += tools.filter((x) => x.resultMsg && (getMsgText(x.resultMsg)).startsWith(t("toolExecFailed"))).length;
   }
 
   let html = segments.map((seg, segIdx) => {

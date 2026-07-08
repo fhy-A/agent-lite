@@ -1640,7 +1640,7 @@ const I18N = {
     systemPromptHint: "这里作为 Agent 的系统提示词", resetDefault: "恢复默认",
     language: "语言", theme: "主题", settings: "设置",
     dragSort: "拖拽排序", keyNamePlaceholder: "名称（可选）",
-    collapseExpand: "点击收起/展开",
+    collapseExpand: "点击收起/展开", fileAtTitle: "引用到输入框",
     toolExpand: "详情", toolSection: "工具：", toolCount: "{count} 个工具", tasksDone: "{count} 已完成", tasksFail: "{count} 失败",
     fetchDone: "已抓取",
     fmtFilenameMatch: "文件名匹配", fmtRegexMode: "模式：正则", fmtTruncated: "结果已截断",
@@ -1746,7 +1746,7 @@ const I18N = {
     systemPromptHint: "This serves as the Agent's system prompt", resetDefault: "Reset to Default",
     language: "Language", theme: "Theme", settings: "Settings",
     dragSort: "Drag to sort", keyNamePlaceholder: "Name (optional)",
-    collapseExpand: "Click to collapse/expand",
+    collapseExpand: "Click to collapse/expand", fileAtTitle: "Insert path to input",
     toolExpand: "Details", toolSection: "Tools: ", toolCount: "{count} tools", tasksDone: "{count} completed", tasksFail: "{count} failed",
     fetchDone: "Fetched",
     fmtFilenameMatch: "filename match", fmtRegexMode: "Mode: regex", fmtTruncated: "Results truncated",
@@ -5418,7 +5418,7 @@ function renderFileTree() {
 
         </button>
 
-        <button class="file-at-btn" type="button" data-path="${escapeHtml(item.path)}" title="引用到输入框">@</button>
+        <button class="file-at-btn" type="button" data-path="${escapeHtml(item.path)}" title="${t("fileAtTitle")}">@</button>
 
       </div>
 

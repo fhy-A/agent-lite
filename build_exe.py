@@ -12,10 +12,13 @@ APP_DIR = Path(__file__).resolve().parent
 for d in ["data", "data/sessions", "data/memory", "data/skills", "data/attachments", "data/file-backups"]:
     (APP_DIR / d).mkdir(exist_ok=True)
 
+version = (APP_DIR / "VERSION").read_text().strip()
+name = f"AgentLite-{version}"
+
 cmd = [
     sys.executable, "-m", "PyInstaller",
     "--onefile",
-    "--name", "AgentLite",
+    "--name", name,
     "--icon", str(APP_DIR / "agent-lite-icon.ico"),
     "--version-file", str(APP_DIR / "file_version_info.txt"),
     "--add-data", f"{APP_DIR / 'VERSION'}{';'}.",

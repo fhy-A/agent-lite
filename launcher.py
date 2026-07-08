@@ -217,6 +217,7 @@ def main():
     port = int(os.environ.get("AGENT_LITE_PORT", "3010"))
     server_obj = ThreadingHTTPServer(("127.0.0.1", port), server.AgentLiteHandler)
 
+    server.start_tray(port, server_obj)
     print(f"Agent Lite running at http://127.0.0.1:{port}")
     webbrowser.open(f"http://127.0.0.1:{port}")
 

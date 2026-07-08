@@ -11,6 +11,16 @@ import os
 import re
 import subprocess
 import uuid
+import sys
+import threading
+import webbrowser
+
+try:
+    import pystray
+    from PIL import Image
+    TRAY_AVAILABLE = True
+except ImportError:
+    TRAY_AVAILABLE = False
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -24,6 +34,8 @@ SKILLS_DIR = DATA_DIR / "skills"
 CONFIG_PATH = DATA_DIR / "config.json"
 NEW_API_BASE_URL = os.environ.get("NEW_API_BASE_URL", "").rstrip("/")
 PORT = int(os.environ.get("AGENT_LITE_PORT", "3010"))
+_active_downloads = {}   # downloadId -> {progress, done, error, path, total}
+_tray_thread_ref = None  # tray daemon thread reference
 MAX_PREVIEW_BYTES = 1024 * 1024
 MAX_TOOL_READ_BYTES = 512 * 1024
 MAX_SEARCH_FILE_BYTES = 1024 * 1024
@@ -45,6 +57,64 @@ def _hidden_subprocess_kwargs():
         "startupinfo": si,
         "creationflags": 0x08000000,
     }
+
+
+def _read_version_file():
+    """Read the local VERSION file. Returns '0.0.0' if missing."""
+    vfile = APP_DIR / "VERSION"
+    if vfile.exists():
+        return vfile.read_text(encoding="utf-8").strip()
+    return "0.0.0"
+
+
+def _read_remote_version():
+    """Fetch remote VERSION from GitHub. Returns None on failure."""
+    try:
+        resp = request.urlopen(
+            "https://raw.githubusercontent.com/fhy-A/agent-lite/master/VERSION",
+            timeout=5
+        )
+        return resp.read().decode("utf-8").strip()
+    except Exception:
+        return None
+
+
+def _create_tray_icon(port, server_ref=None):
+    """Create the pystray Icon with right-click menu. Returns Icon (not running)."""
+    icon_path = str(APP_DIR / "agent-lite-icon.ico")
+    img = Image.open(icon_path)
+
+    def on_open():
+        webbrowser.open(f"http://127.0.0.1:{port}")
+
+    def on_exit():
+        if server_ref:
+            server_ref.shutdown()
+        os._exit(0)
+
+    menu = pystray.Menu(
+        pystray.MenuItem("Open Agent Lite", on_open, default=True),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Exit", on_exit),
+    )
+    return pystray.Icon("Agent Lite", img, "Agent Lite", menu)
+
+
+def start_tray(port=3010, server_ref=None):
+    """Start tray icon in a daemon thread. No-op if already running or not available."""
+    global _tray_thread_ref
+    if not TRAY_AVAILABLE:
+        return None
+    if _tray_thread_ref is not None and _tray_thread_ref.is_alive():
+        return None
+    try:
+        icon = _create_tray_icon(port, server_ref)
+        t = threading.Thread(target=icon.run, daemon=True, name="tray-icon")
+        t.start()
+        _tray_thread_ref = t
+        return t
+    except Exception:
+        return None
 
 
 SKIP_DIRS = {
@@ -1035,9 +1105,27 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
                 self.send_json({
                     "name": "Agent Lite",
                     "serverVersion": self.server_version,
+                    "localVersion": _read_version_file(),
                     "appDir": str(APP_DIR),
                     "features": ["pick-file-path"],
                 })
+                return
+            if route == "/api/check-update":
+                self.send_json(self._check_update())
+                return
+            if route == "/api/download-progress":
+                did = query.get("id", [None])[0]
+                state = _active_downloads.get(did)
+                if not state:
+                    self.send_json({"error": "Unknown download"}, 404)
+                else:
+                    self.send_json({
+                        "progress": state["progress"],
+                        "done": state["done"],
+                        "error": state["error"],
+                        "path": state["path"],
+                        "total": state["total"],
+                    })
                 return
             if route == "/api/sessions":
                 self.get_sessions()
@@ -1150,6 +1238,12 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/compact":
                 self.compact()
+                return
+            if self.path == "/api/download-update":
+                self._handle_download_update(self.read_body_json())
+                return
+            if self.path == "/api/restart":
+                self._handle_restart()
                 return
         except Exception as exc:
             self.send_json({"error": str(exc)}, 400)
@@ -2409,6 +2503,62 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(data)
 
+    # -- Update handlers --
+
+    def _check_update(self):
+        local = _read_version_file()
+        remote = _read_remote_version()
+        is_frozen = getattr(sys, 'frozen', False)
+        update_available = False
+        download_url = None
+        if remote:
+            try:
+                lv = tuple(int(x) for x in local.split("."))
+                rv = tuple(int(x) for x in remote.split("."))
+                update_available = rv > lv
+                if update_available:
+                    download_url = f"https://github.com/fhy-A/agent-lite/releases/download/v{remote}/AgentLite-v{remote}.exe"
+            except Exception:
+                pass
+        return {
+            "localVersion": local,
+            "remoteVersion": remote,
+            "updateAvailable": update_available,
+            "isFrozen": is_frozen,
+            "downloadUrl": download_url,
+        }
+
+    def _handle_download_update(self, body):
+        url = body.get("url", "")
+        if not url:
+            self.send_json({"error": "No download URL provided"}, 400)
+            return
+        target_dir = Path(sys.executable).parent if getattr(sys, 'frozen', False) else (APP_DIR / "dist")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        new_exe = target_dir / "AgentLite.exe.new"
+        download_id = str(uuid.uuid4())
+        state = {"progress": 0, "done": False, "error": None, "path": str(new_exe), "total": 0}
+        _active_downloads[download_id] = state
+
+        def _do_download():
+            try:
+                def _report(b, s, t):
+                    if t > 0:
+                        state["total"] = t
+                        state["progress"] = min(int(b * s / t * 100), 100)
+                request.urlretrieve(url, str(new_exe), reporthook=_report)
+                state["done"] = True
+                state["progress"] = 100
+            except Exception as e:
+                state["error"] = str(e)
+
+        t = threading.Thread(target=_do_download, daemon=True)
+        t.start()
+        self.send_json({"ok": True, "downloadId": download_id, "path": str(new_exe)})
+
+    def _handle_restart(self):
+        self.send_json({"error": "Update only supported in compiled exe", "devMode": True}, 400)
+
     def log_message(self, fmt, *args):
         print("%s - %s" % (self.address_string(), fmt % args))
 
@@ -2434,6 +2584,7 @@ if __name__ == "__main__":
     ThreadingHTTPServer.daemon_threads = True
     server = ThreadingHTTPServer(("127.0.0.1", PORT), AgentLiteHandler)
     server.socket.settimeout(2.0)
+    start_tray(PORT, server)
     print(f"Agent Lite is running: http://127.0.0.1:{PORT}")
     print(f"Proxy upstream: {NEW_API_BASE_URL}")
     print(f"Project root: {load_config()['projectRoot']}")

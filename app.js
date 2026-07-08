@@ -1085,16 +1085,6 @@ function serializeKeys(entries) {
 
 
 
-function maskKey(k) {
-
-  if (!k) return "";
-
-  if (k.length <= 13) return k[0] + "***" + k[k.length - 1];
-
-  return k.slice(0, 7) + "***" + k.slice(-3);
-
-}
-
 
 
 function renderKeyEditor(raw, newRow = false) {
@@ -1480,13 +1470,10 @@ function bindKeyEditorEvents(container) {
           if (lines.length === 0) return;
 
           const newEntries = lines.map((line) => {
-
-            const m = line.match(/^(.+?)\s+(sk-\S+)/i);
-
-            if (m) return { name: m[1].trim(), key: m[2].trim(), enabled: true };
-
-            return { name: "", key: line, enabled: true };
-
+            const s = line.trim();
+            const sp = s.indexOf(" ");
+            if (sp > 0) return { name: s.slice(0, sp).trim(), key: s.slice(sp + 1).trim(), enabled: true };
+            return { name: "", key: s, enabled: true };
           });
 
           const keyList = document.getElementById("settingsKeyList");
@@ -1525,7 +1512,7 @@ const LANG = {
 
   zh: {
 
-    settings: "设置", models: "Models", memory: "Memory", skills: "Skills", system: "System Prompt", theme: "Theme", language: "Language",
+    settings: "设置", models: "Models", memory: "Memory", skills: "Skills", system: "System Prompt", theme: "Theme", language: "Language", update: "更新",
 
     baseUrl: "Base URL", apiKeys: "API Keys", refreshModels: "刷新", availableModels: "可用模型",
 
@@ -1545,7 +1532,7 @@ const LANG = {
 
   en: {
 
-    settings: "Settings", models: "Models", memory: "Memory", skills: "Skills", system: "System Prompt", theme: "Theme", language: "Language",
+    settings: "Settings", models: "Models", memory: "Memory", skills: "Skills", system: "System Prompt", theme: "Theme", language: "Language", update: "Update",
 
     baseUrl: "Base URL", apiKeys: "API Keys", refreshModels: "Refresh", availableModels: "Models",
 
@@ -1619,10 +1606,10 @@ const I18N = {
     dragSidebar: "拖拽调整侧栏宽度", dragSessions: "拖拽调整会话与文件区域高度", toggleSidebar: "收起/展开侧栏", goUp: "上一层",
     manageProjectDir: "点击管理项目目录", filePreview: "文件预览",
     selectModel: "选择模型", reasoningEffort: "推理强度", pauseBtn: "暂停", sendTip: "发送消息", emptyTip: "请输入内容",
-    addKey: "添加 Key", edit: "编辑", editing: "编辑中", models: "模型", baseUrl: "Base URL", apiKeys: "API Keys",
+    addKey: "+ 添加 Key", edit: "编辑", editing: "编辑中", models: "模型", baseUrl: "Base URL", apiKeys: "API Keys",
     temperature: "Temperature", maxTokens: "Max Tokens", memory: "记忆", newMemory: "新建记忆",
     cancel: "取消", save: "保存", skills: "Skills", system: "系统", deleteSkill: "删除 Skill",
-    keyBulkPlaceholder: "每行输入一个 key，可以粘贴多个 key；空行会自动跳过。",
+    keyBulkPlaceholder: "每行一个 Key，格式：名称 Key值（空格分隔）。可以粘贴多个；空行自动跳过。",
     selectSkillHint: "选择 Skill 查看详情",
     statInputTitle: "输入 token", statOutputTitle: "输出 token", statCacheTitle: "缓存 token",
     statContextTitle: "上下文占比 · 超95%自动压缩", viewSessionInfo: "查看 Session Info",
@@ -1672,6 +1659,33 @@ const I18N = {
     srvNoFilePicker: "当前环境无法打开文件选择窗口",
     thoughtCategoryDebug: "排查判断", thoughtCategoryImpl: "实现判断",
     toggleVisibility: "显示/隐藏", enabledStatus: "已启用", disabledStatus: "已禁用",
+    checkUpdate: "检查更新", checkingUpdate: "正在检查...",
+    upToDate: "已是最新版本", updateAvailable: "发现新版本",
+    downloadUpdate: "下载更新", downloading: "下载中...",
+    installRestart: "安装并重启", restarting: "重启中...",
+    updateFailed: "更新失败", openDownloadPage: "打开下载页面",
+    devModeUpdate: "开发模式下请手动更新", versionLabel: "版本",
+    readyToInstall: "就绪，点击安装",
+    oboWelcome: "欢迎使用 Agent Lite",
+    oboWelcomeDesc: "一个运行在你电脑上的 AI 编程助手。像聊天一样让它读代码、改 bug、搜文件、执行命令，所有操作都在你的电脑上完成。",
+    oboFeat1: "读代码、搜文件", oboFeat2: "改 bug、写功能", oboFeat3: "执行命令、运行测试", oboFeat4: "数据不出本地、操作可控",
+    oboStart: "开始配置", oboNext: "下一步", oboBack: "上一步", oboSkip: "跳过", oboDone: "开始使用",
+    oboStep1: "配置 API Key", oboStep1Desc: "Agent Lite 不内置模型，需要连接你的 API 服务：",
+    oboStep1Item1: "点击左下角设置 → Models → + 添加 Key",
+    oboStep1Item2: "输入 Base URL 和 API Key（名称可选），保存",
+    oboStep1Item3: "点击刷新模型，列表中会出现所有可用模型",
+    oboStep1Tip: "支持 OpenAI 接口格式的 API（New API 网关 / 直连等），可随时在设置中增删",
+    oboStep2: "选择项目目录", oboStep2Desc: "在左侧文件区域点击文件夹按钮，选择你要工作的项目文件夹。",
+    oboStep2Item1: "Agent 的读写操作限定在这个目录内",
+    oboStep2Item2: "目录外的文件可以读取，但写操作需要确认",
+    oboStep2Tip: "可以随时在文件树顶部切换目录",
+    oboStep3: "开始对话", oboStep3Desc: "点击新建会话按钮，选择模型，输入需求，Enter 发送。试试这个：",
+    oboStep3Example: "帮我分析一下这个项目的结构",
+    oboStep4: "权限与安全", oboStep4Desc: "选择适合你的权限模式，可以随时在输入框左侧切换：",
+    oboStep4Item1: "只能读取和搜索，不能修改",
+    oboStep4Item2: "修改操作需要你确认（推荐新手使用）",
+    oboStep4Item3: "所有操作自动执行（谨慎使用）",
+    oboStep4Tip: "Agent 改代码会先生成 diff 让你审查，确认后才写入。修改前自动备份到 data/file-backups/",
   },
   en: {
     toolListFiles: "List Files", toolReadFile: "Read File", toolSearchFiles: "Search Files",
@@ -1725,10 +1739,10 @@ const I18N = {
     dragSidebar: "Drag to resize sidebar", dragSessions: "Drag to resize sections", toggleSidebar: "Toggle sidebar", goUp: "Go up",
     manageProjectDir: "Manage project directory", filePreview: "File preview",
     selectModel: "Select model", reasoningEffort: "Reasoning effort", pauseBtn: "Pause", sendTip: "Send", emptyTip: "Type a message",
-    addKey: "Add Key", edit: "Edit", editing: "Editing", models: "Models", baseUrl: "Base URL", apiKeys: "API Keys",
+    addKey: "+ Add Key", edit: "Edit", editing: "Editing", models: "Models", baseUrl: "Base URL", apiKeys: "API Keys",
     temperature: "Temperature", maxTokens: "Max Tokens", memory: "Memory", newMemory: "New Memory",
     cancel: "Cancel", save: "Save", skills: "Skills", system: "System", deleteSkill: "Delete Skill",
-    keyBulkPlaceholder: "One key per line, paste multiple keys; blank lines are skipped.",
+    keyBulkPlaceholder: "One key per line, format: Name KeyValue (space separated). Paste multiple; blank lines skipped.",
     selectSkillHint: "Select a Skill to view details",
     statInputTitle: "Input tokens", statOutputTitle: "Output tokens", statCacheTitle: "Cache tokens",
     statContextTitle: "Context usage · auto-compact above 95%", viewSessionInfo: "View Session Info",
@@ -1778,6 +1792,33 @@ const I18N = {
     srvNoFilePicker: "Cannot open file picker in current environment",
     thoughtCategoryDebug: "Debugging", thoughtCategoryImpl: "Implementation",
     toggleVisibility: "Show/Hide", enabledStatus: "Enabled", disabledStatus: "Disabled",
+    checkUpdate: "Check for Updates", checkingUpdate: "Checking...",
+    upToDate: "Up to date", updateAvailable: "Update available",
+    downloadUpdate: "Download", downloading: "Downloading...",
+    installRestart: "Install & Restart", restarting: "Restarting...",
+    updateFailed: "Update failed", openDownloadPage: "Open download page",
+    devModeUpdate: "Dev mode: update manually", versionLabel: "Version",
+    readyToInstall: "Ready to install",
+    oboWelcome: "Welcome to Agent Lite",
+    oboWelcomeDesc: "An AI coding assistant running on your computer. Chat naturally to read code, fix bugs, search files, and run commands - all operations stay local.",
+    oboFeat1: "Read code, search files", oboFeat2: "Fix bugs, write features", oboFeat3: "Run commands and tests", oboFeat4: "Local data, controllable ops",
+    oboStart: "Get Started", oboNext: "Next", oboBack: "Back", oboSkip: "Skip", oboDone: "Start Using",
+    oboStep1: "Configure API Key", oboStep1Desc: "Agent Lite needs an API service to work:",
+    oboStep1Item1: "Click the gear icon, Settings, Models, then Add Key",
+    oboStep1Item2: "Enter the Base URL and API Key (name optional), then save",
+    oboStep1Item3: "Click Refresh Models to see all available models",
+    oboStep1Tip: "Supports OpenAI-compatible APIs (New API gateway, direct, etc.). Manage keys anytime in Settings.",
+    oboStep2: "Select Project Folder", oboStep2Desc: "Click the folder button in the file tree area to choose your project folder.",
+    oboStep2Item1: "All file operations are restricted to this folder",
+    oboStep2Item2: "Files outside the project can be read, but writes require confirmation",
+    oboStep2Tip: "You can switch project folders anytime via the file tree header",
+    oboStep3: "Start Chatting", oboStep3Desc: "Click New Session, select a model, type your request, then press Enter. Try this:",
+    oboStep3Example: "Analyze the structure of this project for me",
+    oboStep4: "Permissions & Safety", oboStep4Desc: "Choose a permission mode (switchable anytime via the dropdown left of the input):",
+    oboStep4Item1: "Read and search only, no modifications",
+    oboStep4Item2: "Edits require your confirmation (recommended)",
+    oboStep4Item3: "All operations run automatically (use with caution)",
+    oboStep4Tip: "Agent generates a diff for review before writing. All changes are backed up to data/file-backups/",
   },
 };
 
@@ -2045,6 +2086,24 @@ function getApiKeys() {
 
 
 
+function detectLanguage(text) {
+  if (!text) return "English";
+  let cjk = 0, hiragana = 0, katakana = 0, hangul = 0, cyrillic = 0;
+  for (const ch of text) {
+    const code = ch.codePointAt(0);
+    if (code >= 0x4E00 && code <= 0x9FFF) cjk++;
+    else if (code >= 0x3040 && code <= 0x309F) hiragana++;
+    else if (code >= 0x30A0 && code <= 0x30FF) katakana++;
+    else if (code >= 0xAC00 && code <= 0xD7AF) hangul++;
+    else if (code >= 0x0400 && code <= 0x04FF) cyrillic++;
+  }
+  if (hiragana > 0 || katakana > 0) return "Japanese";
+  if (hangul > 0) return "Korean";
+  if (cyrillic > cjk && cyrillic > 3) return "Russian";
+  if (cjk > 0) return "Chinese";
+  return "English";
+}
+
 function getSystemPrompt(options = {}) {
 
   const customPrompt = els.systemPromptText.value.trim() || defaultSystemPrompt;
@@ -2055,10 +2114,19 @@ function getSystemPrompt(options = {}) {
   const toolPreset = options.toolPreset || els.toolPreset.value;
   const allowedToolNames = options.allowedToolNames || getAllowedToolNames(toolPreset);
 
+  // Detect user language from the latest user message
+  const lastUserMsg = [...promptMessages].reverse().find((m) => m.role === "user");
+  const userLang = detectLanguage(lastUserMsg?.content || "");
+
   const now = new Date();
   const dateStr = now.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", weekday: "long" });
   const timeStr = now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
   const parts = [customPrompt, `当前时间：${dateStr} ${timeStr}（北京时间）`, `项目根目录：${els.projectRoot?.value || "未设置"}`, `提示：项目目录外的文件（如 Desktop、Documents）也可以直接尝试读取，系统会自动处理路径权限。`, `Agent Lite 版本：${state.appVersion || "unknown"}`];
+
+  // Language detection: instruct the model to match the user's language
+  if (userLang !== "Chinese") {
+    parts.push(`## Response Language\nThe user is writing in ${userLang}. Reply in ${userLang} unless the user explicitly asks for another language.`);
+  }
 
   if (state.projectContext?.found) {
 
@@ -2085,8 +2153,6 @@ function getSystemPrompt(options = {}) {
     }
 
   } else {
-
-    const lastUserMsg = [...promptMessages].reverse().find((m) => m.role === "user");
 
     if (lastUserMsg) {
 
@@ -9436,6 +9502,8 @@ function switchSettingsPanel(panel) {
 
     case "language": renderLanguagePanel(detail); break;
 
+    case "update": renderUpdatePanel(detail); break;
+
   }
 
   applyI18n(); // translate dynamically rendered settings content
@@ -9925,6 +9993,213 @@ function renderThemePanel(container) {
 
 
 
+
+function renderUpdatePanel(container) {
+  const curVer = state.appVersion || "unknown";
+  let remoteVer = null;
+  let downloadUrl = null;
+
+  function status(s) { const el = document.getElementById("updateStatus"); if (el) el.textContent = s; }
+  function actions(h) { const el = document.getElementById("updateActions"); if (el) el.innerHTML = h; }
+
+  container.innerHTML = `<h3 style="margin:0 0 14px">${t("update")}</h3>
+    <div class="update-ver-row"><span>${t("versionLabel")}:</span><strong class="update-ver-val" id="updateCurVer">v${escapeHtml(curVer)}</strong></div>
+    <div class="update-status-row"><span id="updateStatus"></span></div>
+    <div class="update-progress-wrap hidden" id="updateProgressWrap">
+      <div class="update-progress-bg"><div class="update-progress-fill" id="updateBar"></div></div>
+      <span class="update-progress-txt" id="updatePct">0%</span>
+    </div>
+    <div class="panel-actions" style="margin-top:12px" id="updateActions">
+      <button id="updateCheckBtn" class="mini-btn primary-btn" type="button">${t("checkUpdate")}</button>
+    </div>`;
+
+  apiJson("/api/version").then((sv) => {
+    if (sv && sv.localVersion) { const el = document.getElementById("updateCurVer"); if (el) el.textContent = "v" + sv.localVersion; }
+  }).catch(() => {});
+
+  document.getElementById("updateCheckBtn").addEventListener("click", async () => {
+    status(t("checkingUpdate")); actions("");
+    try {
+      const data = await apiJson("/api/check-update");
+      if (data.updateAvailable) {
+        remoteVer = data.remoteVersion;
+        downloadUrl = data.downloadUrl;
+        status(t("updateAvailable") + " (v" + remoteVer + ")");
+        if (data.isFrozen && downloadUrl) {
+          actions(`<button id="updateDlBtn" class="mini-btn primary-btn" type="button">${t("downloadUpdate")} v${remoteVer}</button>`);
+          document.getElementById("updateDlBtn").addEventListener("click", () => startDownload());
+        } else {
+          actions(`<a href="https://github.com/fhy-A/agent-lite/releases/latest" target="_blank" class="mini-btn">${t("openDownloadPage")}</a>`);
+        }
+      } else {
+        status(t("upToDate"));
+        actions(`<button id="updateCheckBtn2" class="mini-btn primary-btn" type="button">${t("checkUpdate")}</button>`);
+        document.getElementById("updateCheckBtn2").addEventListener("click", () => renderUpdatePanel(container));
+      }
+    } catch (e) {
+      status(t("updateFailed") + ": " + (e.message || ""));
+      actions(`<button id="updateCheckBtn3" class="mini-btn primary-btn" type="button">${t("checkUpdate")}</button>`);
+      document.getElementById("updateCheckBtn3").addEventListener("click", () => renderUpdatePanel(container));
+    }
+  });
+
+  async function startDownload() {
+    status(t("downloading"));
+    document.getElementById("updateProgressWrap").classList.remove("hidden");
+    actions("");
+    let downloadId;
+    try {
+      const init = await apiJson("/api/download-update", { method: "POST", body: JSON.stringify({ url: downloadUrl }) });
+      downloadId = init.downloadId;
+    } catch (e) { status(t("updateFailed") + ": " + e.message); return; }
+
+    const poll = setInterval(async () => {
+      try {
+        const ds = await apiJson("/api/download-progress?id=" + encodeURIComponent(downloadId));
+        document.getElementById("updateBar").style.width = ds.progress + "%";
+        document.getElementById("updatePct").textContent = ds.progress + "%";
+        if (ds.error) { clearInterval(poll); status(t("updateFailed") + ": " + ds.error); }
+        if (ds.done) {
+          clearInterval(poll);
+          document.getElementById("updateProgressWrap").classList.add("hidden");
+          status(t("readyToInstall"));
+          actions(`<button id="updateRestartBtn" class="mini-btn primary-btn" type="button">${t("installRestart")}</button>`);
+          document.getElementById("updateRestartBtn").addEventListener("click", async () => {
+            status(t("restarting")); actions("");
+            try { await apiJson("/api/restart", { method: "POST", body: JSON.stringify({}) }); } catch (_) {}
+            showToast("Agent Lite is restarting...", "success");
+          });
+        }
+      } catch (_) { /* server may have restarted */ }
+    }, 500);
+  }
+}
+
+// ── Onboarding ──
+
+function shouldShowOnboarding() {
+  const done = localStorage.getItem("agent-lite-onboarding");
+  if (!done) return true;
+  if (done !== state.appVersion) return true;
+  return false;
+}
+
+function markOnboardingDone() {
+  localStorage.setItem("agent-lite-onboarding", state.appVersion || "done");
+}
+
+function showOnboarding() {
+  const overlay = document.getElementById("onboardingOverlay");
+  if (!overlay) return;
+  overlay.classList.remove("hidden");
+  let step = 0;
+  const total = 5;
+
+  function render() {
+    const body = document.getElementById("onboardingBody");
+    const dots = document.getElementById("onboardingDots");
+    const actions = document.getElementById("onboardingActions");
+
+    dots.innerHTML = Array.from({length: total}, (_, i) =>
+      '<span class="onboarding-dot' + (i === step ? ' active' : '') + '"></span>').join("");
+
+    const data = STEPS[step];
+    let html = '';
+    if (data.title) html += '<h2>' + data.title + '</h2>';
+    if (data.desc) html += '<p class="obo-desc">' + data.desc + '</p>';
+    if (data.features) {
+      html += '<div class="obo-features">';
+      data.features.forEach(function(f) { html += '<div class="obo-feat-item">' + f + '</div>'; });
+      html += '</div>';
+    }
+    if (data.items) {
+      html += '<ol>';
+      data.items.forEach(function(it) { html += '<li>' + it + '</li>'; });
+      html += '</ol>';
+    }
+    if (data.example) html += '<p style="background:var(--panel-2);border-radius:8px;padding:12px 16px;font-style:italic;color:var(--accent)">' + data.example + '</p>';
+    if (data.tip) html += '<div class="obo-tip">' + data.tip + '</div>';
+    if (data.table) {
+      html += '<table>';
+      data.table.forEach(function(r) { html += '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>'; });
+      html += '</table>';
+    }
+    body.innerHTML = html;
+
+    let btns = '';
+    if (step > 0) btns += '<button class="mini-btn" id="oboBack">' + t("oboBack") + '</button>';
+    if (step === 0) btns += '<button class="mini-btn" id="oboSkipAll">' + t("oboSkip") + '</button>';
+    if (step < total - 1) {
+      btns += '<button class="mini-btn primary-btn" id="oboNext">' + (step === 0 ? t("oboStart") : t("oboNext")) + '</button>';
+    } else {
+      btns += '<button class="mini-btn primary-btn" id="oboDone">' + t("oboDone") + '</button>';
+    }
+    actions.innerHTML = btns;
+
+    bindButtons();
+  }
+
+  function bindButtons() {
+    var b = document.getElementById("oboBack");
+    if (b) b.addEventListener("click", function() { step--; render(); });
+    b = document.getElementById("oboNext");
+    if (b) b.addEventListener("click", function() { step++; render(); });
+    b = document.getElementById("oboSkipAll");
+    if (b) b.addEventListener("click", close);
+    b = document.getElementById("oboDone");
+    if (b) b.addEventListener("click", close);
+  }
+
+  function close() {
+    overlay.classList.add("hidden");
+    markOnboardingDone();
+  }
+
+  document.getElementById("onboardingClose").addEventListener("click", close);
+
+  var STEPS = [
+    {
+      title: t("oboWelcome"),
+      desc: t("oboWelcomeDesc"),
+      features: [
+        String.fromCodePoint(0x1F4D6) + " " + t("oboFeat1"),
+        String.fromCodePoint(0x1F527) + " " + t("oboFeat2"),
+        String.fromCodePoint(0x1F4BB) + " " + t("oboFeat3"),
+        String.fromCodePoint(0x1F512) + " " + t("oboFeat4"),
+      ],
+    },
+    {
+      title: "1/4 " + t("oboStep1"),
+      desc: t("oboStep1Desc"),
+      items: [t("oboStep1Item1"), t("oboStep1Item2"), t("oboStep1Item3")],
+      tip: t("oboStep1Tip"),
+    },
+    {
+      title: "2/4 " + t("oboStep2"),
+      desc: t("oboStep2Desc"),
+      items: [t("oboStep2Item1"), t("oboStep2Item2")],
+      tip: t("oboStep2Tip"),
+    },
+    {
+      title: "3/4 " + t("oboStep3"),
+      desc: t("oboStep3Desc"),
+      example: '"' + t("oboStep3Example") + '"',
+    },
+    {
+      title: "4/4 " + t("oboStep4"),
+      desc: t("oboStep4Desc"),
+      table: [
+        [String.fromCodePoint(0x1F6E1) + " Plan", t("oboStep4Item1")],
+        [String.fromCodePoint(0x270B) + " Accept Edits", t("oboStep4Item2")],
+        [String.fromCodePoint(0x26A1) + " Auto", t("oboStep4Item3")],
+      ],
+      tip: t("oboStep4Tip"),
+    },
+  ];
+
+  render();
+}
+
 // Wire nav clicks
 
 document.getElementById("settingsNav").addEventListener("click", (e) => {
@@ -10391,6 +10666,9 @@ async function init() {
 
   // Load app version
   try { const r = await fetch("/VERSION"); state.appVersion = (await r.text()).trim(); } catch (_) {}
+
+  // Show onboarding if first launch or version changed
+  if (shouldShowOnboarding()) { showOnboarding(); }
 
   await refreshSessions();
 

@@ -406,8 +406,21 @@
           <button class="settings-nav-item" data-panel="system" data-i18n="system">System Prompt</button>
           <button class="settings-nav-item" data-panel="theme" data-i18n="theme">Theme</button>
           <button class="settings-nav-item" data-panel="language" data-i18n="language">Language</button>
+          <button class="settings-nav-item" data-panel="update" data-i18n="update">Update</button>
         </div>
         <div class="settings-detail" id="settingsDetail"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Onboarding modal -->
+  <div class="onboarding-overlay hidden" id="onboardingOverlay">
+    <div class="onboarding-card" id="onboardingCard">
+      <button class="onboarding-close" id="onboardingClose" type="button" aria-label="Close">&times;</button>
+      <div class="onboarding-body" id="onboardingBody"></div>
+      <div class="onboarding-footer">
+        <div class="onboarding-dots" id="onboardingDots"></div>
+        <div class="onboarding-actions" id="onboardingActions"></div>
       </div>
     </div>
   </div>

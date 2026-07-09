@@ -1273,6 +1273,9 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             if self.path == "/api/restart":
                 self._handle_restart()
                 return
+            if self.path == "/api/agent-lite/sync-keys":
+                self._handle_sync_keys()
+                return
         except Exception as exc:
             self.send_json({"error": str(exc)}, 400)
             return
@@ -2596,6 +2599,33 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
 
     def _handle_restart(self):
         self.send_json({"error": "Update only supported in compiled exe", "devMode": True}, 400)
+
+    def _handle_sync_keys(self):
+        body = self.read_body_json()
+        token = (body.get("token") or "").strip()
+        user_id = str(body.get("userId") or "")
+        if not token or not user_id:
+            self.send_json({"error": "Missing token or userId"}, 400)
+            return
+        base_url = "http://localhost:3001"
+        headers = {"Authorization": token, "New-Api-User": user_id, "Content-Type": "application/json"}
+        try:
+            req1 = request.Request(base_url + "/api/token/?p=0&size=100", headers=headers)
+            resp1 = request.urlopen(req1, timeout=10)
+            data1 = json.loads(resp1.read())
+            tokens = data1.get("data") or []
+            if not tokens:
+                self.send_json({"tokens": [], "keys": {}})
+                return
+            ids = [t.get("id") for t in tokens if t.get("id")]
+            req2 = request.Request(base_url + "/api/token/batch/keys", headers=headers,
+                                   data=json.dumps({"ids": ids}).encode(), method="POST")
+            resp2 = request.urlopen(req2, timeout=10)
+            data2 = json.loads(resp2.read())
+            full_keys = data2.get("data", {}).get("keys") or {}
+            self.send_json({"tokens": tokens, "keys": full_keys})
+        except Exception as e:
+            self.send_json({"error": "Failed to sync keys: " + str(e)}, 502)
 
     def log_message(self, fmt, *args):
         print("%s - %s" % (self.address_string(), fmt % args))

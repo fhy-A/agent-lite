@@ -10650,38 +10650,27 @@ async function checkAgentLiteCallback() {
 }
 
 async function syncKeysFromPlatform(token, userId, username) {
-  // Hardcoded platform URL for Agent Lite sync (update to production domain when deploying)
-  const platformUrl = "http://localhost:3001";
   try {
-    // Step 1: fetch all tokens (masked, need IDs)
-    const listResp = await fetch(`${platformUrl}/api/token/?p=0&size=100`, {
-      headers: { "Authorization": token, "New-Api-User": userId, "Content-Type": "application/json" }
-    });
-    if (!listResp.ok) throw new Error(`Failed to list tokens (${listResp.status})`);
-    const listData = await listResp.json();
-    const tokens = listData.data || [];
-    if (tokens.length === 0) { showToast("No API keys found on platform"); return; }
-
-    // Step 2: reveal full keys for all token IDs
-    const ids = tokens.map(t => t.id);
-    const keyResp = await fetch(`${platformUrl}/api/token/batch/keys`, {
+    // Call local server which proxies to New API (avoids CORS)
+    const resp = await fetch("/api/agent-lite/sync-keys", {
       method: "POST",
-      headers: { "Authorization": token, "New-Api-User": userId, "Content-Type": "application/json" },
-      body: JSON.stringify({ ids })
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, userId })
     });
-    if (!keyResp.ok) throw new Error(`Failed to reveal keys (${keyResp.status})`);
-    const keyData = await keyResp.json();
-    const fullKeys = keyData.data?.keys || {};
-
-    // Step 3: show selection modal
-    showKeySyncModal(tokens, fullKeys, username, token, userId);
+    if (!resp.ok) throw new Error(`Sync failed (${resp.status})`);
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    const tokens = data.tokens || [];
+    const fullKeys = data.keys || {};
+    if (tokens.length === 0) { showToast("No API keys found on platform"); return; }
+    showKeySyncModal(tokens, fullKeys, username);
   } catch (e) {
     showToast("Key sync failed: " + e.message);
     console.error("syncKeysFromPlatform:", e);
   }
 }
 
-function showKeySyncModal(tokens, fullKeys, username, token, userId) {
+function showKeySyncModal(tokens, fullKeys, username) {
   // Remove existing modal if any
   const old = document.getElementById("keySyncOverlay");
   if (old) old.remove();

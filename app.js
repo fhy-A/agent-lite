@@ -9293,15 +9293,14 @@ els.refreshFiles.addEventListener("click", (e) => { e.stopPropagation(); loadFil
 els.newFolderBtn.addEventListener("click", (e) => { e.stopPropagation(); cwdNewFolderAction(); });
 
 els.fileSearch.addEventListener("input", () => renderFileTree());
-// Single sort button: left click cycles mode, right click or arrow click toggles direction
+// Sort button: left click toggles direction, right click cycles mode. Persisted.
+state._fileSortMode = localStorage.getItem("agent-lite-sort-mode") || "type";
+state._fileSortAsc = localStorage.getItem("agent-lite-sort-asc") !== "false";
 if (els.fileSortBtn) {
-  els.fileSortBtn.addEventListener("click", (e) => {
-    const rect = els.fileSortBtn.getBoundingClientRect();
-    const isArrow = e.clientX > rect.right - 26;
-    if (isArrow) {
-      state._fileSortAsc = state._fileSortAsc === false;
-      renderFileTree();
-    }
+  els.fileSortBtn.addEventListener("click", () => {
+    state._fileSortAsc = !state._fileSortAsc;
+    localStorage.setItem("agent-lite-sort-asc", state._fileSortAsc);
+    renderFileTree();
   });
   els.fileSortBtn.addEventListener("contextmenu", (e) => {
     e.preventDefault();
@@ -9310,6 +9309,8 @@ if (els.fileSortBtn) {
     const idx = modes.indexOf(cur);
     state._fileSortMode = modes[(idx + 1) % 3];
     state._fileSortAsc = true;
+    localStorage.setItem("agent-lite-sort-mode", state._fileSortMode);
+    localStorage.setItem("agent-lite-sort-asc", "true");
     renderFileTree();
   });
 }

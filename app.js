@@ -5439,7 +5439,9 @@ function showFileContextMenu(x, y, path, type) {
       if (action === "open") {
         fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) }).catch(() => showToast("打开失败", "error"));
       } else if (action === "copy-path") {
-        navigator.clipboard.writeText(path).then(() => showToast("已复制路径", "warning")).catch(() => showToast("复制失败", "error"));
+        const root = (els.projectRoot?.value || "").replace(/[\\/]+$/, "");
+        const fullPath = root ? `${root}/${path}`.replace(/\\/g, "/") : path;
+        navigator.clipboard.writeText(fullPath).then(() => showToast("已复制路径", "warning")).catch(() => showToast("复制失败", "error"));
       } else if (action === "reveal") {
         fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, reveal: true }) }).catch(() => showToast("打开失败", "error"));
       }

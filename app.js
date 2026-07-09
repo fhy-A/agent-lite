@@ -5448,7 +5448,7 @@ function renderFileTree() {
   const filtered = query ? items.filter((item) => item.name.toLowerCase().includes(query)) : items;
 
   // Sort
-  const sortMode = state._fileSortMode || "type";
+  const sortMode = state._fileSortMode || "default";
   const asc = state._fileSortAsc !== false;
   if (els.fileSortBtn) {
     const labels = { default: "默认", type: "类型", time: "时间" };
@@ -9294,7 +9294,7 @@ els.newFolderBtn.addEventListener("click", (e) => { e.stopPropagation(); cwdNewF
 
 els.fileSearch.addEventListener("input", () => renderFileTree());
 // Sort button: left click toggles direction, right click cycles mode. Persisted.
-state._fileSortMode = localStorage.getItem("agent-lite-sort-mode") || "type";
+state._fileSortMode = localStorage.getItem("agent-lite-sort-mode") || "default";
 state._fileSortAsc = localStorage.getItem("agent-lite-sort-asc") !== "false";
 if (els.fileSortBtn) {
   els.fileSortBtn.addEventListener("click", () => {

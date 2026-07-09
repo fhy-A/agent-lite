@@ -287,6 +287,8 @@ const els = {
   fileTree: document.getElementById("fileTree"),
 
   fileSearch: document.getElementById("fileSearch"),
+  fileSort: document.getElementById("fileSort"),
+  fileSortOrder: document.getElementById("fileSortOrder"),
 
   previewPane: document.getElementById("previewPane"),
 
@@ -5446,7 +5448,27 @@ function renderFileTree() {
 
   const filtered = query ? items.filter((item) => item.name.toLowerCase().includes(query)) : items;
 
-  els.fileTree.innerHTML = filtered.length
+  // Sort
+  const sortMode = els.fileSort?.value || "type";
+  const asc = els.fileSortOrder?.dataset.dir !== "desc";
+  const sorted = [...filtered];
+  if (sortMode === "type") {
+    sorted.sort((a, b) => {
+      if (a.type !== b.type) return (a.type === "dir" ? -1 : 1) * (asc ? 1 : -1);
+      const extA = (a.name.split(".").pop() || "").toLowerCase();
+      const extB = (b.name.split(".").pop() || "").toLowerCase();
+      if (extA !== extB) return extA.localeCompare(extB) * (asc ? 1 : -1);
+      return a.name.localeCompare(b.name) * (asc ? 1 : -1);
+    });
+  } else if (sortMode === "time") {
+    sorted.sort((a, b) => ((b.modified || 0) - (a.modified || 0)) * (asc ? 1 : -1));
+  } else {
+    sorted.sort((a, b) => { if (a.type !== b.type) return (a.type === "dir" ? -1 : 1) * (asc ? 1 : -1); return a.name.localeCompare(b.name) * (asc ? 1 : -1); });
+  }
+
+  els.fileTree.innerHTML = sorted.length
+
+    ? sorted.map((item) => `
 
     ? filtered.map((item) => `
 
@@ -9276,6 +9298,13 @@ els.refreshFiles.addEventListener("click", (e) => { e.stopPropagation(); loadFil
 els.newFolderBtn.addEventListener("click", (e) => { e.stopPropagation(); cwdNewFolderAction(); });
 
 els.fileSearch.addEventListener("input", () => renderFileTree());
+els.fileSort.addEventListener("change", () => renderFileTree());
+els.fileSortOrder.addEventListener("click", () => {
+  const cur = els.fileSortOrder.dataset.dir;
+  els.fileSortOrder.dataset.dir = cur === "desc" ? "asc" : "desc";
+  els.fileSortOrder.textContent = cur === "desc" ? "↑" : "↓";
+  renderFileTree();
+});
 
 els.goUp.addEventListener("click", (e) => { e.stopPropagation(); goUpDir(); });
 

@@ -49,7 +49,15 @@
             </div>
           </div>
         </div>
-        <input id="fileSearch" class="file-search" data-i18n="filterFiles" placeholder="筛选文件…" autocomplete="off" />
+        <div class="file-search-row">
+          <input id="fileSearch" class="file-search" data-i18n="filterFiles" placeholder="筛选文件…" autocomplete="off" />
+          <select id="fileSort" class="file-sort">
+            <option value="default">默认</option>
+            <option value="type" selected>类型</option>
+            <option value="time">时间</option>
+          </select>
+          <button id="fileSortOrder" class="file-sort-order" type="button" title="升序/降序">↑</button>
+        </div>
         <div id="filePathBar" class="path-line" style="display:none">/</div>
         <div id="fileTree" class="file-tree"></div>
       </section>

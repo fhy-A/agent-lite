@@ -2620,7 +2620,10 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         project_root = Path(config.get("projectRoot") or config.get("userHome") or "").expanduser().resolve()
         full = (project_root / clean).resolve()
         try:
-            _os.startfile(str(full))
+            if body.get("reveal"):
+                _os.startfile(str(full.parent))
+            else:
+                _os.startfile(str(full))
             self.send_json({"ok": True})
         except Exception as e:
             self.send_json({"error": str(e)}, 400)

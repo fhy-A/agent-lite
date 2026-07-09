@@ -1514,7 +1514,7 @@ const LANG = {
 
   zh: {
 
-    settings: "设置", models: "模型", memory: "记忆", skills: "技能", system: "系统提示词", theme: "主题", language: "语言", update: "更新",
+    settings: "设置", models: "模型", memory: "记忆", skills: "技能", system: "系统提示词", theme: "主题", language: "语言", update: "更新", account: "账户",
 
     baseUrl: "Base URL", apiKeys: "API Keys", refreshModels: "刷新", availableModels: "可用模型",
 
@@ -1534,7 +1534,7 @@ const LANG = {
 
   en: {
 
-    settings: "Settings", models: "Models", memory: "Memory", skills: "Skills", system: "System Prompt", theme: "Theme", language: "Language", update: "Update",
+    settings: "Settings", models: "Models", memory: "Memory", skills: "Skills", system: "System Prompt", theme: "Theme", language: "Language", update: "Update", account: "Account",
 
     baseUrl: "Base URL", apiKeys: "API Keys", refreshModels: "Refresh", availableModels: "Models",
 
@@ -9504,7 +9504,7 @@ function switchSettingsPanel(panel) {
   switch (panel) {
 
     case "models": renderModelsPanel(detail); break;
-
+    case "account": renderAccountPanel(detail); break;
     case "memory": renderMemoryPanel(detail); break;
 
     case "skills": renderSkillsInSettings(detail); break;
@@ -9543,7 +9543,7 @@ function renderModelsPanel(container) {
 
       </div>
 
-      <button id="settingsConnectPlatform" class="key-connect-btn" type="button">🔗 登录平台账号</button>
+      <button id="settingsConnectPlatform" class="key-connect-btn" type="button">同步中转站 API Key</button>
 
     </label>
 
@@ -9561,13 +9561,18 @@ function renderModelsPanel(container) {
 
   `;
 
-  // Connect to platform button
+  // Sync keys button — login first if needed, then fetch keys
   const connectBtn = document.getElementById("settingsConnectPlatform");
   if (connectBtn) {
     connectBtn.addEventListener("click", () => {
-      // Hardcoded platform URL for Agent Lite login (update to production domain when deploying)
-      const platformUrl = "http://localhost:3001";
-      window.open(`${platformUrl}/agent-lite/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
+      const auth = getPlatformAuth();
+      if (!auth) {
+        const platformUrl = "http://localhost:3001";
+        window.open(`${platformUrl}/agent-lite/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
+        showToast("Login first, then click again to sync keys");
+        return;
+      }
+      syncKeysFromPlatform();
     });
   }
 
@@ -10018,6 +10023,38 @@ function renderThemePanel(container) {
 
 
 
+
+function renderAccountPanel(container) {
+  const auth = getPlatformAuth();
+  if (auth) {
+    container.innerHTML = `<h3 style="margin:0 0 14px">平台账户</h3>
+      <div class="account-card">
+        <div class="account-avatar">${escapeHtml((auth.username || "U")[0].toUpperCase())}</div>
+        <div class="account-info">
+          <div class="account-name">${escapeHtml(auth.username || "Unknown")}</div>
+          <div class="account-id">User ID: ${escapeHtml(auth.userId || "")}</div>
+        </div>
+      </div>
+      <div style="margin-top:16px">
+        <button id="accountLogout" class="mini-btn" type="button">退出登录</button>
+      </div>`;
+    document.getElementById("accountLogout").addEventListener("click", () => {
+      clearPlatformAuth();
+      showToast("Logged out");
+      renderAccountPanel(container);
+    });
+  } else {
+    container.innerHTML = `<h3 style="margin:0 0 14px">平台账户</h3>
+      <div class="muted-line" style="padding:16px;text-align:center">
+        <p>未登录中转站</p>
+        <button id="accountLoginNow" class="mini-btn primary" type="button" style="margin-top:8px">登录平台账号</button>
+      </div>`;
+    document.getElementById("accountLoginNow").addEventListener("click", () => {
+      const platformUrl = "http://localhost:3001";
+      window.open(`${platformUrl}/agent-lite/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
+    });
+  }
+}
 
 function renderUpdatePanel(container) {
   const curVer = state.appVersion || "unknown";
@@ -10636,7 +10673,13 @@ els.newChat.addEventListener("click", () => {
 
 els.exportChat.addEventListener("click", exportMarkdown);
 
-// ── Agent Lite × New API Key Sync ──
+// ── Agent Lite × New API Platform Auth ──
+
+function getPlatformAuth() {
+  try { return JSON.parse(localStorage.getItem("agent-lite-platform-auth") || "null"); } catch (_) { return null; }
+}
+function savePlatformAuth(data) { localStorage.setItem("agent-lite-platform-auth", JSON.stringify(data)); }
+function clearPlatformAuth() { localStorage.removeItem("agent-lite-platform-auth"); }
 
 async function checkAgentLiteCallback() {
   const params = new URLSearchParams(window.location.search);
@@ -10644,18 +10687,24 @@ async function checkAgentLiteCallback() {
   const userId = params.get("user_id");
   const username = params.get("username");
   if (!token || !userId) return;
-  // Clean URL immediately
   history.replaceState(null, "", "/");
-  await syncKeysFromPlatform(token, userId, decodeURIComponent(username || ""));
+  savePlatformAuth({ token, userId, username: decodeURIComponent(username || "") });
+  showToast(`✅ Logged in as ${decodeURIComponent(username || "")}`);
+  // Refresh settings if open
+  const detail = document.getElementById("settingsDetail");
+  if (detail && detail.children.length > 0) renderModelsPanel(detail);
 }
 
-async function syncKeysFromPlatform(token, userId, username) {
+async function syncKeysFromPlatform() {
+  const auth = getPlatformAuth();
+  if (!auth) { showToast("Please login to platform first"); return; }
+  const connectBtn = document.getElementById("settingsConnectPlatform");
+  if (connectBtn) { connectBtn.disabled = true; connectBtn.textContent = "Loading..."; }
   try {
-    // Call local server which proxies to New API (avoids CORS)
     const resp = await fetch("/api/agent-lite/sync-keys", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token, userId })
+      body: JSON.stringify({ token: auth.token, userId: auth.userId })
     });
     if (!resp.ok) throw new Error(`Sync failed (${resp.status})`);
     const data = await resp.json();
@@ -10663,87 +10712,56 @@ async function syncKeysFromPlatform(token, userId, username) {
     const tokens = data.tokens || [];
     const fullKeys = data.keys || {};
     if (tokens.length === 0) { showToast("No API keys found on platform"); return; }
-    showKeySyncModal(tokens, fullKeys, username);
+    showKeySyncModal(tokens, fullKeys);
   } catch (e) {
     showToast("Key sync failed: " + e.message);
-    console.error("syncKeysFromPlatform:", e);
+  } finally {
+    if (connectBtn) { connectBtn.disabled = false; connectBtn.textContent = "同步中转站 API Key"; }
   }
 }
 
-function showKeySyncModal(tokens, fullKeys, username) {
-  // Remove existing modal if any
+function showKeySyncModal(tokens, fullKeys) {
   const old = document.getElementById("keySyncOverlay");
   if (old) old.remove();
-
-  const existing = parseKeyLines(els.apiKey.value).map(e => e.key.trim()).filter(Boolean);
+  let allText = "";
   const rows = tokens.map(t => {
-    const fullKey = fullKeys[String(t.id)] || "";
-    const already = existing.includes(fullKey);
-    return `<label class="key-sync-row${already ? " key-sync-exists" : ""}">
-      <input type="checkbox" data-key="${escapeHtml(fullKey)}" data-name="${escapeHtml(t.name || "")}" ${already ? "checked disabled" : ""} />
+    const key = fullKeys[String(t.id)] || t.key || "";
+    const line = `${t.name || "Unnamed"}: ${key}`;
+    allText += line + "\n";
+    return `<div class="key-sync-row">
       <span class="key-sync-name">${escapeHtml(t.name || "Unnamed")}</span>
-      <span class="key-sync-key">${escapeHtml(fullKey ? fullKey.slice(0,12)+"…"+fullKey.slice(-4) : t.key || "")}</span>
-      ${already ? '<span class="key-sync-badge">已添加</span>' : ''}
-    </label>`;
+      <span class="key-sync-key">${escapeHtml(key.slice(0,12)+"…"+key.slice(-4))}</span>
+      <button class="mini-btn key-copy-one" data-line="${escapeHtml(line)}" type="button">复制</button>
+    </div>`;
   }).join("");
 
   const overlay = document.createElement("div");
   overlay.id = "keySyncOverlay";
   overlay.className = "modal-overlay";
-  overlay.innerHTML = `<div class="modal-card" style="width:520px;max-height:70vh;display:flex;flex-direction:column">
-    <header>
-      <h3>同步平台密钥</h3>
-      <button class="icon-btn key-sync-close" type="button">&times;</button>
-    </header>
-    <div style="margin-bottom:12px;font-size:13px;color:var(--muted)">已登录：<strong>${escapeHtml(username)}</strong> · 共 ${tokens.length} 个密钥</div>
+  overlay.innerHTML = `<div class="modal-card" style="width:540px;max-height:70vh;display:flex;flex-direction:column">
+    <header><h3>同步中转站 API Key</h3><button class="icon-btn key-sync-close" type="button">&times;</button></header>
+    <div style="margin-bottom:10px;font-size:13px;color:var(--muted)">共 ${tokens.length} 个密钥</div>
     <div class="key-sync-list">${rows}</div>
     <div class="panel-actions" style="margin-top:12px">
-      <span><label><input type="checkbox" id="keySyncSelectAll" checked /> 全选</label></span>
-      <button id="keySyncSave" class="mini-btn primary" type="button">确认同步</button>
+      <button id="keySyncCopyAll" class="mini-btn primary" type="button">复制全部</button>
+      <span style="font-size:12px;color:var(--muted)">复制后粘贴到上方 Key 输入框</span>
     </div>
   </div>`;
   document.body.appendChild(overlay);
 
-  const closeBtn = overlay.querySelector(".key-sync-close");
-  closeBtn.addEventListener("click", () => overlay.remove());
+  overlay.querySelector(".key-sync-close").addEventListener("click", () => overlay.remove());
   overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
-
-  const selectAll = overlay.querySelector("#keySyncSelectAll");
-  selectAll.addEventListener("change", () => {
-    overlay.querySelectorAll("input[type=checkbox]:not([disabled])").forEach(cb => cb.checked = selectAll.checked);
+  overlay.querySelector("#keySyncCopyAll").addEventListener("click", () => {
+    navigator.clipboard.writeText(allText.trim()).then(() => showToast("Copied all keys")).catch(() => showToast("Copy failed"));
   });
-
-  overlay.querySelector("#keySyncSave").addEventListener("click", () => {
-    const checked = overlay.querySelectorAll("input[type=checkbox]:checked:not([disabled])");
-    const newKeys = [];
-    checked.forEach(cb => {
-      newKeys.push({ name: cb.dataset.name || "New API", key: cb.dataset.key });
+  overlay.querySelectorAll(".key-copy-one").forEach(btn => {
+    btn.addEventListener("click", () => {
+      navigator.clipboard.writeText(btn.dataset.line).then(() => { btn.textContent = "已复制"; setTimeout(() => { btn.textContent = "复制"; }, 1500); }).catch(() => showToast("Copy failed"));
     });
-    if (newKeys.length === 0) { overlay.remove(); return; }
-
-    // Merge with existing keys (avoid duplicates by key value)
-    const existingKeys = parseKeyLines(els.apiKey.value);
-    const existingKeySet = new Set(existingKeys.map(e => e.key.trim()).filter(Boolean));
-    const merged = [...existingKeys];
-    for (const nk of newKeys) {
-      if (!existingKeySet.has(nk.key.trim())) {
-        merged.push(nk);
-        existingKeySet.add(nk.key.trim());
-      }
-    }
-    els.apiKey.value = serializeKeys(merged);
-    saveKeyConfig(merged.map((e, i) => ({ name: e.name, key: e.key, enabled: true })));
-    saveLocalSettings();
-    overlay.remove();
-    showToast(`Synced ${newKeys.length} key(s) from ${username}`);
-    if (els.baseUrl.value.trim()) refreshModels();
-    // Refresh settings panel if open
-    const detail = document.getElementById("settingsDetail");
-    if (detail && detail.children.length > 0) renderModelsPanel(detail);
   });
 }
 
-// ── End Key Sync ──
+// ── End Platform Auth ──
 
 async function init() {
 

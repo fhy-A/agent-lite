@@ -525,8 +525,9 @@ input:focus, select:focus, textarea:focus {
 }
 
 .file-item-row {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 22px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   border-radius: 5px;
 }
@@ -546,7 +547,7 @@ input:focus, select:focus, textarea:focus {
   align-items: center;
   gap: 4px;
   height: 24px;
-  padding: 0 2px 0 8px;
+  padding: 0 24px 0 8px;
   border: 0;
   border-radius: 0;
   text-align: left;
@@ -559,29 +560,21 @@ input:focus, select:focus, textarea:focus {
 .file-item-row.active .file-item {
   color: var(--accent);
 }
+.file-item small { text-align: right; }
 
 .file-at-btn {
-  width: 20px;
-  height: 20px;
+  position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
+  width: 18px; height: 18px;
   padding: 0;
   border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--panel-3);
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
+  border-radius: 3px;
+  font-size: 10px; font-weight: 700;
+  color: var(--muted); background: var(--panel);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity .12s;
+  z-index: 1;
 }
-.file-item-row:hover .file-at-btn {
-  opacity: 1;
-}
-.file-at-btn:hover {
-  background: var(--accent-bg);
-  color: var(--accent);
-  border-color: var(--accent);
-}
+.file-at-btn:hover { color: var(--accent); background: var(--panel-2); }
+.file-item-row:hover .file-at-btn { opacity: 1; }
 
 .file-name {
   overflow: hidden;

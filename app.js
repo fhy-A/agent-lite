@@ -9565,8 +9565,9 @@ function renderModelsPanel(container) {
   const connectBtn = document.getElementById("settingsConnectPlatform");
   if (connectBtn) {
     connectBtn.addEventListener("click", () => {
-      const baseUrl = document.getElementById("settingsBaseUrl").value.trim() || "http://localhost:3000";
-      window.open(`${baseUrl}/agent-lite/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
+      // Hardcoded platform URL for Agent Lite login (update to production domain when deploying)
+      const platformUrl = "http://localhost:3001";
+      window.open(`${platformUrl}/agent-lite/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
     });
   }
 
@@ -10649,10 +10650,11 @@ async function checkAgentLiteCallback() {
 }
 
 async function syncKeysFromPlatform(token, userId, username) {
-  const baseUrl = els.baseUrl.value.trim() || "http://localhost:3000";
+  // Hardcoded platform URL for Agent Lite sync (update to production domain when deploying)
+  const platformUrl = "http://localhost:3001";
   try {
     // Step 1: fetch all tokens (masked, need IDs)
-    const listResp = await fetch(`${baseUrl}/api/token/?p=0&size=100`, {
+    const listResp = await fetch(`${platformUrl}/api/token/?p=0&size=100`, {
       headers: { "Authorization": token, "New-Api-User": userId, "Content-Type": "application/json" }
     });
     if (!listResp.ok) throw new Error(`Failed to list tokens (${listResp.status})`);
@@ -10662,7 +10664,7 @@ async function syncKeysFromPlatform(token, userId, username) {
 
     // Step 2: reveal full keys for all token IDs
     const ids = tokens.map(t => t.id);
-    const keyResp = await fetch(`${baseUrl}/api/token/batch/keys`, {
+    const keyResp = await fetch(`${platformUrl}/api/token/batch/keys`, {
       method: "POST",
       headers: { "Authorization": token, "New-Api-User": userId, "Content-Type": "application/json" },
       body: JSON.stringify({ ids })

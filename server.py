@@ -2604,6 +2604,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         body = self.read_body_json()
         token = (body.get("token") or "").strip()
         user_id = str(body.get("userId") or "")
+        print(f"[sync-keys] hasToken={bool(token)} userId='{user_id}'")
         if not token or not user_id:
             self.send_json({"error": "Missing token or userId"}, 400)
             return
@@ -2613,7 +2614,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             req1 = request.Request(base_url + "/api/token/?p=0&size=100", headers=headers)
             resp1 = request.urlopen(req1, timeout=10)
             data1 = json.loads(resp1.read())
-            tokens = data1.get("data") or []
+            tokens = (data1.get("data") or {}).get("items") or []
             if not tokens:
                 self.send_json({"tokens": [], "keys": {}})
                 return

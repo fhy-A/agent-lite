@@ -9298,8 +9298,8 @@ els.refreshFiles.addEventListener("click", (e) => { e.stopPropagation(); loadFil
 els.newFolderBtn.addEventListener("click", (e) => { e.stopPropagation(); cwdNewFolderAction(); });
 
 els.fileSearch.addEventListener("input", () => renderFileTree());
-els.fileSort.addEventListener("change", () => renderFileTree());
-els.fileSortOrder.addEventListener("click", () => {
+if (els.fileSort) els.fileSort.addEventListener("change", () => renderFileTree());
+if (els.fileSortOrder) els.fileSortOrder.addEventListener("click", () => {
   const cur = els.fileSortOrder.dataset.dir;
   els.fileSortOrder.dataset.dir = cur === "desc" ? "asc" : "desc";
   els.fileSortOrder.textContent = cur === "desc" ? "↑" : "↓";

@@ -1514,7 +1514,7 @@ const LANG = {
 
   zh: {
 
-    settings: "设置", models: "Models", memory: "Memory", skills: "Skills", system: "System Prompt", theme: "Theme", language: "Language", update: "更新",
+    settings: "设置", models: "模型", memory: "记忆", skills: "技能", system: "系统提示词", theme: "主题", language: "语言", update: "更新",
 
     baseUrl: "Base URL", apiKeys: "API Keys", refreshModels: "刷新", availableModels: "可用模型",
 
@@ -1610,7 +1610,7 @@ const I18N = {
     selectModel: "选择模型", reasoningEffort: "推理强度", pauseBtn: "暂停", sendTip: "发送消息", emptyTip: "请输入内容",
     addKey: "+ 添加 Key", edit: "编辑", editing: "编辑中", models: "模型", baseUrl: "Base URL", apiKeys: "API Keys",
     temperature: "Temperature", maxTokens: "Max Tokens", memory: "记忆", newMemory: "新建记忆",
-    cancel: "取消", save: "保存", skills: "Skills", system: "系统", deleteSkill: "删除 Skill",
+    cancel: "取消", save: "保存", skills: "技能", system: "系统提示词", deleteSkill: "删除 Skill",
     keyBulkPlaceholder: "每行一个 Key，格式：名称 Key值（空格分隔）。可以粘贴多个；空行自动跳过。",
     selectSkillHint: "选择 Skill 查看详情",
     statInputTitle: "输入 token", statOutputTitle: "输出 token", statCacheTitle: "缓存 token",
@@ -1743,7 +1743,7 @@ const I18N = {
     selectModel: "Select model", reasoningEffort: "Reasoning effort", pauseBtn: "Pause", sendTip: "Send", emptyTip: "Type a message",
     addKey: "+ Add Key", edit: "Edit", editing: "Editing", models: "Models", baseUrl: "Base URL", apiKeys: "API Keys",
     temperature: "Temperature", maxTokens: "Max Tokens", memory: "Memory", newMemory: "New Memory",
-    cancel: "Cancel", save: "Save", skills: "Skills", system: "System", deleteSkill: "Delete Skill",
+    cancel: "Cancel", save: "Save", skills: "Skills", system: "System Prompt", deleteSkill: "Delete Skill",
     keyBulkPlaceholder: "One key per line, format: Name KeyValue (space separated). Paste multiple; blank lines skipped.",
     selectSkillHint: "Select a Skill to view details",
     statInputTitle: "Input tokens", statOutputTitle: "Output tokens", statCacheTitle: "Cache tokens",

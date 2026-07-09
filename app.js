@@ -4122,6 +4122,9 @@ function renderTimeline() {
   tl.innerHTML = `<div class="tl-track">${dots}</div>`;
   tl.classList.add("visible");
 
+  // Auto-scroll to bottom after render
+  els.messages.scrollTop = els.messages.scrollHeight;
+
 
 
   tl.querySelectorAll(".tl-dot-wrap").forEach((dot) => {

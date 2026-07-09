@@ -3676,3 +3676,16 @@ body.theme-dark .syn-fn { color: #61afef; }
 .account-avatar { width: 44px; height: 44px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 600; flex-shrink: 0; }
 .account-name { font-size: 15px; font-weight: 600; }
 .account-id { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+/* ── File tree extension colors ── */
+.ext-js .file-name, .ext-ts .file-name { color: #c5862b; }
+.ext-py .file-name { color: #3572A5; }
+.ext-css .file-name { color: #563d7c; }
+.ext-html .file-name { color: #e34c26; }
+.ext-json .file-name { color: #6e6e6e; }
+.ext-md .file-name { color: #083fa1; }
+.ext-svg .file-name, .ext-png .file-name, .ext-jpg .file-name, .ext-gif .file-name, .ext-ico .file-name, .ext-jpeg .file-name, .ext-webp .file-name { color: #cb4081; }
+.ext-pdf .file-name { color: #b30b00; }
+.ext-yml .file-name, .ext-yaml .file-name { color: #8f4a8b; }
+.ext-ps1 .file-name { color: #0174c2; }
+.ext-bat .file-name, .ext-sh .file-name, .ext-cmd .file-name { color: #4a8c2a; }

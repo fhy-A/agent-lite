@@ -5452,9 +5452,9 @@ function renderFileTree() {
 
       <div class="file-item-row ${item.path === state.previewPath ? "active" : ""}">
 
-        <button class="file-item ${item.type}" type="button" data-path="${escapeHtml(item.path)}" data-type="${item.type}">
+        ${(() => { const ext = item.type === "dir" ? "" : ((item.name || "").split(".").pop() || "").toLowerCase().slice(0, 6); return `<button class="file-item ${item.type} ext-${ext}" type="button" data-path="${escapeHtml(item.path)}" data-type="${item.type}">`; })()}
 
-          <span class="file-name">${item.type === "dir" ? "📂 " : ""}${escapeHtml(item.name)}</span>
+          <span class="file-name">${item.type === "dir" ? "📁 " : ""}${escapeHtml(item.name)}</span>
 
           <small>${item.type === "dir" ? "" : formatSize(item.size || 0)}</small>
 

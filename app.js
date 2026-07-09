@@ -3813,10 +3813,11 @@ function renderUserProjection(msg, index) {
   const images = msg._images || [];
   // Each image as separate message, clickable to open full-size overlay
   const imageArticles = images.map((img, i) => {
-    const src = `data:${img.mime};base64,${img.base64}`;
+    // Support both old base64 format and new path-based format
+    const src = img.path ? `/api/file?path=${encodeURIComponent(img.path)}&raw=1` : `data:${img.mime || "image/png"};base64,${img.base64}`;
     return `<article class="msg user msg-image" data-msg-index="${index}" data-img="${i}">
       <div class="bubble bubble-img">
-        <img class="msg-img msg-img-clickable" src="${src}" alt="${escapeHtml(img.name)}" onclick="showImageOverlay(this.src)" title="Click to enlarge">
+        <img class="msg-img msg-img-clickable" src="${src}" alt="${escapeHtml(img.name || "image")}" onclick="showImageOverlay(this.src)" title="Click to enlarge">
       </div>
     </article>`;
   }).join("");
@@ -5970,6 +5971,23 @@ function updateSendButtonState() {
 }
 
 
+
+async function uploadImagesForStorage(images) {
+  const refs = [];
+  for (const img of images) {
+    if (img.path) { refs.push(img); continue; }  // already uploaded
+    try {
+      const resp = await fetch("/api/attachments", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: img.name || "image.png", contentBase64: img.base64 })
+      });
+      const data = await resp.json();
+      if (data.path) { refs.push({ path: data.path, name: img.name, mime: img.mime }); continue; }
+    } catch (_) {}
+    refs.push(img);  // fallback to base64
+  }
+  return refs;
+}
 
 // ── Image attachments ──
 
@@ -8220,21 +8238,17 @@ async function sendMessage(userText) {
 
 
   // Build message content (text + images)
+  // Upload images to server so session stores paths, not base64 blobs
 
   let messageContent = userText;
-
   const images = [...state.attachedImages];
+  const imageRefs = await uploadImagesForStorage(images);
 
   if (images.length > 0) {
-
     messageContent = [{ type: "text", text: userText }];
-
     for (const img of images) {
-
       messageContent.push({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.base64}` } });
-
     }
-
   }
 
 
@@ -8297,7 +8311,7 @@ async function sendMessage(userText) {
 
   }
 
-  ctx.messages.push({ role: "user", content: messageContent, _images: images.length > 0 ? images : undefined, _model: ctx.model || getSelectedModel() });
+  ctx.messages.push({ role: "user", content: messageContent, _images: imageRefs.length > 0 ? imageRefs : undefined, _model: ctx.model || getSelectedModel() });
   setSessionMessages(sessionId, ctx.messages);
 
   state.attachedImages = [];
@@ -8326,10 +8340,11 @@ async function sendMessage(userText) {
     // Push each queued message as a separate user message
     for (const q of queued) {
       const imgs = q.images || [];
+      const imgRefs = await uploadImagesForStorage(imgs);
       const msgContent = imgs.length > 0
         ? [{ type: "text", text: q.text || "" }, ...imgs.map((img) => ({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.base64}` } }))]
         : (q.text || "");
-      ctx.messages.push({ role: "user", content: msgContent, _images: imgs.length > 0 ? imgs : undefined, _model: ctx.model || getSelectedModel() });
+      ctx.messages.push({ role: "user", content: msgContent, _images: imgRefs.length > 0 ? imgRefs : undefined, _model: ctx.model || getSelectedModel() });
     }
     state.attachedImages = [];
     renderImageThumbs();

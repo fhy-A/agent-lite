@@ -1491,10 +1491,18 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         data = target.read_bytes()
         truncated = len(data) > MAX_PREVIEW_BYTES
         preview = data[:MAX_PREVIEW_BYTES]
-        # Raw mode: return base64 content for image preview
+        # Raw mode: return binary content directly for binary files, JSON for text
         if raw:
             import base64 as b64
             mime = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+            if data and not is_probably_text(data[:1024]):
+                self.send_response(200)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "max-age=86400")
+                self.end_headers()
+                self.wfile.write(data)
+                return
             self.send_json({
                 "path": display_path,
                 "name": target.name,

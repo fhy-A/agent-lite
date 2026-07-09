@@ -1270,6 +1270,9 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             if self.path == "/api/download-update":
                 self._handle_download_update(self.read_body_json())
                 return
+            if self.path == "/api/open-file":
+                self._handle_open_file()
+                return
             if self.path == "/api/restart":
                 self._handle_restart()
                 return
@@ -2604,6 +2607,19 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         t = threading.Thread(target=_do_download, daemon=True)
         t.start()
         self.send_json({"ok": True, "downloadId": download_id, "path": str(new_exe)})
+
+    def _handle_open_file(self):
+        body = self.read_body_json()
+        path = (body.get("path") or "").strip()
+        if not path:
+            self.send_json({"error": "Missing path"}, 400)
+            return
+        import os as _os
+        try:
+            _os.startfile(str(APP_DIR / path.lstrip("/")))
+            self.send_json({"ok": True})
+        except Exception as e:
+            self.send_json({"error": str(e)}, 400)
 
     def _handle_restart(self):
         self.send_json({"error": "Update only supported in compiled exe", "devMode": True}, 400)

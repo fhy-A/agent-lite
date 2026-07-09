@@ -5419,6 +5419,34 @@ async function resolvePickedFile(file) {
 
 
 
+let _fileCtxMenu = null;
+function showFileContextMenu(x, y, path, type) {
+  if (_fileCtxMenu) _fileCtxMenu.remove();
+  const menu = document.createElement("div");
+  menu.className = "file-ctx-menu";
+  menu.style.left = x + "px";
+  menu.style.top = y + "px";
+  if (type === "file") {
+    menu.innerHTML = `<button data-action="preview">${t("filePreview") || "预览"}</button>
+      <button data-action="open">用默认程序打开</button>`;
+  } else {
+    menu.innerHTML = `<button data-action="open-dir">打开文件夹</button>`;
+  }
+  menu.querySelectorAll("button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const action = btn.dataset.action;
+      if (action === "preview") loadFile(path);
+      else if (action === "open") { fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) }).catch(() => showToast("打开失败", "error")); }
+      else if (action === "open-dir") loadFiles(path);
+      menu.remove();
+    });
+  });
+  document.body.appendChild(menu);
+  _fileCtxMenu = menu;
+  const close = (e) => { if (!menu.contains(e.target)) { menu.remove(); _fileCtxMenu = null; document.removeEventListener("click", close); } };
+  setTimeout(() => document.addEventListener("click", close), 0);
+}
+
 function renderFileTree() {
 
   if (state._noProject) {
@@ -5488,21 +5516,17 @@ function renderFileTree() {
 
 
   document.querySelectorAll(".file-item").forEach((btn) => {
-
     btn.addEventListener("click", () => {
-
       if (btn.dataset.type === "dir") {
-
         loadFiles(btn.dataset.path);
-
       } else {
-
         loadFile(btn.dataset.path);
-
       }
-
     });
-
+    btn.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      showFileContextMenu(e.clientX, e.clientY, btn.dataset.path, btn.dataset.type);
+    });
   });
 
 

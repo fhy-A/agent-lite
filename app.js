@@ -5428,12 +5428,17 @@ function showFileContextMenu(x, y, path, type) {
   const mw = 180, mh = 130;
   menu.style.left = Math.min(x, window.innerWidth - mw) + "px";
   menu.style.top = Math.min(y, window.innerHeight - mh) + "px";
+  const fname = (path || "").split("/").pop() || "";
   if (type === "file") {
-    const fname = (path || "").split("/").pop() || "";
     menu.innerHTML = `<div class="file-ctx-name">${escapeHtml(fname)}</div>
       <button data-action="open">用默认程序打开</button>
       <button data-action="copy-path">复制路径</button>
       <button data-action="reveal">在文件夹中显示</button>`;
+  } else {
+    menu.innerHTML = `<div class="file-ctx-name">${escapeHtml(fname)}</div>
+      <button data-action="explore">用资源管理器打开</button>
+      <button data-action="copy-path">复制路径</button>
+      <button data-action="terminal">在此打开终端</button>`;
   }
   menu.querySelectorAll("button").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -5446,6 +5451,10 @@ function showFileContextMenu(x, y, path, type) {
         navigator.clipboard.writeText(fullPath).then(() => showToast("已复制路径", "warning")).catch(() => showToast("复制失败", "error"));
       } else if (action === "reveal") {
         fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, reveal: true }) }).catch(() => showToast("打开失败", "error"));
+      } else if (action === "explore") {
+        fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, reveal: true }) }).catch(() => showToast("打开失败", "error"));
+      } else if (action === "terminal") {
+        fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, terminal: true }) }).catch(() => showToast("打开失败", "error"));
       }
       menu.remove();
     });

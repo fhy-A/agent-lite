@@ -1054,6 +1054,7 @@ function parseKeyLines(raw) {
   if (lines.length === 0) return [{ name: "", key: "", enabled: true }];
 
   const seen = new Set();
+  const duplicates = [];
   const result = [];
   for (const line of lines) {
 
@@ -1063,7 +1064,7 @@ function parseKeyLines(raw) {
     const name = idx > 0 ? line.slice(0, idx).trim() : "";
 
     const key = idx > 0 ? line.slice(idx + 1).trim() : line.trim();
-    if (seen.has(key)) continue;  // skip duplicate
+    if (seen.has(key)) { duplicates.push(name || key); continue; }  // skip duplicate
     seen.add(key);
 
     const existing = cfg.find((c) => c.key === key);
@@ -1071,6 +1072,7 @@ function parseKeyLines(raw) {
     result.push({ name, key, enabled: existing ? existing.enabled !== false : true });
 
   }
+  if (duplicates.length > 0) showToast(`已忽略 ${duplicates.length} 个重复的 Key`, "warning");
   if (result.length === 0) return [{ name: "", key: "", enabled: true }];
   return result;
 
@@ -9571,11 +9573,8 @@ function renderModelsPanel(container) {
   const connectBtn = document.getElementById("settingsConnectPlatform");
   if (connectBtn) {
     connectBtn.addEventListener("click", () => {
-      const auth = getPlatformAuth();
-      if (!auth) {
-        const platformUrl = "http://localhost:3001";
-        window.open(`${platformUrl}/agent-lite/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
-        showToast("Login first, then click again to sync keys");
+      if (!getPlatformAuth()) {
+        showToast("请先登录", "warning");
         return;
       }
       syncKeysFromPlatform();
@@ -10046,7 +10045,7 @@ function renderAccountPanel(container) {
       </div>`;
     document.getElementById("accountLogout").addEventListener("click", () => {
       clearPlatformAuth();
-      showToast("Logged out");
+      showToast("已退出登录", "warning");
       renderAccountPanel(container);
     });
   } else {
@@ -10695,8 +10694,7 @@ async function checkAgentLiteCallback() {
   if (!token || !userId) return;
   history.replaceState(null, "", "/");
   savePlatformAuth({ token, userId, username: decodeURIComponent(username || "") });
-  showToast(`✅ Logged in as ${decodeURIComponent(username || "")}`);
-  // Refresh settings if open
+  showToast(`已登录: ${decodeURIComponent(username || "")}`, "warning");
   const detail = document.getElementById("settingsDetail");
   if (detail && detail.children.length > 0) renderModelsPanel(detail);
 }
@@ -10720,7 +10718,19 @@ async function syncKeysFromPlatform() {
     if (tokens.length === 0) { showToast("No API keys found on platform"); return; }
     showKeySyncModal(tokens, fullKeys);
   } catch (e) {
-    showToast("Key sync failed: " + e.message);
+    console.error("syncKeysFromPlatform:", e);
+    const msg = e.message || String(e);
+    if (msg.includes("401") || msg.includes("Unauthorized") || msg.includes("502")) {
+      clearPlatformAuth();
+      showToast("登录已过期，请重新登录", "error");
+      // Re-open connect page after a short delay
+      setTimeout(() => {
+        const platformUrl = "http://localhost:3001";
+        window.open(`${platformUrl}/agent-lite/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
+      }, 1000);
+    } else {
+      showToast(`同步失败: ${msg}`, "error");
+    }
   } finally {
     if (connectBtn) { connectBtn.disabled = false; connectBtn.textContent = "同步中转站 API Key"; }
   }
@@ -10762,9 +10772,12 @@ function showKeySyncModal(tokens, fullKeys) {
 
   overlay.querySelector(".key-sync-close").addEventListener("click", () => overlay.remove());
   overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
-  overlay.querySelector("#keySyncCopyAll").addEventListener("click", () => {
-    navigator.clipboard.writeText(allText.trim()).then(() => showToast("Copied all keys")).catch(() => showToast("Copy failed"));
-  });
+  const copyAllBtn = overlay.querySelector("#keySyncCopyAll");
+  if (copyAllBtn) {
+    copyAllBtn.addEventListener("click", () => {
+      navigator.clipboard.writeText(allText.trim()).then(() => showToast("Copied all keys")).catch(() => showToast("Copy failed"));
+    });
+  }
   overlay.querySelectorAll(".key-copy-one").forEach(btn => {
     btn.addEventListener("click", () => {
       navigator.clipboard.writeText(btn.dataset.line).then(() => { btn.textContent = "已复制"; setTimeout(() => { btn.textContent = "复制"; }, 1500); }).catch(() => showToast("Copy failed"));

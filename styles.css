@@ -509,8 +509,8 @@ input:focus, select:focus, textarea:focus {
 .file-search:focus {
   border-color: var(--accent);
 }
-.file-search-row { display: flex; gap: 4px; margin: 6px 0 4px; padding: 0 6px 0 10px; overflow: hidden; }
-.file-search-row .file-search { margin: 0; flex: 1; }
+.file-search-row { display: flex; gap: 4px; margin: 6px 0 4px; padding: 0 4px 0 10px; overflow: hidden; }
+.file-search-row .file-search { margin: 0; flex: 1; min-width: 0; }
 .file-sort-btn { display: flex; align-items: center; gap: 3px; height: 26px; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-3); color: var(--text); font-size: 11px; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
 .file-sort-arrow-icon { font-size: 10px; line-height: 1; }
 

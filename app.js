@@ -3815,8 +3815,8 @@ function renderUserProjection(msg, index) {
   const imageArticles = images.map((img, i) => {
     // Support both old base64 format and new path-based format
     const src = img.path ? `/api/file?path=${encodeURIComponent(img.path)}&raw=1` : `data:${img.mime || "image/png"};base64,${img.base64}`;
-    // Re-scroll after server-hosted image loads (they load async, may expand content after scroll)
-    const onLoad = img.path ? ` onload="setTimeout(()=>this.scrollIntoView({behavior:'smooth',block:'end'}),50)"` : "";
+    // Re-scroll after server-hosted image loads (scroll to actual bottom of chat)
+    const onLoad = img.path ? ` onload="const el=document.querySelector('.messages');if(el)el.scrollTop=el.scrollHeight"` : "";
     return `<article class="msg user msg-image" data-msg-index="${index}" data-img="${i}">
       <div class="bubble bubble-img">
         <img class="msg-img msg-img-clickable" src="${src}" alt="${escapeHtml(img.name || "image")}"${onLoad} onclick="showImageOverlay(this.src)" title="Click to enlarge">

@@ -510,10 +510,10 @@ input:focus, select:focus, textarea:focus {
   border-color: var(--accent);
 }
 .file-search-row { display: flex; gap: 4px; margin: 6px 10px 4px; padding-right: 0; }
-.file-sort-order { margin-right: 4px; }
 .file-search-row .file-search { margin: 0; flex: 1; }
-.file-sort { height: 26px; padding: 0 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-3); color: var(--text); font-size: 11px; cursor: pointer; min-width: 48px; }
-.file-sort-order { width: 26px; height: 26px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-3); color: var(--text); font-size: 12px; cursor: pointer; line-height: 1; }
+.file-sort-combo { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin-right: 4px; }
+.file-sort { height: 26px; padding: 0 2px; border: 0; border-radius: 0; background: var(--panel-3); color: var(--text); font-size: 11px; cursor: pointer; min-width: auto; }
+.file-sort-arrow { width: 22px; height: 26px; padding: 0; border: 0; border-left: 1px solid var(--line); background: var(--panel-3); color: var(--text); font-size: 12px; cursor: pointer; line-height: 1; }
 
 .file-search::placeholder {
   color: var(--faint);

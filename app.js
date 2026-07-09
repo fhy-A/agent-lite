@@ -289,6 +289,7 @@ const els = {
   fileSearch: document.getElementById("fileSearch"),
   fileSort: document.getElementById("fileSort"),
   fileSortOrder: document.getElementById("fileSortOrder"),
+  fileSortArrow: document.getElementById("fileSortOrder"),
 
   previewPane: document.getElementById("previewPane"),
 

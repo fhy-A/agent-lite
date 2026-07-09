@@ -1,36 +1,37 @@
-## v0.4.1: Security Overhaul & Message Rendering Refactor
+## v0.4.2: File Tree, Image Storage & Platform Integration
 
-3 commits since v0.4.0, focused on security hardening and a cleaner chat experience.
+50+ commits since v0.4.1, focused on UX polish, image handling, and New API platform login.
 
-### Security Policy Overhaul
-- **Denylist-only model**: Replaced whitelist with comprehensive denylist covering 8 danger categories (file destruction, disk ops, system destruction, permission changes, registry, services, security tampering, destructive git)
-- **Compound command detection**: `&&`, `||`, `;`, `|` parsed into subcommands and checked independently
-- **Backtick prohibited**: Prevents command substitution and PowerShell escape sequences
-- **pip install** no longer blocked by chaining detection
+### New API Platform Integration
+- **Login with platform account**: settings → 账户 → login via New API OAuth-like flow
+- **Key sync**: fetch all API keys from platform, bulk copy (space or colon separated)
+- **Account panel**: display username, logout
 
-### Message Rendering Refactored (Flat Projection)
-- Only 4 content types in chat: user messages, thought process, edit proposals, final answers
-- Tool cards hidden from main chat; details consolidated in tool log panel
-- Thought process shown as continuous text before final answer (cleaner than collapsible cards)
-- Timeline navigation restored (visible only with enough user messages)
-- Per-task cumulative usage stats at answer bottom
-- Thinking indicator: blue dot + timer during model thinking
-- Preview copy button restored to icon style
-- Reduced flicker by skipping re-render when visible content unchanged
+### File Tree Overhaul
+- **Extension color-coding**: JS=orange, Python=blue, CSS=purple, images=pink, etc.
+- **Sort controls**: type/time sort with asc/desc toggle, persisted across sessions
+- **Right-click context menu**: open with default app, copy full path, reveal in Explorer
+- **Modified date display**: file tree shows last modified date
+- **Tighter spacing**: smaller font (12px name, 10px size), no file size display
+- **@ button**: hover to reveal, overlays without reserving space
+- Sidebar minimum width increased to 220px
 
-### New Skills
-- **image-generation**: matplotlib + Pillow chart templates (bar/line/pie/3D/dashboard/watermark/stitch)
-- **document-design**: 12 color schemes + docx/pptx/xlsx/markdown beautification templates
+### Image Handling
+- Images stored as files in `data/attachments/` instead of inline base64 (JSON size reduced 100x)
+- Images rendered as separate messages, not mixed with text
+- Click-to-preview: click any chat image to open full-size overlay (click or Esc to close)
+- Removed 6-image limit
+- Auto-scroll to bottom after image loads
 
-### Error Handling & Failure Detection
-- All empty/missing parameter errors now include actionable guidance (example syntax, path hints)
-- 3 consecutive NameError → force break loop with session-save suggestion
-- Added IndentationError, KeyError, ValueError, IndexError, ImportError to runtime error detection
-- AbortError: drained queued messages into session instead of discarding
-- Path resolution: fallback to output/ directory instead of raising error
+### Bug Fixes
+- `detectLanguage()` crash on image messages
+- i18n: 6 translation keys restored to Chinese
+- Key deduplication + colon/space format support
+- Model list auto-refresh on panel open, cleared when no keys
+- Chat auto-scroll after message render
+- System prompt: conciseness + per-subtask summary rules
 
-### UI Improvements
-- Esc key: pauses agent run, skipped when typing in inputs
-- Composer scrollbar: 6px thin with subtle color
-- Clickable file paths in chat: inline code opens preview panel
-- Session file copy button: fixed visual feedback
+### UX Improvements
+- File tree sort button (auto-width for i18n, left-click toggle / right-click cycle)
+- Context menu stays within viewport
+- Folder context menu: explore, copy path, open terminal (PowerShell)

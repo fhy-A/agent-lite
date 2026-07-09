@@ -5452,7 +5452,7 @@ function showFileContextMenu(x, y, path, type) {
       } else if (action === "reveal") {
         fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, reveal: true }) }).catch(() => showToast("打开失败", "error"));
       } else if (action === "explore") {
-        fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, reveal: true }) }).catch(() => showToast("打开失败", "error"));
+        fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) }).catch(() => showToast("打开失败", "error"));
       } else if (action === "terminal") {
         fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, terminal: true }) }).catch(() => showToast("打开失败", "error"));
       }

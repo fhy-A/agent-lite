@@ -2621,7 +2621,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         full = (project_root / clean).resolve()
         try:
             if body.get("terminal"):
-                _sp.Popen(["start", "cmd", "/K", f"cd /d {full}"], shell=True, cwd=str(full))
+                _sp.Popen(["powershell", "-NoExit", "-Command", f"Set-Location '{full}'"], cwd=str(full))
             elif body.get("reveal"):
                 _os.startfile(str(full.parent))
             else:

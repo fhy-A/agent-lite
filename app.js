@@ -287,9 +287,7 @@ const els = {
   fileTree: document.getElementById("fileTree"),
 
   fileSearch: document.getElementById("fileSearch"),
-  fileSort: document.getElementById("fileSort"),
-  fileSortOrder: document.getElementById("fileSortOrder"),
-  fileSortArrow: document.getElementById("fileSortOrder"),
+  fileSortBtn: document.getElementById("fileSortBtn"),
 
   previewPane: document.getElementById("previewPane"),
 
@@ -5450,8 +5448,13 @@ function renderFileTree() {
   const filtered = query ? items.filter((item) => item.name.toLowerCase().includes(query)) : items;
 
   // Sort
-  const sortMode = els.fileSort?.value || "type";
-  const asc = els.fileSortOrder?.dataset.dir !== "desc";
+  const sortMode = state._fileSortMode || "type";
+  const asc = state._fileSortAsc !== false;
+  if (els.fileSortBtn) {
+    const labels = { default: "默认", type: "类型", time: "时间" };
+    document.getElementById("fileSortLabel").textContent = labels[sortMode] || "类型";
+    document.getElementById("fileSortArrow").textContent = asc ? "↑" : "↓";
+  }
   const sorted = [...filtered];
   if (sortMode === "type") {
     sorted.sort((a, b) => {
@@ -9290,13 +9293,26 @@ els.refreshFiles.addEventListener("click", (e) => { e.stopPropagation(); loadFil
 els.newFolderBtn.addEventListener("click", (e) => { e.stopPropagation(); cwdNewFolderAction(); });
 
 els.fileSearch.addEventListener("input", () => renderFileTree());
-if (els.fileSort) els.fileSort.addEventListener("change", () => renderFileTree());
-if (els.fileSortOrder) els.fileSortOrder.addEventListener("click", () => {
-  const cur = els.fileSortOrder.dataset.dir;
-  els.fileSortOrder.dataset.dir = cur === "desc" ? "asc" : "desc";
-  els.fileSortOrder.textContent = cur === "desc" ? "↑" : "↓";
-  renderFileTree();
-});
+// Single sort button: left click cycles mode, right click or arrow click toggles direction
+if (els.fileSortBtn) {
+  els.fileSortBtn.addEventListener("click", (e) => {
+    const rect = els.fileSortBtn.getBoundingClientRect();
+    const isArrow = e.clientX > rect.right - 26;
+    if (isArrow) {
+      state._fileSortAsc = state._fileSortAsc === false;
+      renderFileTree();
+    }
+  });
+  els.fileSortBtn.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    const modes = ["type", "time", "default"];
+    const cur = state._fileSortMode || "type";
+    const idx = modes.indexOf(cur);
+    state._fileSortMode = modes[(idx + 1) % 3];
+    state._fileSortAsc = true;
+    renderFileTree();
+  });
+}
 
 els.goUp.addEventListener("click", (e) => { e.stopPropagation(); goUpDir(); });
 

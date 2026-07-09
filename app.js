@@ -2099,8 +2099,13 @@ function getApiKeys() {
 
 
 
-function detectLanguage(text) {
-  if (!text) return "English";
+function detectLanguage(input) {
+  // Handle array content (e.g. [{type: "text", text: "..."}, {type: "image_url", ...}])
+  let text = input;
+  if (Array.isArray(input)) {
+    text = input.filter(b => b.type === "text").map(b => b.text || "").join(" ");
+  }
+  if (!text || typeof text !== "string") return "English";
   let cjk = 0, hiragana = 0, katakana = 0, hangul = 0, cyrillic = 0;
   for (const ch of text) {
     const code = ch.codePointAt(0);

@@ -5977,8 +5977,6 @@ function updateSendButtonState() {
 
 function addImage(name, base64, mime) {
 
-  if (state.attachedImages.length >= 6) return;
-
   state.attachedImages.push({ name, base64, mime: mime || "image/png" });
 
   renderImageThumbs();

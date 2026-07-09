@@ -5466,29 +5466,20 @@ function renderFileTree() {
     sorted.sort((a, b) => { if (a.type !== b.type) return (a.type === "dir" ? -1 : 1) * (asc ? 1 : -1); return a.name.localeCompare(b.name) * (asc ? 1 : -1); });
   }
 
-  els.fileTree.innerHTML = sorted.length
-
-    ? sorted.map((item) => `
-
-    ? filtered.map((item) => `
-
-      <div class="file-item-row ${item.path === state.previewPath ? "active" : ""}">
-
-        ${(() => { const ext = item.type === "dir" ? "" : ((item.name || "").split(".").pop() || "").toLowerCase().slice(0, 6); return `<button class="file-item ${item.type} ext-${ext}" type="button" data-path="${escapeHtml(item.path)}" data-type="${item.type}">`; })()}
-
-          <span class="file-name">${item.type === "dir" ? "📁 " : ""}${escapeHtml(item.name)}</span>
-
-          <small>${item.type === "dir" ? "" : formatSize(item.size || 0)}</small>
-
-        </button>
-
-        <button class="file-at-btn" type="button" data-path="${escapeHtml(item.path)}" title="${t("fileAtTitle")}">@</button>
-
-      </div>
-
-    `).join("")
-
+  const htmlParts = sorted.length
+    ? sorted.map((item) => {
+        const ext = item.type === "dir" ? "" : ((item.name || "").split(".").pop() || "").toLowerCase().slice(0, 6);
+        const extClass = ext ? ` ext-${ext}` : "";
+        return `<div class="file-item-row ${item.path === state.previewPath ? "active" : ""}">
+          <button class="file-item ${item.type}${extClass}" type="button" data-path="${escapeHtml(item.path)}" data-type="${item.type}">
+            <span class="file-name">${item.type === "dir" ? "📁 " : ""}${escapeHtml(item.name)}</span>
+            <small>${item.type === "dir" ? "" : formatSize(item.size || 0)}</small>
+          </button>
+          <button class="file-at-btn" type="button" data-path="${escapeHtml(item.path)}" title="${t("fileAtTitle")}">@</button>
+        </div>`;
+      }).join("")
     : `<div class="muted-line" style="padding:8px;">${query ? "无匹配文件" : "该目录为空"}</div>`;
+  els.fileTree.innerHTML = htmlParts;
 
 
 

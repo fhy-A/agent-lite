@@ -5140,7 +5140,7 @@ function applyPreviewWidth(width = state.previewWidth) {
 
 function applySidebarWidth(width = state.sidebarWidth) {
 
-  const next = Math.min(Math.max(Number(width) || 264, 200), 480);
+  const next = Math.min(Math.max(Number(width) || 264, 220), 480);
 
   state.sidebarWidth = next;
 

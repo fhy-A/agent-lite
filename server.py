@@ -2614,13 +2614,13 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         if not path:
             self.send_json({"error": "Missing path"}, 400)
             return
-        import os as _os, subprocess as _sp
-        full = (APP_DIR / path.lstrip("/")).resolve()
+        import os as _os
+        clean = path.replace("\\", "/").lstrip("/")
+        config = load_config()
+        project_root = Path(config.get("projectRoot") or config.get("userHome") or "").expanduser().resolve()
+        full = (project_root / clean).resolve()
         try:
-            if body.get("reveal"):
-                _sp.Popen(["explorer", "/select,", str(full)])
-            else:
-                _os.startfile(str(full))
+            _os.startfile(str(full))
             self.send_json({"ok": True})
         except Exception as e:
             self.send_json({"error": str(e)}, 400)

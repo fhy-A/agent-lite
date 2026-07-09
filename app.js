@@ -5427,15 +5427,22 @@ function showFileContextMenu(x, y, path, type) {
   menu.style.left = x + "px";
   menu.style.top = y + "px";
   if (type === "file") {
-    menu.innerHTML = `<button data-action="open">用默认程序打开</button>`;
+    const fname = (path || "").split("/").pop() || "";
+    menu.innerHTML = `<div class="file-ctx-name">${escapeHtml(fname)}</div>
+      <button data-action="open">用默认程序打开</button>
+      <button data-action="copy-path">复制路径</button>
+      <button data-action="reveal">在文件夹中显示</button>`;
   }
-  // Future: add more options here (type === "dir" etc.)
   menu.querySelectorAll("button").forEach(btn => {
     btn.addEventListener("click", () => {
       const action = btn.dataset.action;
-      if (action === "preview") loadFile(path);
-      else if (action === "open") { fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) }).catch(() => showToast("打开失败", "error")); }
-      else if (action === "open-dir") loadFiles(path);
+      if (action === "open") {
+        fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) }).catch(() => showToast("打开失败", "error"));
+      } else if (action === "copy-path") {
+        navigator.clipboard.writeText(path).then(() => showToast("已复制路径", "warning")).catch(() => showToast("复制失败", "error"));
+      } else if (action === "reveal") {
+        fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, reveal: true }) }).catch(() => showToast("打开失败", "error"));
+      }
       menu.remove();
     });
   });

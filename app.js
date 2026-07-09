@@ -9543,6 +9543,8 @@ function renderModelsPanel(container) {
 
       </div>
 
+      <button id="settingsConnectPlatform" class="key-connect-btn" type="button">🔗 登录平台账号</button>
+
     </label>
 
     <div class="model-list-header"><span>${t("availableModels")} <button id="settingsRefreshModels" class="icon-refresh-btn" type="button" title="${t("refreshModels")}"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M1 7a6 6 0 0111.1-3.5M13 7a6 6 0 01-11.1 3.5" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M12 1v3H9M2 13v-3h3" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button></span></div>
@@ -9558,6 +9560,15 @@ function renderModelsPanel(container) {
     </div>
 
   `;
+
+  // Connect to platform button
+  const connectBtn = document.getElementById("settingsConnectPlatform");
+  if (connectBtn) {
+    connectBtn.addEventListener("click", () => {
+      const baseUrl = document.getElementById("settingsBaseUrl").value.trim() || "http://localhost:3000";
+      window.open(`${baseUrl}/agent-lite/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
+    });
+  }
 
   document.getElementById("settingsBaseUrl").addEventListener("change", () => { els.baseUrl.value = document.getElementById("settingsBaseUrl").value; saveLocalSettings(); });
 
@@ -10624,7 +10635,124 @@ els.newChat.addEventListener("click", () => {
 
 els.exportChat.addEventListener("click", exportMarkdown);
 
+// ── Agent Lite × New API Key Sync ──
 
+async function checkAgentLiteCallback() {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get("agent_lite_token");
+  const userId = params.get("user_id");
+  const username = params.get("username");
+  if (!token || !userId) return;
+  // Clean URL immediately
+  history.replaceState(null, "", "/");
+  await syncKeysFromPlatform(token, userId, decodeURIComponent(username || ""));
+}
+
+async function syncKeysFromPlatform(token, userId, username) {
+  const baseUrl = els.baseUrl.value.trim() || "http://localhost:3000";
+  try {
+    // Step 1: fetch all tokens (masked, need IDs)
+    const listResp = await fetch(`${baseUrl}/api/token/?p=0&size=100`, {
+      headers: { "Authorization": token, "New-Api-User": userId, "Content-Type": "application/json" }
+    });
+    if (!listResp.ok) throw new Error(`Failed to list tokens (${listResp.status})`);
+    const listData = await listResp.json();
+    const tokens = listData.data || [];
+    if (tokens.length === 0) { showToast("No API keys found on platform"); return; }
+
+    // Step 2: reveal full keys for all token IDs
+    const ids = tokens.map(t => t.id);
+    const keyResp = await fetch(`${baseUrl}/api/token/batch/keys`, {
+      method: "POST",
+      headers: { "Authorization": token, "New-Api-User": userId, "Content-Type": "application/json" },
+      body: JSON.stringify({ ids })
+    });
+    if (!keyResp.ok) throw new Error(`Failed to reveal keys (${keyResp.status})`);
+    const keyData = await keyResp.json();
+    const fullKeys = keyData.data?.keys || {};
+
+    // Step 3: show selection modal
+    showKeySyncModal(tokens, fullKeys, username, token, userId);
+  } catch (e) {
+    showToast("Key sync failed: " + e.message);
+    console.error("syncKeysFromPlatform:", e);
+  }
+}
+
+function showKeySyncModal(tokens, fullKeys, username, token, userId) {
+  // Remove existing modal if any
+  const old = document.getElementById("keySyncOverlay");
+  if (old) old.remove();
+
+  const existing = parseKeyLines(els.apiKey.value).map(e => e.key.trim()).filter(Boolean);
+  const rows = tokens.map(t => {
+    const fullKey = fullKeys[String(t.id)] || "";
+    const already = existing.includes(fullKey);
+    return `<label class="key-sync-row${already ? " key-sync-exists" : ""}">
+      <input type="checkbox" data-key="${escapeHtml(fullKey)}" data-name="${escapeHtml(t.name || "")}" ${already ? "checked disabled" : ""} />
+      <span class="key-sync-name">${escapeHtml(t.name || "Unnamed")}</span>
+      <span class="key-sync-key">${escapeHtml(fullKey ? fullKey.slice(0,12)+"…"+fullKey.slice(-4) : t.key || "")}</span>
+      ${already ? '<span class="key-sync-badge">已添加</span>' : ''}
+    </label>`;
+  }).join("");
+
+  const overlay = document.createElement("div");
+  overlay.id = "keySyncOverlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<div class="modal-card" style="width:520px;max-height:70vh;display:flex;flex-direction:column">
+    <header>
+      <h3>同步平台密钥</h3>
+      <button class="icon-btn key-sync-close" type="button">&times;</button>
+    </header>
+    <div style="margin-bottom:12px;font-size:13px;color:var(--muted)">已登录：<strong>${escapeHtml(username)}</strong> · 共 ${tokens.length} 个密钥</div>
+    <div class="key-sync-list">${rows}</div>
+    <div class="panel-actions" style="margin-top:12px">
+      <span><label><input type="checkbox" id="keySyncSelectAll" checked /> 全选</label></span>
+      <button id="keySyncSave" class="mini-btn primary" type="button">确认同步</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+
+  const closeBtn = overlay.querySelector(".key-sync-close");
+  closeBtn.addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+
+  const selectAll = overlay.querySelector("#keySyncSelectAll");
+  selectAll.addEventListener("change", () => {
+    overlay.querySelectorAll("input[type=checkbox]:not([disabled])").forEach(cb => cb.checked = selectAll.checked);
+  });
+
+  overlay.querySelector("#keySyncSave").addEventListener("click", () => {
+    const checked = overlay.querySelectorAll("input[type=checkbox]:checked:not([disabled])");
+    const newKeys = [];
+    checked.forEach(cb => {
+      newKeys.push({ name: cb.dataset.name || "New API", key: cb.dataset.key });
+    });
+    if (newKeys.length === 0) { overlay.remove(); return; }
+
+    // Merge with existing keys (avoid duplicates by key value)
+    const existingKeys = parseKeyLines(els.apiKey.value);
+    const existingKeySet = new Set(existingKeys.map(e => e.key.trim()).filter(Boolean));
+    const merged = [...existingKeys];
+    for (const nk of newKeys) {
+      if (!existingKeySet.has(nk.key.trim())) {
+        merged.push(nk);
+        existingKeySet.add(nk.key.trim());
+      }
+    }
+    els.apiKey.value = serializeKeys(merged);
+    saveKeyConfig(merged.map((e, i) => ({ name: e.name, key: e.key, enabled: true })));
+    saveLocalSettings();
+    overlay.remove();
+    showToast(`Synced ${newKeys.length} key(s) from ${username}`);
+    if (els.baseUrl.value.trim()) refreshModels();
+    // Refresh settings panel if open
+    const detail = document.getElementById("settingsDetail");
+    if (detail && detail.children.length > 0) renderModelsPanel(detail);
+  });
+}
+
+// ── End Key Sync ──
 
 async function init() {
 
@@ -10697,6 +10825,9 @@ async function init() {
 
   // Show onboarding if first launch or version changed
   if (shouldShowOnboarding()) { showOnboarding(); }
+
+  // Check for Agent Lite callback from New API
+  checkAgentLiteCallback();
 
   await refreshSessions();
 

@@ -572,8 +572,10 @@ input:focus, select:focus, textarea:focus {
   color: var(--muted); background: var(--panel);
   cursor: pointer;
   z-index: 1;
+  opacity: 0; transition: opacity .12s;
 }
-.file-at-btn:hover { color: var(--accent); background: var(--panel-2); }
+.file-at-btn:hover { color: var(--accent); background: var(--panel-2); opacity: 1; }
+.file-item-row:hover .file-at-btn { opacity: 1; }
 
 .file-name {
   overflow: hidden;

@@ -5473,7 +5473,7 @@ function renderFileTree() {
         return `<div class="file-item-row ${item.path === state.previewPath ? "active" : ""}">
           <button class="file-item ${item.type}${extClass}" type="button" data-path="${escapeHtml(item.path)}" data-type="${item.type}">
             <span class="file-name">${item.type === "dir" ? "📁 " : ""}${escapeHtml(item.name)}</span>
-            <small>${item.type === "dir" ? "" : formatSize(item.size || 0)}${item.updatedAt ? ` · ${item.updatedAt.slice(0,10)}` : ""}</small>
+            <small>${item.updatedAt ? item.updatedAt.slice(0,10) : ""}</small>
           </button>
           <button class="file-at-btn" type="button" data-path="${escapeHtml(item.path)}" title="${t("fileAtTitle")}">@</button>
         </div>`;

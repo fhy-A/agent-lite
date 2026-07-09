@@ -5424,8 +5424,10 @@ function showFileContextMenu(x, y, path, type) {
   if (_fileCtxMenu) _fileCtxMenu.remove();
   const menu = document.createElement("div");
   menu.className = "file-ctx-menu";
-  menu.style.left = x + "px";
-  menu.style.top = y + "px";
+  // Position within viewport
+  const mw = 180, mh = 130;
+  menu.style.left = Math.min(x, window.innerWidth - mw) + "px";
+  menu.style.top = Math.min(y, window.innerHeight - mh) + "px";
   if (type === "file") {
     const fname = (path || "").split("/").pop() || "";
     menu.innerHTML = `<div class="file-ctx-name">${escapeHtml(fname)}</div>

@@ -560,7 +560,7 @@ input:focus, select:focus, textarea:focus {
 .file-item-row.active .file-item {
   color: var(--accent);
 }
-.file-item small { text-align: right; }
+.file-item small { text-align: right; flex: 0 0 auto; margin-left: auto; }
 
 .file-at-btn {
   position: absolute; right: 2px; top: 50%; transform: translateY(-50%);

@@ -1055,8 +1055,9 @@ function parseKeyLines(raw) {
 
   return lines.map((line) => {
 
-    const idx = line.indexOf(":");
-
+    // Support both "name: key" and "name key" formats
+    let idx = line.indexOf(":");
+    if (idx === -1) idx = line.indexOf(" ");  // fallback to space
     const name = idx > 0 ? line.slice(0, idx).trim() : "";
 
     const key = idx > 0 ? line.slice(idx + 1).trim() : line.trim();
@@ -1611,7 +1612,7 @@ const I18N = {
     addKey: "+ 添加 Key", edit: "编辑", editing: "编辑中", models: "模型", baseUrl: "Base URL", apiKeys: "API Keys",
     temperature: "Temperature", maxTokens: "Max Tokens", memory: "记忆", newMemory: "新建记忆",
     cancel: "取消", save: "保存", skills: "技能", system: "系统提示词", deleteSkill: "删除 Skill",
-    keyBulkPlaceholder: "每行一个 Key，格式：名称 Key值（空格分隔）。可以粘贴多个；空行自动跳过。",
+    keyBulkPlaceholder: "每行一个 Key，格式：名称 Key值（空格或者冒号分隔）。可以粘贴多个；空行自动跳过。",
     selectSkillHint: "选择 Skill 查看详情",
     statInputTitle: "输入 token", statOutputTitle: "输出 token", statCacheTitle: "缓存 token",
     statContextTitle: "上下文占比 · 超95%自动压缩", viewSessionInfo: "查看 Session Info",
@@ -1744,7 +1745,7 @@ const I18N = {
     addKey: "+ Add Key", edit: "Edit", editing: "Editing", models: "Models", baseUrl: "Base URL", apiKeys: "API Keys",
     temperature: "Temperature", maxTokens: "Max Tokens", memory: "Memory", newMemory: "New Memory",
     cancel: "Cancel", save: "Save", skills: "Skills", system: "System Prompt", deleteSkill: "Delete Skill",
-    keyBulkPlaceholder: "One key per line, format: Name KeyValue (space separated). Paste multiple; blank lines skipped.",
+    keyBulkPlaceholder: "One key per line, format: Name KeyValue (space or colon separated). Paste multiple; blank lines skipped.",
     selectSkillHint: "Select a Skill to view details",
     statInputTitle: "Input tokens", statOutputTitle: "Output tokens", statCacheTitle: "Cache tokens",
     statContextTitle: "Context usage · auto-compact above 95%", viewSessionInfo: "View Session Info",
@@ -10726,7 +10727,7 @@ function showKeySyncModal(tokens, fullKeys) {
   let allText = "";
   const rows = tokens.map(t => {
     const key = fullKeys[String(t.id)] || t.key || "";
-    const line = `${t.name || "Unnamed"}: ${key}`;
+    const line = `${t.name || "Unnamed"} ${key}`;
     allText += line + "\n";
     return `<div class="key-sync-row">
       <span class="key-sync-name">${escapeHtml(t.name || "Unnamed")}</span>

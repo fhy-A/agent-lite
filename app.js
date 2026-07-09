@@ -1049,11 +1049,13 @@ function parseKeyLines(raw) {
 
   const cfg = loadKeyConfig();
 
-  const lines = raw.split("\n").map((l) => l.trim());
+  const lines = raw.split("\n").map((l) => l.trim()).filter(l => l);
 
-  if (lines.length === 1 && !lines[0]) return [{ name: "", key: "", enabled: true }];
+  if (lines.length === 0) return [{ name: "", key: "", enabled: true }];
 
-  return lines.map((line) => {
+  const seen = new Set();
+  const result = [];
+  for (const line of lines) {
 
     // Support both "name: key" and "name key" formats
     let idx = line.indexOf(":");
@@ -1061,12 +1063,16 @@ function parseKeyLines(raw) {
     const name = idx > 0 ? line.slice(0, idx).trim() : "";
 
     const key = idx > 0 ? line.slice(idx + 1).trim() : line.trim();
+    if (seen.has(key)) continue;  // skip duplicate
+    seen.add(key);
 
     const existing = cfg.find((c) => c.key === key);
 
-    return { name, key, enabled: existing ? existing.enabled !== false : true };
+    result.push({ name, key, enabled: existing ? existing.enabled !== false : true });
 
-  });
+  }
+  if (result.length === 0) return [{ name: "", key: "", enabled: true }];
+  return result;
 
 }
 
@@ -5622,11 +5628,11 @@ async function refreshModels() {
   const keys = getApiKeys();
 
   if (keys.length === 0) {
-
+    els.modelListBox.innerHTML = "";
+    const settingsList = document.getElementById("settingsModelList");
+    if (settingsList) settingsList.innerHTML = "";
     showToast(t("enterApiKey"), "warning");
-
     return;
-
   }
 
 
@@ -5686,13 +5692,12 @@ async function refreshModels() {
 
 
   if (allModels.size === 0) {
-
+    els.modelListBox.innerHTML = "";
+    const settingsList = document.getElementById("settingsModelList");
+    if (settingsList) settingsList.innerHTML = "";
     showToast(t("noModelsFound"), "error");
-
     els.refreshModelsBtn.disabled = false;
-
     return;
-
   }
 
 
@@ -9504,7 +9509,7 @@ function switchSettingsPanel(panel) {
 
   switch (panel) {
 
-    case "models": renderModelsPanel(detail); break;
+    case "models": renderModelsPanel(detail); refreshModels().then(() => { const el = document.getElementById("settingsModelList"); if (el) el.innerHTML = els.modelListBox.innerHTML; }); break;
     case "account": renderAccountPanel(detail); break;
     case "memory": renderMemoryPanel(detail); break;
 
@@ -10724,15 +10729,20 @@ async function syncKeysFromPlatform() {
 function showKeySyncModal(tokens, fullKeys) {
   const old = document.getElementById("keySyncOverlay");
   if (old) old.remove();
-  let allText = "";
+  const existingKeys = new Set(parseKeyLines(els.apiKey.value).map(e => e.key.trim()).filter(Boolean));
+  let allText = "", newCount = 0;
   const rows = tokens.map(t => {
     const key = fullKeys[String(t.id)] || t.key || "";
-    const line = `${t.name || "Unnamed"} ${key}`;
-    allText += line + "\n";
-    return `<div class="key-sync-row">
+    const exists = existingKeys.has(key);
+    if (!exists) {
+      const line = `${t.name || "Unnamed"} ${key}`;
+      allText += line + "\n";
+      newCount++;
+    }
+    return `<div class="key-sync-row${exists ? " key-sync-exists" : ""}">
       <span class="key-sync-name">${escapeHtml(t.name || "Unnamed")}</span>
       <span class="key-sync-key">${escapeHtml(key.slice(0,12)+"…"+key.slice(-4))}</span>
-      <button class="mini-btn key-copy-one" data-line="${escapeHtml(line)}" type="button">复制</button>
+      ${exists ? '<span class="key-sync-badge">已添加</span>' : `<button class="mini-btn key-copy-one" data-line="${escapeHtml(`${t.name || "Unnamed"} ${key}`)}" type="button">复制</button>`}
     </div>`;
   }).join("");
 
@@ -10741,11 +10751,11 @@ function showKeySyncModal(tokens, fullKeys) {
   overlay.className = "modal-overlay";
   overlay.innerHTML = `<div class="modal-card" style="width:540px;max-height:70vh;display:flex;flex-direction:column">
     <header><h3>同步中转站 API Key</h3><button class="icon-btn key-sync-close" type="button">&times;</button></header>
-    <div style="margin-bottom:10px;font-size:13px;color:var(--muted)">共 ${tokens.length} 个密钥</div>
+    <div style="margin-bottom:10px;font-size:13px;color:var(--muted)">共 ${tokens.length} 个密钥${newCount > 0 && newCount < tokens.length ? `，${newCount} 个未添加` : ""}</div>
     <div class="key-sync-list">${rows}</div>
     <div class="panel-actions" style="margin-top:12px">
-      <button id="keySyncCopyAll" class="mini-btn primary" type="button">复制全部</button>
-      <span style="font-size:12px;color:var(--muted)">复制后粘贴到上方 Key 输入框</span>
+      ${newCount > 0 ? `<button id="keySyncCopyAll" class="mini-btn primary" type="button">复制未添加的 (${newCount})</button>` : ""}
+      ${tokens.length > 0 && newCount === 0 ? '<span style="font-size:12px;color:var(--muted)">所有 Key 已添加</span>' : '<span style="font-size:12px;color:var(--muted)">复制后粘贴到上方 Key 输入框</span>'}
     </div>
   </div>`;
   document.body.appendChild(overlay);

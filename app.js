@@ -3810,11 +3810,32 @@ function renderUserProjection(msg, index) {
   const text = Array.isArray(msg.content)
     ? (msg.content.find((item) => item.type === "text")?.text || "")
     : getMsgText(msg);
-  const images = (msg._images || [])
-    .map((img) => `<img class="msg-img" src="data:${img.mime};base64,${img.base64}" alt="${escapeHtml(img.name)}">`)
-    .join("");
-  if (!text && !images) return "";
-  return `<article class="msg user" data-msg-index="${index}"><div class="bubble">${renderMarkdownLite(text)}${images}</div></article>`;
+  const images = msg._images || [];
+  // Each image as separate message, clickable to open full-size overlay
+  const imageArticles = images.map((img, i) => {
+    const src = `data:${img.mime};base64,${img.base64}`;
+    return `<article class="msg user msg-image" data-msg-index="${index}" data-img="${i}">
+      <div class="bubble bubble-img">
+        <img class="msg-img msg-img-clickable" src="${src}" alt="${escapeHtml(img.name)}" onclick="showImageOverlay(this.src)" title="Click to enlarge">
+      </div>
+    </article>`;
+  }).join("");
+  if (!text && images.length === 0) return "";
+  const textArticle = text ? `<article class="msg user" data-msg-index="${index}"><div class="bubble">${renderMarkdownLite(text)}</div></article>` : "";
+  return textArticle + imageArticles;
+}
+
+function showImageOverlay(src) {
+  const old = document.getElementById("imageOverlay");
+  if (old) old.remove();
+  const overlay = document.createElement("div");
+  overlay.id = "imageOverlay";
+  overlay.className = "modal-overlay";
+  overlay.style.cursor = "zoom-out";
+  overlay.innerHTML = `<img src="${escapeHtml(src)}" style="max-width:92vw;max-height:92vh;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.5)" />`;
+  overlay.addEventListener("click", () => overlay.remove());
+  document.addEventListener("keydown", function esc(e) { if (e.key === "Escape") { overlay.remove(); document.removeEventListener("keydown", esc); } });
+  document.body.appendChild(overlay);
 }
 
 function renderThinkingProjection(items, serial) {
@@ -6010,7 +6031,7 @@ function renderImageThumbs() {
 
       <img src="data:${img.mime};base64,${img.base64}" alt="${escapeHtml(img.name)}" />
 
-      <button class="img-thumb-remove" type="button" title="${t("delete")}" data-index="${i}">?</button>
+      <button class="img-thumb-remove" type="button" title="${t("delete")}" data-index="${i}">&times;</button>
 
     </div>
 

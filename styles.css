@@ -1690,7 +1690,10 @@ input:focus, select:focus, textarea:focus {
   border-radius: 6px; margin-top: 4px;
   border: 1px solid var(--line); cursor: pointer;
 }
+.msg-img-clickable { max-width: 260px; max-height: 260px; }
 .msg-img:hover { opacity: .85; }
+.bubble-img { padding: 4px !important; background: transparent !important; }
+.msg-image .bubble { padding: 2px; }
 
 .composer textarea {
   width: 100%;

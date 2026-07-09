@@ -5461,7 +5461,7 @@ function renderFileTree() {
       return a.name.localeCompare(b.name) * (asc ? 1 : -1);
     });
   } else if (sortMode === "time") {
-    sorted.sort((a, b) => ((b.modified || 0) - (a.modified || 0)) * (asc ? 1 : -1));
+    sorted.sort((a, b) => ((new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0)) * (asc ? 1 : -1)));
   } else {
     sorted.sort((a, b) => { if (a.type !== b.type) return (a.type === "dir" ? -1 : 1) * (asc ? 1 : -1); return a.name.localeCompare(b.name) * (asc ? 1 : -1); });
   }
@@ -5473,7 +5473,7 @@ function renderFileTree() {
         return `<div class="file-item-row ${item.path === state.previewPath ? "active" : ""}">
           <button class="file-item ${item.type}${extClass}" type="button" data-path="${escapeHtml(item.path)}" data-type="${item.type}">
             <span class="file-name">${item.type === "dir" ? "📁 " : ""}${escapeHtml(item.name)}</span>
-            <small>${item.type === "dir" ? "" : formatSize(item.size || 0)}</small>
+            <small>${item.type === "dir" ? "" : formatSize(item.size || 0)}${item.updatedAt ? ` · ${item.updatedAt.slice(0,10)}` : ""}</small>
           </button>
           <button class="file-at-btn" type="button" data-path="${escapeHtml(item.path)}" title="${t("fileAtTitle")}">@</button>
         </div>`;

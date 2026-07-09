@@ -5427,11 +5427,9 @@ function showFileContextMenu(x, y, path, type) {
   menu.style.left = x + "px";
   menu.style.top = y + "px";
   if (type === "file") {
-    menu.innerHTML = `<button data-action="preview">${t("filePreview") || "预览"}</button>
-      <button data-action="open">用默认程序打开</button>`;
-  } else {
-    menu.innerHTML = `<button data-action="open-dir">打开文件夹</button>`;
+    menu.innerHTML = `<button data-action="open">用默认程序打开</button>`;
   }
+  // Future: add more options here (type === "dir" etc.)
   menu.querySelectorAll("button").forEach(btn => {
     btn.addEventListener("click", () => {
       const action = btn.dataset.action;

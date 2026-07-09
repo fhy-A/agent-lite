@@ -3592,6 +3592,11 @@ body.theme-dark .syn-fn { color: #61afef; }
 .slash-desc { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Onboarding modal */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(4px);
+}
 .onboarding-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 1000;
   display: flex; align-items: center; justify-content: center;

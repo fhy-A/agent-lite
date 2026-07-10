@@ -139,16 +139,24 @@ def start_tray(port=3010, server_ref=None):
     """Start tray icon in a daemon thread. No-op if already running or not available."""
     global _tray_thread_ref
     if not TRAY_AVAILABLE:
+        print("[tray] pystray or PIL not available")
         return None
     if _tray_thread_ref is not None and _tray_thread_ref.is_alive():
         return None
     try:
         icon = _create_tray_icon(port, server_ref)
-        t = threading.Thread(target=icon.run, daemon=True, name="tray-icon")
+        def _run_tray():
+            try:
+                icon.run()
+            except Exception as e:
+                print(f"[tray] runtime error: {e}")
+        t = threading.Thread(target=_run_tray, daemon=True, name="tray-icon")
         t.start()
         _tray_thread_ref = t
+        print("[tray] started successfully")
         return t
-    except Exception:
+    except Exception as e:
+        print(f"[tray] failed to start: {e}")
         return None
 
 
@@ -2686,24 +2694,17 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         if not new_exe.exists():
             self.send_json({"error": "Update file not found"}, 400)
             return
-        # Write batch file to replace current exe after shutdown
-        bat_path = current_exe.parent / "_update.bat"
-        bat_content = (
-            '@echo off\r\n'
-            'chcp 65001 >nul\r\n'
-            'timeout /t 2 /nobreak >nul\r\n'
-            f'copy /Y "{new_exe}" "{current_exe}" >nul 2>&1\r\n'
-            'if %errorlevel% equ 0 (\r\n'
-            f'    del "{new_exe}" >nul 2>&1\r\n'
-            f'    start "" "{current_exe}"\r\n'
-            ')\r\n'
-            'del "%~f0"\r\n'
+        # Use PowerShell instead of batch — handles Unicode paths reliably
+        ps_script = (
+            f'Start-Sleep -Seconds 2;'
+            f'Copy-Item -Path "{new_exe}" -Destination "{current_exe}" -Force;'
+            f'if ($?) {{ Remove-Item "{new_exe}" -Force; Start-Process "{current_exe}" }}'
         )
-        bat_path.write_text(bat_content, encoding="utf-8")
+        encoded = base64.b64encode(ps_script.encode("utf-16-le")).decode("ascii")
         self.send_json({"ok": True})
-        # Launch batch detached and exit immediately
+        # Launch PowerShell detached and exit immediately
         subprocess.Popen(
-            ["cmd", "/c", str(bat_path)],
+            ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
             creationflags=0x08000000,  # CREATE_NO_WINDOW
             close_fds=True,
         )

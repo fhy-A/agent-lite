@@ -1,12 +1,17 @@
+## v0.4.6: Restart & Tray Fixes (v2)
+
+### Restart: PowerShell base64
+- Switched from batch file to `powershell -EncodedCommand` — eliminates file encoding issues on Chinese Windows entirely
+- No temp file written, Unicode paths handled natively by PowerShell
+
+### Tray Icon: diagnostics
+- Added error logging to `start_tray` — check console for `[tray]` messages
+- Added runtime exception catch in tray thread
+- Tip: check Windows taskbar overflow area (`^` arrow) if icon is hidden
+
+---
+
 ## v0.4.5: Restart & Tray Fixes
-
-### Restart Fix
-- **Batch encoding**: fixed `UnicodeEncodeError` on Chinese paths (ascii → utf-8 + chcp 65001)
-- **Auto-refresh**: page now polls server after restart and auto-reloads when ready
-
-### Tray Icon Fix
-- Added missing `agent-lite-icon.ico` to PyInstaller bundle data (was only used as Windows resource, not available at runtime)
-- Fallback: generate in-memory icon if ico file still missing
 
 ---
 

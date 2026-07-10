@@ -63,7 +63,6 @@ cmd = [
     "--exclude-module", "PIL.GribStubImagePlugin",
     "--exclude-module", "PIL.Hdf5StubImagePlugin",
     "--exclude-module", "PIL.IcnsImagePlugin",
-    "--exclude-module", "PIL.IcoImagePlugin",
     "--exclude-module", "PIL.ImImagePlugin",
     "--exclude-module", "PIL.ImtImagePlugin",
     "--exclude-module", "PIL.IptcImagePlugin",

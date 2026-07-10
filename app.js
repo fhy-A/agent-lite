@@ -484,7 +484,7 @@ const nativeTools = [
 
       name: "read_file",
 
-      description: "读取当前项目目录内或 attachments/ 下的文本文件内容。支持按行读取，避免一次塞入过长文件。",
+      description: "读取项目目录或 attachments/ 下的文本与图片文件。文本支持按行读取；图片读取后会自动作为视觉输入提供给模型。",
 
       parameters: {
 
@@ -2151,7 +2151,7 @@ function getSystemPrompt(options = {}) {
   const now = new Date();
   const dateStr = now.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", weekday: "long" });
   const timeStr = now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-  const parts = [customPrompt, `当前时间：${dateStr} ${timeStr}（北京时间）`, `项目根目录：${els.projectRoot?.value || "未设置"}`, `提示：项目目录外的文件（如 Desktop、Documents）也可以直接尝试读取，系统会自动处理路径权限。`, `Agent Lite 版本：${state.appVersion || "unknown"}`];
+  const parts = [customPrompt, `当前时间：${dateStr} ${timeStr}（北京时间）`, `项目根目录：${els.projectRoot?.value || "未设置"}`, `提示：项目目录外的文件（如 Desktop、Documents）也可以直接尝试读取，系统会自动处理路径权限。`, `提示：用户消息中的 @图片路径 可能没有直接附带视觉内容。如果需要查看图片，请用 read_file 读取该路径；系统会自动把工具读取到的图片转换成视觉输入。`, `Agent Lite 版本：${state.appVersion || "unknown"}`];
 
   // Language detection: instruct the model to match the user's language
   if (userLang !== "Chinese") {
@@ -5331,6 +5331,9 @@ function insertPromptText(text) {
 
   els.prompt.selectionEnd = els.prompt.value.length;
 
+  // Trigger @image resolution for file-tree @ button clicks
+  resolveAtImages();
+
   updateSendButtonState();
 
 }
@@ -6575,6 +6578,33 @@ function normalizeToolCallList(map) {
 
 
 
+function toolProgressSummary(toolCalls) {
+  // Generate a one-line progress hint when the model only emits tool calls without text.
+  if (!toolCalls || !toolCalls.length) return "";
+  const labels = toolCalls.map((tc) => {
+    const fn = (tc.function && tc.function.name) || "";
+    const args = _safeParseJSON((tc.function && tc.function.arguments) || "{}");
+    switch (fn) {
+      case "read_file":    return `正在读取 ${args.path || "文件"}…`;
+      case "write_file":   return `正在写入 ${args.path || "文件"}…`;
+      case "search_files": return `正在搜索 ${args.query || ""}…`;
+      case "list_files":   return `正在列出 ${args.path || "目录"}…`;
+      case "run_command":  return `正在执行 ${(args.command || "").slice(0, 40)}…`;
+      case "glob_files":   return `正在匹配 ${args.pattern || ""}…`;
+      case "propose_edit": return `正在编辑 ${args.path || "文件"}…`;
+      case "delete_file":  return `正在删除 ${args.path || "文件"}…`;
+      case "web_fetch":    return `正在获取 ${args.url || "网页"}…`;
+      case "task":         return `正在执行子任务: ${(args.description || args.prompt || "").slice(0, 30)}…`;
+      default:             return fn ? `→ ${fn}` : "";
+    }
+  }).filter(Boolean);
+  return labels.length ? labels.join("\n") : "";
+}
+
+function _safeParseJSON(raw) {
+  try { return JSON.parse(raw) || {}; } catch (_) { return {}; }
+}
+
 function shouldRetryWithoutNativeTools(errorText = "") {
 
   return /tool|function|tool_choice|unsupported|invalid|upstream error|do request failed|request failed/i.test(errorText);
@@ -7001,7 +7031,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
         rawContent += `\n\n> ⚠️ ${errMsg}\n`;
         const finalText = rawThought ? `<think>${rawThought}</think>\n${rawContent}` : rawContent;
         const toolCalls = normalizeToolCallList(toolCallsByIndex);
-        updateAssistantMessage(assistantIndex, finalText || (toolCalls.length ? "" : "(empty response)"), false, sessionId, _streamMsgs);
+        updateAssistantMessage(assistantIndex, finalText || toolProgressSummary(toolCalls) || "(empty response)", false, sessionId, _streamMsgs);
         setStreaming(false, sessionId);
         return;
       }
@@ -7012,7 +7042,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
         const toolCalls = normalizeToolCallList(toolCallsByIndex);
 
-        updateAssistantMessage(assistantIndex, finalText || (toolCalls.length ? "" : "(empty response)"), false, sessionId, _streamMsgs);
+        updateAssistantMessage(assistantIndex, finalText || toolProgressSummary(toolCalls) || "(empty response)", false, sessionId, _streamMsgs);
 
         if (toolCalls.length) {
 
@@ -7080,7 +7110,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
   const toolCalls = normalizeToolCallList(toolCallsByIndex);
 
-  updateAssistantMessage(assistantIndex, finalCombined || (toolCalls.length ? "" : "(empty response)"), false, sessionId, _streamMsgs);
+  updateAssistantMessage(assistantIndex, finalCombined || toolProgressSummary(toolCalls) || "(empty response)", false, sessionId, _streamMsgs);
 
   if (toolCalls.length) {
 
@@ -7460,6 +7490,40 @@ async function executeToolCall(tool) {
 }
 
 
+function toolImageVisionPayload(result) {
+  if (!result?.ok || result.action !== "read_file" || !result.binary || !result.visual) return null;
+  if (!String(result.mime || "").startsWith("image/") || !result.base64) return null;
+  const path = String(result.path || "image");
+  return {
+    path,
+    name: path.split(/[\\/]/).pop() || "image",
+    mime: result.mime,
+    base64: result.base64,
+  };
+}
+
+
+function buildToolImageVisionMessage(images) {
+  if (!images?.length) return null;
+  const paths = images.map((image) => image.path).join("、");
+  return {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: `[系统] read_file 已读取图片：${paths}。以下图片是对应的视觉内容，请直接观察图片并继续完成用户原任务，不要再次读取同一路径。`,
+      },
+      ...images.map((image) => ({
+        type: "image_url",
+        image_url: { url: `data:${image.mime};base64,${image.base64}` },
+      })),
+    ],
+    _images: images.map((image) => ({ path: image.path, name: image.name, mime: image.mime })),
+    meta: { _system: true, kind: "tool-image-vision" },
+  };
+}
+
+
 
 async function applyPendingEdit(editId) {
 
@@ -7740,6 +7804,9 @@ async function runAgentLoop(ctx = null) {
 
 
 
+      const pendingVisionImages = [];
+      const pendingVisionPaths = new Set();
+
       for (const nativeCall of nativeCalls) {
 
         const tool = normalizeNativeToolCall(nativeCall);
@@ -7771,6 +7838,12 @@ async function runAgentLoop(ctx = null) {
 
 
         const result = await executeToolCall(tool);
+
+        const visionImage = toolImageVisionPayload(result);
+        if (visionImage && !pendingVisionPaths.has(visionImage.path)) {
+          pendingVisionPaths.add(visionImage.path);
+          pendingVisionImages.push(visionImage);
+        }
 
         const meta = {
 
@@ -7963,6 +8036,13 @@ async function runAgentLoop(ctx = null) {
 
       }
 
+      const visionMessage = buildToolImageVisionMessage(pendingVisionImages);
+      if (visionMessage) {
+        ctx.messages.push(visionMessage);
+        renderSessionMessages(ctx.sessionId);
+        await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+      }
+
       continue;
 
     }
@@ -8057,6 +8137,9 @@ async function runAgentLoop(ctx = null) {
       meta,
 
     });
+
+    const visionMessage = buildToolImageVisionMessage([toolImageVisionPayload(result)].filter(Boolean));
+    if (visionMessage) ctx.messages.push(visionMessage);
 
     renderSessionMessages(ctx.sessionId);
 
@@ -8306,10 +8389,14 @@ async function sendMessage(userText) {
   // Build message content (text + images)
   // Upload images to server so session stores paths, not base64 blobs
 
-  let messageContent = userText;
+  // Wait for any in-flight @image resolution to complete
+  await resolveAtImages();
+
+  // Keep @image paths in text so model can read_file as fallback
   const images = [...state.attachedImages];
   const imageRefs = await uploadImagesForStorage(images);
 
+  let messageContent = userText;
   if (images.length > 0) {
     messageContent = [{ type: "text", text: userText }];
     for (const img of images) {
@@ -8868,7 +8955,7 @@ els.messages.addEventListener("scroll", () => {
 
 els.prompt.addEventListener("paste", (e) => { handleImagePaste(e); });
 
-els.prompt.addEventListener("drop", (e) => { e.preventDefault(); handleImageDrop(e); });
+els.prompt.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); handleImageDrop(e); });
 
 els.prompt.addEventListener("dragover", (e) => { e.preventDefault(); });
 
@@ -8894,7 +8981,59 @@ els.prompt.addEventListener("input", () => {
 
   showSlashSuggestions();
 
+  // Auto-resolve @image references to attachment thumbnails
+  resolveAtImages();
+
 });
+
+const _atImgFetching = new Map(); // path → Promise
+
+async function resolveAtImages() {
+  const IMG_EXTS = new Set(["png","jpg","jpeg","gif","webp","bmp","ico","svg","tiff","tif"]);
+  const MAX_AT_IMG_BYTES = 10 * 1024 * 1024;
+  const text = els.prompt.value;
+  const seen = new Set();
+  const tasks = [];
+  for (const ref of [...text.matchAll(/@(\S+)/g)]) {
+    const filePath = ref[1];
+    if (seen.has(filePath)) continue;
+    seen.add(filePath);
+    const ext = (filePath.split(".").pop() || "").toLowerCase();
+    if (!IMG_EXTS.has(ext)) continue;
+    if (state.attachedImages.some((img) => img._ref === filePath)) continue;
+    if (_atImgFetching.has(filePath)) { tasks.push(_atImgFetching.get(filePath)); continue; }
+    const task = (async () => {
+      try {
+        const resp = await fetch(`/api/file?path=${encodeURIComponent(filePath)}&raw=1`);
+        if (!resp.ok) return;
+        const cl = parseInt(resp.headers.get("Content-Length") || "0");
+        if (cl > MAX_AT_IMG_BYTES) return;
+        const contentType = resp.headers.get("Content-Type") || "";
+        let base64, mime;
+        if (contentType.startsWith("application/json")) {
+          const json = await resp.json();
+          if (!json.content) return;
+          base64 = json.content;
+          mime = json.mime || `image/${ext === "jpg" ? "jpeg" : ext}`;
+        } else {
+          const buf = await resp.arrayBuffer();
+          if (buf.byteLength > MAX_AT_IMG_BYTES) return;
+          const bytes = new Uint8Array(buf);
+          let binary = "";
+          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+          base64 = btoa(binary);
+          mime = contentType || `image/${ext === "jpg" ? "jpeg" : ext}`;
+        }
+        state.attachedImages.push({ name: filePath.split("/").pop() || filePath, base64, mime, _ref: filePath });
+        renderImageThumbs();
+      } catch (_) { /* ignore */ }
+      finally { _atImgFetching.delete(filePath); }
+    })();
+    _atImgFetching.set(filePath, task);
+    tasks.push(task);
+  }
+  await Promise.all(tasks);
+}
 
 
 
@@ -10923,6 +11062,23 @@ function showKeySyncModal(tokens, fullKeys) {
 // ── End Platform Auth ──
 
 async function init() {
+
+    // Keep the current page connected. When the backend process is replaced,
+    // its instance ID changes and this existing page refreshes in place.
+    let browserServerInstanceId = null;
+    const sendBrowserHeartbeat = async () => {
+      try {
+        const response = await fetch("/api/browser-heartbeat?_=" + Date.now(), { cache: "no-store" });
+        const data = await response.json();
+        if (browserServerInstanceId && data.serverInstanceId !== browserServerInstanceId) {
+          location.reload();
+          return;
+        }
+        browserServerInstanceId = data.serverInstanceId || browserServerInstanceId;
+      } catch (_) { /* backend may be restarting */ }
+    };
+    setInterval(sendBrowserHeartbeat, 3000);
+    sendBrowserHeartbeat();
 
     applyTheme(localStorage.getItem("agent-lite-theme") || "light");
 

@@ -39,10 +39,13 @@ NEW_API_BASE_URL = os.environ.get("NEW_API_BASE_URL", "").rstrip("/")
 PORT = int(os.environ.get("AGENT_LITE_PORT", "3010"))
 _active_downloads = {}   # downloadId -> {progress, done, error, path, total}
 _tray_thread_ref = None  # tray daemon thread reference
+_browser_heartbeat = 0   # timestamp of last browser ping
+_server_instance_id = uuid.uuid4().hex
 _tray_icon_ref = None    # keep the icon alive for the lifetime of the process
 _tray_loop_active = False
 MAX_PREVIEW_BYTES = 1024 * 1024
 MAX_TOOL_READ_BYTES = 512 * 1024
+MAX_TOOL_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_SEARCH_FILE_BYTES = 1024 * 1024
 MAX_SEARCH_RESULTS = 100
 MAX_COMMAND_SECONDS = 30
@@ -200,7 +203,9 @@ try {{
         if (-not $deleted) {{ throw "failed to delete old executable: $($oldFile.FullName)" }}
     }}
 
-    Start-Process -FilePath $newExe -WorkingDirectory $targetDir
+    # The old server is already gone, so explicitly tell the new launcher that
+    # an existing page is waiting and should refresh instead of opening a tab.
+    Start-Process -FilePath $newExe -ArgumentList '--reuse-browser' -WorkingDirectory $targetDir
     Write-UpdateLog "update completed and new version started: $newExe"
 }} catch {{
     Write-UpdateLog "update failed: $($_.Exception.Message)"
@@ -1315,6 +1320,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         super().handle()
 
     def do_GET(self):
+        global _browser_heartbeat, _server_instance_id
         if self.path.startswith("/proxy/models"):
             self.proxy("GET", "/v1/models")
             return
@@ -1346,6 +1352,18 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
                     self.send_json(read_memory(file_name))
                 else:
                     self.send_json({"data": list_memories()})
+                return
+            if route == "/api/browser-heartbeat":
+                _browser_heartbeat = int(dt.datetime.now().timestamp())
+                self.send_json({"ok": True, "serverInstanceId": _server_instance_id})
+                return
+            if route == "/api/has-browser":
+                alive = (int(dt.datetime.now().timestamp()) - _browser_heartbeat) < 30
+                self.send_json({"hasBrowser": alive})
+                return
+            if route == "/api/request-browser-refresh":
+                _server_instance_id = uuid.uuid4().hex
+                self.send_json({"ok": True, "serverInstanceId": _server_instance_id})
                 return
             if route == "/api/version":
                 self.send_json({
@@ -1916,7 +1934,36 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             root, target = resolve_project_path(path)
         if not target.exists() or not target.is_file():
             raise ValueError("文件不存在")
-        content, size, truncated = read_text_limited(target, MAX_TOOL_READ_BYTES)
+        data = target.read_bytes()
+        size = len(data)
+        preview = data[:MAX_TOOL_READ_BYTES]
+        ext = target.suffix.lower().lstrip(".")
+        mime_map = {"png":"image/png","jpg":"image/jpeg","jpeg":"image/jpeg","gif":"image/gif",
+                    "webp":"image/webp","bmp":"image/bmp","ico":"image/x-icon","svg":"image/svg+xml"}
+        image_mime = mime_map.get(ext)
+        truncated = size > (MAX_TOOL_IMAGE_BYTES if image_mime else MAX_TOOL_READ_BYTES)
+        if image_mime or not is_probably_text(preview):
+            # Return image data separately so the frontend can attach it as an
+            # image_url block instead of sending base64 as plain tool text.
+            import base64 as b64
+            mime = image_mime or "application/octet-stream"
+            can_attach = bool(image_mime) and size <= MAX_TOOL_IMAGE_BYTES
+            payload = {
+                "ok": True,
+                "action": "read_file",
+                "path": display_attachment_path(root, target) if is_attachment else to_project_relative(root, target),
+                "content": f"[Image file: {target.name} ({size} bytes, {mime}); visual content attached separately]" if can_attach else f"[Binary file: {target.name} ({size} bytes, {mime}) — too large or unsupported for visual attachment]",
+                "size": size,
+                "truncated": truncated,
+                "binary": True,
+                "mime": mime,
+                "visual": can_attach,
+            }
+            if can_attach:
+                payload["base64"] = b64.b64encode(data).decode("ascii")
+            self.send_json(payload)
+            return
+        content = preview.decode("utf-8", errors="replace")
         line_range = None
         start_line = body.get("startLine")
         end_line = body.get("endLine")

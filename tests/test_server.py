@@ -37,12 +37,14 @@ class TestUpdaterHelpers(unittest.TestCase):
         self.assertIn("Get-ChildItem", script)
         self.assertIn("Remove-Item", script)
         self.assertIn("Start-Process -FilePath $newExe", script)
+        self.assertIn("-ArgumentList '--reuse-browser'", script)
         self.assertNotIn("Copy-Item", script)
 
     def test_check_update_detects_newer_release(self):
         handler = object.__new__(server.AgentLiteHandler)
+        download_url = "https://github.com/fhy-A/agent-lite/releases/download/v0.4.11/AgentLite-v0.4.11.exe"
         with mock.patch.object(server, "_read_version_file", return_value="0.4.10"), \
-             mock.patch.object(server, "_read_remote_version", return_value="0.4.11"):
+             mock.patch.object(server, "_read_remote_version", return_value=("0.4.11", download_url)):
             result = handler._check_update()
         self.assertTrue(result["updateAvailable"])
         self.assertEqual(result["remoteVersion"], "0.4.11")

@@ -1,6 +1,7 @@
 """
 Agent Lite launcher — entry point for PyInstaller bundle.
 """
+import json
 import os
 import subprocess
 import sys
@@ -8,31 +9,58 @@ import webbrowser
 from pathlib import Path
 
 
+def has_existing_browser(port=3010):
+    """Check the old server before it is stopped so an existing tab can be reused."""
+    import urllib.request as _request
+    try:
+        with _request.urlopen(f"http://127.0.0.1:{port}/api/has-browser", timeout=1.5) as response:
+            return bool(json.loads(response.read()).get("hasBrowser"))
+    except Exception:
+        return False
+
+
+def should_reuse_browser(port=3010, argv=None):
+    """Reuse a connected page, including after the updater stopped the old server."""
+    args = sys.argv if argv is None else argv
+    return "--reuse-browser" in args or has_existing_browser(port)
+
+
 def kill_existing():
-    """Kill any already-running AgentLite.exe or pythonw server processes."""
-    current_pid = os.getpid()
+    """Stop older packaged/dev instances while preserving this PyInstaller process pair."""
+    protected_pids = {os.getpid(), os.getppid()}
     killed = 0
     try:
+        # Formal builds are versioned (AgentLite-v0.4.12.exe), so querying only
+        # AgentLite.exe misses the processes that users actually run. CIM also
+        # gives us a stable PID-only output that is easier to parse than WMIC.
+        script = r"""
+Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+    ($_.Name -match '^AgentLite(?:-v[0-9.]+)?[.]exe$') -or
+    (($_.Name -match '^pythonw?(?:[0-9.]+)?[.]exe$') -and
+     ($_.CommandLine -match '(?i)(^|[\\/\s])server[.]py([\s\"]|$)'))
+} | ForEach-Object { $_.ProcessId }
+""".strip()
         result = subprocess.run(
-            ["wmic", "process", "where",
-             "name='AgentLite.exe' or name='pythonw.exe' or name='python.exe'",
-             "get", "ProcessId,CommandLine"],
-            capture_output=True, text=True, timeout=5
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         for line in result.stdout.splitlines():
-            parts = line.split()
-            if not parts:
-                continue
-            pid_str = parts[-1]
+            pid_str = line.strip()
             if not pid_str.isdigit():
                 continue
             pid = int(pid_str)
-            if pid == current_pid:
+            if pid in protected_pids:
                 continue
-            cmdline = " ".join(parts[:-1]).lower()
-            if any(kw in cmdline for kw in ["agent-lite", "agentlite", "launcher", "server.py"]):
-                subprocess.run(["taskkill", "/PID", str(pid), "/F"],
-                               capture_output=True, timeout=5)
+            stopped = subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                timeout=5,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if stopped.returncode == 0:
                 killed += 1
     except Exception:
         pass
@@ -81,6 +109,9 @@ def main():
 
 
 def _main():
+    port = 3010
+    had_browser = should_reuse_browser(port)
+
     # Kill any existing agent-lite processes before starting
     killed = kill_existing()
     if killed:
@@ -146,7 +177,10 @@ def _main():
     )
     server_thread.start()
     print(f"Agent Lite running at http://127.0.0.1:{port}")
-    webbrowser.open(f"http://127.0.0.1:{port}")
+    # Existing pages detect the new server instance and refresh themselves.
+    # Open a browser only when no page was connected before the restart.
+    if not had_browser:
+        webbrowser.open(f"http://127.0.0.1:{port}")
 
     try:
         tray_started = server.run_tray_main_thread(port, server_obj)

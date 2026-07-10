@@ -3809,11 +3809,52 @@ function isAssistantThinkingMessage(msg) {
   return msg?.role === "assistant" && Array.isArray(msg.meta?.toolCalls) && msg.meta.toolCalls.length > 0;
 }
 
+function formatMsgTime(isoString) {
+  if (!isoString) return "";
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return "";
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+const COPY_SVG = '<svg width="14" height="14" viewBox="0 0 1024 1024" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M761.088 715.3152a38.7072 38.7072 0 0 1 0-77.4144 37.4272 37.4272 0 0 0 37.4272-37.4272V265.0112a37.4272 37.4272 0 0 0-37.4272-37.4272H425.6256a37.4272 37.4272 0 0 0-37.4272 37.4272 38.7072 38.7072 0 1 1-77.4144 0 115.0976 115.0976 0 0 1 114.8416-114.8416h335.4624a115.0976 115.0976 0 0 1 114.8416 114.8416v335.4624a115.0976 115.0976 0 0 1-114.8416 114.8416z"/><path d="M589.4656 883.0976H268.1856a121.1392 121.1392 0 0 1-121.2928-121.2928v-322.56a121.1392 121.1392 0 0 1 121.2928-121.344h321.28a121.1392 121.1392 0 0 1 121.2928 121.2928v322.56c1.28 67.1232-54.1696 121.344-121.2928 121.344zM268.1856 395.3152a43.52 43.52 0 0 0-43.8784 43.8784v322.56a43.52 43.52 0 0 0 43.8784 43.8784h321.28a43.52 43.52 0 0 0 43.8784-43.8784v-322.56a43.52 43.52 0 0 0-43.8784-43.8784z"/></svg>';
+const COPY_DONE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
+
+async function copyMessageText(btn) {
+  if (!btn) return;
+  const original = btn.innerHTML;
+  try {
+    const text = btn.dataset.copyText || "";
+    await navigator.clipboard.writeText(text);
+    btn.innerHTML = COPY_DONE;
+    btn.classList.add("copied");
+    btn.title = "已复制";
+    btn.setAttribute("aria-label", "已复制");
+  } catch (_) {
+    btn.classList.add("failed");
+    btn.title = "复制失败";
+    btn.setAttribute("aria-label", "复制失败");
+  }
+  setTimeout(() => {
+    btn.innerHTML = original;
+    btn.classList.remove("copied", "failed");
+    btn.title = "复制";
+    btn.setAttribute("aria-label", "复制");
+  }, 1500);
+}
+
+function renderCopyBtn(text) {
+  if (!text || !text.trim()) return "";
+  return `<button class="msg-copy-btn" type="button" title="复制" aria-label="复制" data-copy-text="${escapeHtml(text)}" onclick="copyMessageText(this)">${COPY_SVG}</button>`;
+}
+
 function renderUserProjection(msg, index) {
   const text = Array.isArray(msg.content)
     ? (msg.content.find((item) => item.type === "text")?.text || "")
     : getMsgText(msg);
   const images = msg._images || [];
+  const timeStr = formatMsgTime(msg._time);
   // Each image as separate message, clickable to open full-size overlay
   const imageArticles = images.map((img, i) => {
     // Support both old base64 format and new path-based format
@@ -3827,7 +3868,7 @@ function renderUserProjection(msg, index) {
     </article>`;
   }).join("");
   if (!text && images.length === 0) return "";
-  const textArticle = text ? `<article class="msg user" data-msg-index="${index}"><div class="bubble">${renderMarkdownLite(text)}</div></article>` : "";
+  const textArticle = text ? `<article class="msg user" data-msg-index="${index}"><div class="bubble">${renderMarkdownLite(text)}</div><div class="msg-meta">${timeStr} ${renderCopyBtn(text)}</div></article>` : "";
   return textArticle + imageArticles;
 }
 
@@ -3931,11 +3972,13 @@ function renderFinalAssistantProjection(msg, index) {
   }
   const content = (getMsgText(msg) || "").trim();
   if (!content || isToolPlanningPlaceholder(content)) return "";
+  const responseInfo = renderAssistantResponseInfo(msg);
+  const copyBtn = renderCopyBtn(content);
   return `
     <article class="msg assistant" data-msg-index="${index}">
       <div class="role">${escapeHtml(model)}</div>
       ${renderAssistantContent(content)}
-      ${renderAssistantResponseInfo(msg)}
+      <div class="msg-footer">${copyBtn}${responseInfo}</div>
     </article>
   `;
 }
@@ -8422,7 +8465,7 @@ async function sendMessage(userText) {
 
       const list = active.map((s) => `- /${s.name}: ${s.description || "无描述"}`).join("\n");
 
-      ctx.messages.push({ role: "user", content: "/help" });
+      ctx.messages.push({ role: "user", content: "/help", _time: new Date().toISOString() });
 
       ctx.messages.push({ role: "assistant", content: `**可用 Skills：**\n\n${list || "暂无 Skill"}` });
 
@@ -8464,7 +8507,7 @@ async function sendMessage(userText) {
 
   }
 
-  ctx.messages.push({ role: "user", content: messageContent, _images: imageRefs.length > 0 ? imageRefs : undefined, _model: ctx.model || getSelectedModel() });
+  ctx.messages.push({ role: "user", content: messageContent, _images: imageRefs.length > 0 ? imageRefs : undefined, _model: ctx.model || getSelectedModel(), _time: new Date().toISOString() });
   setSessionMessages(sessionId, ctx.messages);
 
   state.attachedImages = [];
@@ -8497,7 +8540,7 @@ async function sendMessage(userText) {
       const msgContent = imgs.length > 0
         ? [{ type: "text", text: q.text || "" }, ...imgs.map((img) => ({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.base64}` } }))]
         : (q.text || "");
-      ctx.messages.push({ role: "user", content: msgContent, _images: imgRefs.length > 0 ? imgRefs : undefined, _model: ctx.model || getSelectedModel() });
+      ctx.messages.push({ role: "user", content: msgContent, _images: imgRefs.length > 0 ? imgRefs : undefined, _model: ctx.model || getSelectedModel(), _time: new Date().toISOString() });
     }
     state.attachedImages = [];
     renderImageThumbs();
@@ -10878,7 +10921,7 @@ els.chatForm.addEventListener("submit", async (event) => {
       const run = state._sessionRuns[sessionId];
       if (run && run.messageQueue.length > 0) {
         for (const q of run.messageQueue) {
-          messages.push({ role: "user", content: q.text || "", _images: q.images, _model: getSelectedModel() });
+          messages.push({ role: "user", content: q.text || "", _images: q.images, _model: getSelectedModel(), _time: new Date().toISOString() });
         }
         run.messageQueue = [];
         state.attachedImages = [];

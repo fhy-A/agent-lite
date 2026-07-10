@@ -1009,7 +1009,11 @@ input:focus, select:focus, textarea:focus {
 
 .msg.user {
   display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   justify-content: flex-end;
+  position: relative;
+  margin-bottom: 30px;
 }
 
 .msg.tool-msg {
@@ -1697,6 +1701,20 @@ input:focus, select:focus, textarea:focus {
 .msg-img:hover { opacity: .85; }
 .bubble-img { padding: 4px !important; background: transparent !important; }
 .msg-image .bubble { padding: 2px; }
+
+/* ── Message meta (timestamp + copy) ── */
+.msg-meta { position: absolute; top: 100%; right: 0; display: flex; align-items: center; justify-content: flex-end; height: 26px; gap: 5px; margin-top: 2px; font-size: 11px; color: var(--muted); opacity: 0; pointer-events: none; transition: opacity .15s; }
+.msg.user:hover .msg-meta { opacity: 1; }
+.msg-footer { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.msg-footer .response-info { margin-top: 0; }
+.msg-copy-btn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; flex: 0 0 26px; transition: color .15s, background .15s, border-color .15s, opacity .15s; }
+.msg-copy-btn svg { display: block; width: 14px; height: 14px; }
+.msg-footer .msg-copy-btn { opacity: 1; border-color: var(--line); background: var(--panel-2); } /* always visible in assistant footer */
+.msg.user .msg-copy-btn { opacity: 1; }
+.msg.user:hover .msg-meta { pointer-events: auto; }
+.msg-copy-btn:hover { border-color: var(--line-strong); background: var(--panel-2); color: var(--text); }
+.msg-copy-btn.copied { border-color: color-mix(in srgb, var(--green) 36%, var(--line)); color: var(--green); }
+.msg-copy-btn.failed { border-color: color-mix(in srgb, var(--red) 36%, var(--line)); color: var(--red); }
 
 .composer textarea {
   width: 100%;

@@ -10881,10 +10881,9 @@ function showKeySyncModal(tokens, fullKeys) {
   overlay.className = "modal-overlay";
   overlay.innerHTML = `<div class="modal-card" style="width:540px;max-height:70vh;display:flex;flex-direction:column">
     <header><h3>同步中转站 API Key</h3><button class="icon-btn key-sync-close" type="button">&times;</button></header>
-    <div style="margin-bottom:10px;font-size:13px;color:var(--muted)">共 ${tokens.length} 个密钥${newCount > 0 && newCount < tokens.length ? `，${newCount} 个未添加` : ""}</div>
+    <div class="key-sync-summary"><span>共 ${tokens.length} 个密钥${newCount > 0 && newCount < tokens.length ? `，${newCount} 个未添加` : ""}</span>${newCount > 0 ? `<button id="keySyncCopyAll" class="mini-btn primary" type="button">复制全部</button>` : ""}</div>
     <div class="key-sync-list">${rows}</div>
     <div class="panel-actions" style="margin-top:12px">
-      ${newCount > 0 ? `<button id="keySyncCopyAll" class="mini-btn primary" type="button">复制未添加的 (${newCount})</button>` : ""}
       ${tokens.length > 0 && newCount === 0 ? '<span style="font-size:12px;color:var(--muted)">所有 Key 已添加</span>' : '<span style="font-size:12px;color:var(--muted)">复制后粘贴到上方 Key 输入框</span>'}
     </div>
   </div>`;
@@ -10895,7 +10894,7 @@ function showKeySyncModal(tokens, fullKeys) {
   const copyAllBtn = overlay.querySelector("#keySyncCopyAll");
   if (copyAllBtn) {
     copyAllBtn.addEventListener("click", () => {
-      navigator.clipboard.writeText(allText.trim()).then(() => showToast("Copied all keys")).catch(() => showToast("Copy failed"));
+      navigator.clipboard.writeText(allText.trim()).then(() => { copyAllBtn.textContent = "已复制"; setTimeout(() => { copyAllBtn.textContent = "复制全部"; }, 1500); }).catch(() => showToast("Copy failed"));
     });
   }
   overlay.querySelectorAll(".key-copy-one").forEach(btn => {

@@ -1,3 +1,19 @@
+## v0.4.4: Update & Key Sync UI Fixes
+
+### Update Panel
+- Fixed progress bar always visible (missing `.hidden` CSS rule)
+
+### Key Sync Modal
+- "Copy All" button moved to summary row, right-aligned with individual copy buttons
+- Button text simplified to "复制全部"
+- Inline button feedback ("已复制") instead of red toast notification
+- Fixed button hover size change (removed border-style switch on connect button, added explicit hover rules)
+
+### Onboarding
+- Now only triggers on first install, not on every version change
+
+---
+
 ## v0.4.3: Update System Overhaul
 
 ### Update System Rewrite

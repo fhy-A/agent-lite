@@ -25,6 +25,7 @@ cmd = [
     "--add-data", f"{APP_DIR / 'app.js'}{';'}.",
     "--add-data", f"{APP_DIR / 'index.html'}{';'}.",
     "--add-data", f"{APP_DIR / 'styles.css'}{';'}.",
+    "--add-data", f"{APP_DIR / 'agent-lite-icon.ico'}{';'}.",
     "--add-data", f"{APP_DIR / 'data' / 'skills'}{';'}data/skills",
     "--add-data", f"{APP_DIR / 'data' / 'memory'}{';'}data/memory",
     "--hidden-import", "tkinter",

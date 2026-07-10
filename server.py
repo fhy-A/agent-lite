@@ -106,8 +106,18 @@ def _cleanup_old_versions(target_dir):
 
 def _create_tray_icon(port, server_ref=None):
     """Create the pystray Icon with right-click menu. Returns Icon (not running)."""
-    icon_path = str(APP_DIR / "agent-lite-icon.ico")
-    img = Image.open(icon_path)
+    icon_path = APP_DIR / "agent-lite-icon.ico"
+    if icon_path.exists():
+        img = Image.open(str(icon_path))
+    else:
+        # Fallback: generate a simple icon in memory
+        img = Image.new("RGBA", (64, 64), (59, 130, 246, 255))
+        for y in range(10, 54):
+            for x in range(10, 54):
+                img.putpixel((x, y), (255, 255, 255, 255))
+        for y in range(22, 42):
+            for x in range(22, 42):
+                img.putpixel((x, y), (59, 130, 246, 255))
 
     def on_open():
         webbrowser.open(f"http://127.0.0.1:{port}")
@@ -2680,6 +2690,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         bat_path = current_exe.parent / "_update.bat"
         bat_content = (
             '@echo off\r\n'
+            'chcp 65001 >nul\r\n'
             'timeout /t 2 /nobreak >nul\r\n'
             f'copy /Y "{new_exe}" "{current_exe}" >nul 2>&1\r\n'
             'if %errorlevel% equ 0 (\r\n'
@@ -2688,7 +2699,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             ')\r\n'
             'del "%~f0"\r\n'
         )
-        bat_path.write_text(bat_content, encoding="ascii")
+        bat_path.write_text(bat_content, encoding="utf-8")
         self.send_json({"ok": True})
         # Launch batch detached and exit immediately
         subprocess.Popen(

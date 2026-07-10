@@ -10258,6 +10258,12 @@ function renderUpdatePanel(container) {
             status(t("restarting")); actions("");
             try { await apiJson("/api/restart", { method: "POST", body: JSON.stringify({ path: newExePath }) }); } catch (_) {}
             showToast("Agent Lite is restarting...", "success");
+            // Wait for new process to start, then reload
+            setTimeout(() => {
+              const check = setInterval(() => {
+                fetch("/api/version").then(() => { clearInterval(check); location.reload(); }).catch(() => {});
+              }, 800);
+            }, 3000);
           });
         }
       } catch (_) { /* server may have restarted */ }

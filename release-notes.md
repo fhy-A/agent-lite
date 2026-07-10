@@ -1,3 +1,15 @@
+## v0.4.5: Restart & Tray Fixes
+
+### Restart Fix
+- **Batch encoding**: fixed `UnicodeEncodeError` on Chinese paths (ascii → utf-8 + chcp 65001)
+- **Auto-refresh**: page now polls server after restart and auto-reloads when ready
+
+### Tray Icon Fix
+- Added missing `agent-lite-icon.ico` to PyInstaller bundle data (was only used as Windows resource, not available at runtime)
+- Fallback: generate in-memory icon if ico file still missing
+
+---
+
 ## v0.4.4: Update & Key Sync UI Fixes
 
 ### Update Panel

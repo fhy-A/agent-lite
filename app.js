@@ -10236,9 +10236,11 @@ function renderUpdatePanel(container) {
     document.getElementById("updateProgressWrap").classList.remove("hidden");
     actions("");
     let downloadId;
+    let newExePath;
     try {
       const init = await apiJson("/api/download-update", { method: "POST", body: JSON.stringify({ url: downloadUrl }) });
       downloadId = init.downloadId;
+      newExePath = init.path;
     } catch (e) { status(t("updateFailed") + ": " + e.message); return; }
 
     const poll = setInterval(async () => {
@@ -10254,7 +10256,7 @@ function renderUpdatePanel(container) {
           actions(`<button id="updateRestartBtn" class="mini-btn primary-btn" type="button">${t("installRestart")}</button>`);
           document.getElementById("updateRestartBtn").addEventListener("click", async () => {
             status(t("restarting")); actions("");
-            try { await apiJson("/api/restart", { method: "POST", body: JSON.stringify({}) }); } catch (_) {}
+            try { await apiJson("/api/restart", { method: "POST", body: JSON.stringify({ path: newExePath }) }); } catch (_) {}
             showToast("Agent Lite is restarting...", "success");
           });
         }
@@ -10266,14 +10268,11 @@ function renderUpdatePanel(container) {
 // ── Onboarding ──
 
 function shouldShowOnboarding() {
-  const done = localStorage.getItem("agent-lite-onboarding");
-  if (!done) return true;
-  if (done !== state.appVersion) return true;
-  return false;
+  return !localStorage.getItem("agent-lite-onboarding");
 }
 
 function markOnboardingDone() {
-  localStorage.setItem("agent-lite-onboarding", state.appVersion || "done");
+  localStorage.setItem("agent-lite-onboarding", "1");
 }
 
 function showOnboarding() {

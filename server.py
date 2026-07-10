@@ -79,6 +79,31 @@ def _read_remote_version():
         return None
 
 
+def _cleanup_old_versions(target_dir):
+    """Delete older versioned AgentLite-v*.exe files, keeping only the latest."""
+    pat = re.compile(r'^AgentLite-v([\d.]+)\.exe$')
+    candidates = []
+    try:
+        for f in target_dir.iterdir():
+            m = pat.match(f.name)
+            if m and f.is_file():
+                try:
+                    ver = tuple(int(x) for x in m.group(1).split("."))
+                    candidates.append((ver, f))
+                except Exception:
+                    pass
+    except Exception:
+        return
+    if len(candidates) <= 1:
+        return
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    for _, f in candidates[1:]:
+        try:
+            f.unlink()
+        except Exception:
+            pass
+
+
 def _create_tray_icon(port, server_ref=None):
     """Create the pystray Icon with right-click menu. Returns Icon (not running)."""
     icon_path = str(APP_DIR / "agent-lite-icon.ico")
@@ -2587,7 +2612,12 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             return
         target_dir = Path(sys.executable).parent if getattr(sys, 'frozen', False) else (APP_DIR / "dist")
         target_dir.mkdir(parents=True, exist_ok=True)
-        new_exe = target_dir / "AgentLite.exe.new"
+        # Use versioned filename: AgentLite-v1.2.3.exe
+        ver_tag = "update"
+        m = re.search(r'AgentLite-v([\d.]+)\.exe', url)
+        if m:
+            ver_tag = m.group(1)
+        new_exe = target_dir / f"AgentLite-v{ver_tag}.exe"
         download_id = str(uuid.uuid4())
         state = {"progress": 0, "done": False, "error": None, "path": str(new_exe), "total": 0}
         _active_downloads[download_id] = state
@@ -2601,6 +2631,8 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
                 request.urlretrieve(url, str(new_exe), reporthook=_report)
                 state["done"] = True
                 state["progress"] = 100
+                # Clean up old versioned installers, keep only latest
+                _cleanup_old_versions(target_dir)
             except Exception as e:
                 state["error"] = str(e)
 
@@ -2631,7 +2663,40 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             self.send_json({"error": str(e)}, 400)
 
     def _handle_restart(self):
-        self.send_json({"error": "Update only supported in compiled exe", "devMode": True}, 400)
+        body = self.read_body_json()
+        new_exe_path = (body.get("path") or "").strip()
+        if not new_exe_path:
+            self.send_json({"error": "No update path provided"}, 400)
+            return
+        if not getattr(sys, 'frozen', False):
+            self.send_json({"error": "Update only supported in compiled exe", "devMode": True}, 400)
+            return
+        current_exe = Path(sys.executable)
+        new_exe = Path(new_exe_path)
+        if not new_exe.exists():
+            self.send_json({"error": "Update file not found"}, 400)
+            return
+        # Write batch file to replace current exe after shutdown
+        bat_path = current_exe.parent / "_update.bat"
+        bat_content = (
+            '@echo off\r\n'
+            'timeout /t 2 /nobreak >nul\r\n'
+            f'copy /Y "{new_exe}" "{current_exe}" >nul 2>&1\r\n'
+            'if %errorlevel% equ 0 (\r\n'
+            f'    del "{new_exe}" >nul 2>&1\r\n'
+            f'    start "" "{current_exe}"\r\n'
+            ')\r\n'
+            'del "%~f0"\r\n'
+        )
+        bat_path.write_text(bat_content, encoding="ascii")
+        self.send_json({"ok": True})
+        # Launch batch detached and exit immediately
+        subprocess.Popen(
+            ["cmd", "/c", str(bat_path)],
+            creationflags=0x08000000,  # CREATE_NO_WINDOW
+            close_fds=True,
+        )
+        os._exit(0)
 
     def _handle_sync_keys(self):
         body = self.read_body_json()

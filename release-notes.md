@@ -1,3 +1,17 @@
+## v0.4.3: Update System Overhaul
+
+### Update System Rewrite
+- **Removed auto-check popup**: no more tkinter dialog on every launch, update is manual via Settings → Update
+- **Batch-based atomic replacement**: download → click "Install & Restart" → batch script waits for exit, copies new exe in place, restarts
+- **Versioned installers**: downloads named `AgentLite-v0.4.3.exe` instead of `.new`/`.old` suffixes
+- **Auto-cleanup**: old versioned installers in the same directory are deleted, only the latest kept
+- **Path-independent**: works no matter where the exe is located (Desktop, Downloads, custom folder)
+
+### Onboarding
+- User guide now only appears on first install, no longer re-triggers on version updates
+
+---
+
 ## v0.4.2: File Tree, Image Storage & Platform Integration
 
 50+ commits since v0.4.1, focused on UX polish, image handling, and New API platform login.

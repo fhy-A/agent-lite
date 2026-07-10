@@ -54,6 +54,18 @@ def ensure_dirs():
 
 
 def main():
+    try:
+        _main()
+    except Exception as e:
+        import traceback
+        crash_log = Path.home() / ".agent-lite" / "crash.log"
+        crash_log.parent.mkdir(parents=True, exist_ok=True)
+        with open(crash_log, "w", encoding="utf-8") as f:
+            traceback.print_exc(file=f)
+        raise
+
+
+def _main():
     # Kill any existing agent-lite processes before starting
     killed = kill_existing()
     if killed:

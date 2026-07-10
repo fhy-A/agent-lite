@@ -138,8 +138,9 @@ def _create_tray_icon(port, server_ref=None):
 def start_tray(port=3010, server_ref=None):
     """Start tray icon in a daemon thread. No-op if already running or not available."""
     global _tray_thread_ref
+    _tlog = _tray_log
     if not TRAY_AVAILABLE:
-        print("[tray] pystray or PIL not available")
+        _tlog("pystray or PIL not available")
         return None
     if _tray_thread_ref is not None and _tray_thread_ref.is_alive():
         return None
@@ -149,15 +150,26 @@ def start_tray(port=3010, server_ref=None):
             try:
                 icon.run()
             except Exception as e:
-                print(f"[tray] runtime error: {e}")
+                _tlog(f"runtime error: {e}")
         t = threading.Thread(target=_run_tray, daemon=True, name="tray-icon")
         t.start()
         _tray_thread_ref = t
-        print("[tray] started successfully")
+        _tlog("started successfully")
         return t
     except Exception as e:
-        print(f"[tray] failed to start: {e}")
+        _tlog(f"failed to start: {e}")
         return None
+
+
+def _tray_log(msg):
+    """Write tray diagnostic message to a log file (stdout is invisible in --noconsole mode)."""
+    try:
+        log_path = DATA_DIR / "tray.log"
+        ts = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"{ts} {msg}\n")
+    except Exception:
+        pass
 
 
 SKIP_DIRS = {
@@ -2694,11 +2706,20 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         if not new_exe.exists():
             self.send_json({"error": "Update file not found"}, 400)
             return
-        # Use PowerShell instead of batch — handles Unicode paths reliably
+        # PowerShell: delete old exe first (can't overwrite a running exe on Windows),
+        # then copy new to old name, then launch. Retry delete up to 10s.
         ps_script = (
             f'Start-Sleep -Seconds 2;'
-            f'Copy-Item -Path "{new_exe}" -Destination "{current_exe}" -Force;'
-            f'if ($?) {{ Remove-Item "{new_exe}" -Force; Start-Process "{current_exe}" }}'
+            f'$ok = $false;'
+            f'for ($i = 0; $i -lt 10; $i++) {{'
+            f'  try {{ Remove-Item -Path "{current_exe}" -Force -ErrorAction Stop; $ok = $true; break }}'
+            f'  catch {{ Start-Sleep -Seconds 1 }}'
+            f'}};'
+            f'if ($ok) {{'
+            f'  Copy-Item -Path "{new_exe}" -Destination "{current_exe}" -Force;'
+            f'  Remove-Item "{new_exe}" -Force -ErrorAction SilentlyContinue;'
+            f'  Start-Process "{current_exe}"'
+            f'}}'
         )
         encoded = base64.b64encode(ps_script.encode("utf-16-le")).decode("ascii")
         self.send_json({"ok": True})

@@ -258,80 +258,9 @@ if TRAY_AVAILABLE and os.name == "nt":
                 **kwargs,
             )
             result = win32.Shell_NotifyIcon(code, data)
-            _tray_log(
-                f"Shell_NotifyIcon code={code} result={int(bool(result))} "
-                f"hwnd={self._hwnd} id={self._NOTIFY_ID} "
-                f"iconHandle={getattr(self, '_icon_handle', None)}"
-            )
             return result
 else:
     AgentLiteTrayIcon = pystray.Icon if TRAY_AVAILABLE else None
-
-
-def _tray_setup(icon):
-    """Make the icon visible and record the state after registration."""
-    try:
-        icon.visible = True
-        _tray_log(
-            f"tray setup complete visible={icon.visible} "
-            f"hwnd={getattr(icon, '_hwnd', None)} "
-            f"iconHandle={getattr(icon, '_icon_handle', None)}"
-        )
-    except Exception as e:
-        _tray_log(f"tray setup error: {e}")
-        raise
-
-
-def _raw_shell_notify_test(hwnd=0):
-    """Test: call Shell_NotifyIcon directly via ctypes to diagnose pystray issues."""
-    import ctypes.wintypes as w
-    NIM_ADD = 0
-    NIM_SETVERSION = 0x00000004
-    NIF_MESSAGE = 1
-    NIF_ICON = 2
-    NIF_TIP = 4
-    NOTIFYICON_VERSION_4 = 4
-    WM_USER = 0x0400
-    WM_TRAY = WM_USER + 100
-
-    class GUID(ctypes.Structure):
-        _fields_ = [("Data1", w.DWORD), ("Data2", w.WORD), ("Data3", w.WORD),
-                    ("Data4", w.BYTE * 8)]
-
-    class NOTIFYICONDATA(ctypes.Structure):
-        _fields_ = [
-            ("cbSize", w.DWORD), ("hWnd", w.HWND), ("uID", w.UINT),
-            ("uFlags", w.UINT), ("uCallbackMessage", w.UINT),
-            ("hIcon", w.HICON), ("szTip", w.CHAR * 128),
-            ("dwState", w.DWORD), ("dwStateMask", w.DWORD),
-            ("szInfo", w.CHAR * 256), ("uTimeoutOrVersion", w.UINT),
-            ("szInfoTitle", w.CHAR * 64), ("dwInfoFlags", w.DWORD),
-            ("guidItem", GUID), ("hBalloonIcon", w.HICON),
-        ]
-
-    # Load icon from the exe itself (resource #1)
-    shell32 = ctypes.windll.shell32
-    user32 = ctypes.windll.user32
-    kernel32 = ctypes.windll.kernel32
-
-    # Get the EXE's own icon
-    hicon = user32.LoadIconW(0, 32512)  # IDI_APPLICATION as fallback
-    _tray_log(f"raw test: LoadIcon returned {hicon}")
-
-    nid = NOTIFYICONDATA()
-    nid.cbSize = ctypes.sizeof(NOTIFYICONDATA)
-    nid.hWnd = hwnd
-    nid.uID = 999
-    nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP
-    nid.uCallbackMessage = WM_TRAY
-    nid.hIcon = hicon
-    nid.szTip = b"Agent Lite Test"
-
-    result = shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
-    _tray_log(f"raw test: Shell_NotifyIconW(NIM_ADD) returned {result}")
-
-    err = kernel32.GetLastError()
-    _tray_log(f"raw test: GetLastError() = {err}")
 
 
 def _create_tray_icon(port, server_ref=None, img=None):
@@ -360,9 +289,7 @@ def _create_tray_icon(port, server_ref=None, img=None):
 def start_tray(port=3010, server_ref=None):
     """Start tray icon in a daemon thread. No-op if already running or not available."""
     global _tray_thread_ref, _tray_icon_ref, _tray_loop_active
-    _tlog = _tray_log
     if not TRAY_AVAILABLE:
-        _tlog("pystray or PIL not available")
         return None
     if _tray_thread_ref is not None and _tray_thread_ref.is_alive():
         return None
@@ -371,24 +298,18 @@ def start_tray(port=3010, server_ref=None):
             global _tray_icon_ref, _tray_loop_active
             try:
                 img = _load_tray_icon()
-                _tlog("tray thread running")
                 icon = _create_tray_icon(port, server_ref, img)
                 _tray_icon_ref = icon
                 _tray_loop_active = True
-                icon.run(setup=_tray_setup)
-            except Exception as e:
-                _tlog(f"runtime error: {e}")
+                icon.run(setup=lambda i: setattr(i, 'visible', True))
             finally:
                 _tray_loop_active = False
                 _tray_icon_ref = None
-            _tlog("tray thread exited")
         t = threading.Thread(target=_run_tray, daemon=True, name="tray-icon")
         t.start()
         _tray_thread_ref = t
-        _tlog("started successfully")
         return t
-    except Exception as e:
-        _tlog(f"failed to start: {e}")
+    except Exception:
         return None
 
 
@@ -401,39 +322,17 @@ def run_tray_main_thread(port=3010, server_ref=None):
     """
     global _tray_icon_ref, _tray_loop_active
     if not TRAY_AVAILABLE:
-        _tray_log("pystray or PIL not available")
         return False
     try:
         img = _load_tray_icon()
         icon = _create_tray_icon(port, server_ref, img)
         _tray_icon_ref = icon
         _tray_loop_active = True
-        _tray_log("tray main-thread loop running")
-        icon.run(setup=_tray_setup)
-        _tray_log("tray main-thread loop exited")
+        icon.run(setup=lambda i: setattr(i, 'visible', True))
         return True
-    except Exception as e:
-        _tray_log(f"main-thread runtime error: {e}")
-        return False
     finally:
         _tray_loop_active = False
         _tray_icon_ref = None
-
-
-_tray_diag = []  # in-memory diagnostic buffer (survives file I/O failures)
-
-
-def _tray_log(msg):
-    """Write tray diagnostic message to memory buffer + log file."""
-    ts = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    line = f"{ts} {msg}"
-    _tray_diag.append(line)
-    try:
-        log_path = DATA_DIR / "tray.log"
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except Exception:
-        pass
 
 
 SKIP_DIRS = {
@@ -1460,9 +1359,6 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             if route == "/api/check-update":
                 self.send_json(self._check_update())
                 return
-            if route == "/api/tray-diag":
-                self.send_json({"diag": _tray_diag, "trayAvailable": TRAY_AVAILABLE, "threadAlive": _tray_thread_ref is not None and _tray_thread_ref.is_alive(), "loopActive": _tray_loop_active})
-                return
             if route == "/api/download-progress":
                 did = query.get("id", [None])[0]
                 state = _active_downloads.get(did)
@@ -1597,9 +1493,6 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/restart":
                 self._handle_restart()
-                return
-            if self.path == "/api/tray-diag":
-                self.send_json({"diag": _tray_diag, "trayAvailable": TRAY_AVAILABLE, "threadAlive": _tray_thread_ref is not None and _tray_thread_ref.is_alive(), "loopActive": _tray_loop_active})
                 return
             if self.path == "/api/agent-lite/sync-keys":
                 self._handle_sync_keys()

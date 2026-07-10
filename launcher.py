@@ -4,6 +4,7 @@ Agent Lite launcher — entry point for PyInstaller bundle.
 import os
 import subprocess
 import sys
+import webbrowser
 from pathlib import Path
 
 
@@ -116,6 +117,7 @@ def _main():
 
     server.start_tray(port, server_obj)
     print(f"Agent Lite running at http://127.0.0.1:{port}")
+    webbrowser.open(f"http://127.0.0.1:{port}")
 
     try:
         server_obj.serve_forever()

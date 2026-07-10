@@ -10258,10 +10258,20 @@ function renderUpdatePanel(container) {
             status(t("restarting")); actions("");
             try { await apiJson("/api/restart", { method: "POST", body: JSON.stringify({ path: newExePath }) }); } catch (_) {}
             showToast("Agent Lite is restarting...", "success");
-            // Wait for new process to start, then reload
+            // Wait until the expected version is serving requests, then use a
+            // cache-busting URL so the browser cannot retain the old bundle.
             setTimeout(() => {
               const check = setInterval(() => {
-                fetch("/api/version").then(() => { clearInterval(check); location.reload(); }).catch(() => {});
+                fetch("/api/version?_=" + Date.now(), { cache: "no-store" })
+                  .then((response) => response.json())
+                  .then((versionInfo) => {
+                    if (versionInfo.localVersion !== remoteVer) return;
+                    clearInterval(check);
+                    const refreshed = new URL(location.href);
+                    refreshed.searchParams.set("updated", remoteVer + "-" + Date.now());
+                    location.replace(refreshed.toString());
+                  })
+                  .catch(() => {});
               }, 800);
             }, 3000);
           });

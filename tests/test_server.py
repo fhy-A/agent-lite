@@ -5,11 +5,55 @@ Run: python -m unittest tests.test_server -v
 """
 import re
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import server
+
+
+class TestUpdaterHelpers(unittest.TestCase):
+    def test_valid_windows_executable(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            exe = Path(temp_dir) / "AgentLite-v1.2.3.exe"
+            exe.write_bytes(b"MZ" + (b"\0" * (1024 * 1024)))
+            self.assertTrue(server._is_valid_windows_executable(exe))
+
+    def test_rejects_incomplete_or_non_pe_download(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bad = Path(temp_dir) / "AgentLite-v1.2.3.exe.part"
+            bad.write_text("<html>download failed</html>", encoding="utf-8")
+            self.assertFalse(server._is_valid_windows_executable(bad))
+
+    def test_update_script_keeps_new_name_and_removes_old_versions(self):
+        root = Path(r"C:\Agent Lite")
+        old_exe = root / "AgentLite-v1.2.2.exe"
+        new_exe = root / "AgentLite-v1.2.3.exe"
+        script = server._build_update_script(old_exe, new_exe, root / "update.log")
+        self.assertIn("Get-CimInstance Win32_Process", script)
+        self.assertIn("Stop-Process", script)
+        self.assertIn("Get-ChildItem", script)
+        self.assertIn("Remove-Item", script)
+        self.assertIn("Start-Process -FilePath $newExe", script)
+        self.assertNotIn("Copy-Item", script)
+
+    def test_check_update_detects_newer_release(self):
+        handler = object.__new__(server.AgentLiteHandler)
+        with mock.patch.object(server, "_read_version_file", return_value="0.4.10"), \
+             mock.patch.object(server, "_read_remote_version", return_value="0.4.11"):
+            result = handler._check_update()
+        self.assertTrue(result["updateAvailable"])
+        self.assertEqual(result["remoteVersion"], "0.4.11")
+        self.assertTrue(result["downloadUrl"].endswith("/v0.4.11/AgentLite-v0.4.11.exe"))
+
+    def test_frontend_waits_for_new_version_before_cache_busting_reload(self):
+        app_js = (Path(__file__).resolve().parent.parent / "app.js").read_text(encoding="utf-8")
+        self.assertIn('if (versionInfo.localVersion !== remoteVer) return;', app_js)
+        self.assertIn('cache: "no-store"', app_js)
+        self.assertIn('refreshed.searchParams.set("updated", remoteVer + "-" + Date.now())', app_js)
+        self.assertIn("location.replace(refreshed.toString())", app_js)
 
 
 class TestSanitizeFilename(unittest.TestCase):

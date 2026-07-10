@@ -17,7 +17,10 @@ import webbrowser
 
 try:
     import pystray
-    from PIL import Image
+    # Import the ICO writer and its BMP dependency explicitly. PyInstaller
+    # bundles hidden modules but does not execute them automatically, while
+    # pystray serializes the in-memory image back to ICO on Windows.
+    from PIL import Image, BmpImagePlugin, IcoImagePlugin, PngImagePlugin
     TRAY_AVAILABLE = True
 except ImportError:
     TRAY_AVAILABLE = False
@@ -36,6 +39,8 @@ NEW_API_BASE_URL = os.environ.get("NEW_API_BASE_URL", "").rstrip("/")
 PORT = int(os.environ.get("AGENT_LITE_PORT", "3010"))
 _active_downloads = {}   # downloadId -> {progress, done, error, path, total}
 _tray_thread_ref = None  # tray daemon thread reference
+_tray_icon_ref = None    # keep the icon alive for the lifetime of the process
+_tray_loop_active = False
 MAX_PREVIEW_BYTES = 1024 * 1024
 MAX_TOOL_READ_BYTES = 512 * 1024
 MAX_SEARCH_FILE_BYTES = 1024 * 1024
@@ -104,40 +109,243 @@ def _cleanup_old_versions(target_dir):
             pass
 
 
-def _create_tray_icon(port, server_ref=None):
-    """Create the pystray Icon with right-click menu. Returns Icon (not running)."""
-    icon_path = APP_DIR / "agent-lite-icon.ico"
-    if icon_path.exists():
-        img = Image.open(str(icon_path))
-    else:
-        # Fallback: generate a simple icon in memory
-        img = Image.new("RGBA", (64, 64), (59, 130, 246, 255))
-        for y in range(10, 54):
-            for x in range(10, 54):
-                img.putpixel((x, y), (255, 255, 255, 255))
-        for y in range(22, 42):
-            for x in range(22, 42):
-                img.putpixel((x, y), (59, 130, 246, 255))
+def _is_valid_windows_executable(path):
+    """Return True when *path* looks like a complete Windows PE executable."""
+    try:
+        candidate = Path(path)
+        if not candidate.is_file() or candidate.stat().st_size < 1024 * 1024:
+            return False
+        with candidate.open("rb") as stream:
+            return stream.read(2) == b"MZ"
+    except OSError:
+        return False
 
-    def on_open():
+
+def _powershell_literal(value):
+    """Quote a value for use as a single-quoted PowerShell literal."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _build_update_script(current_exe, new_exe, log_path):
+    """Build the detached PowerShell updater used after the app exits."""
+    target_dir = Path(current_exe).resolve().parent
+    current_exe = Path(current_exe).resolve()
+    new_exe = Path(new_exe).resolve()
+    log_path = Path(log_path).resolve()
+    return f"""
+$ErrorActionPreference = 'Stop'
+$targetDir = {_powershell_literal(target_dir)}
+$currentExe = {_powershell_literal(current_exe)}
+$newExe = {_powershell_literal(new_exe)}
+$logPath = {_powershell_literal(log_path)}
+
+function Write-UpdateLog([string]$message) {{
+    $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $message"
+    Add-Content -LiteralPath $logPath -Value $line -Encoding UTF8
+}}
+
+try {{
+    Write-UpdateLog "update started: $currentExe -> $newExe"
+    Start-Sleep -Seconds 1
+
+    # Stop every packaged Agent Lite instance from this installation folder,
+    # including both PyInstaller parent and child processes.
+    $deadline = (Get-Date).AddSeconds(20)
+    do {{
+        $agents = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {{
+            $_.ExecutablePath -and
+            ([IO.Path]::GetDirectoryName($_.ExecutablePath) -ieq $targetDir) -and
+            ($_.Name -match '^AgentLite-v[0-9.]+[.]exe$')
+        }})
+        foreach ($agent in $agents) {{
+            Stop-Process -Id $agent.ProcessId -Force -ErrorAction SilentlyContinue
+        }}
+        if ($agents.Count -eq 0) {{ break }}
+        Start-Sleep -Milliseconds 500
+    }} while ((Get-Date) -lt $deadline)
+
+    if (-not (Test-Path -LiteralPath $newExe -PathType Leaf)) {{
+        throw "downloaded executable does not exist: $newExe"
+    }}
+
+    # Keep the downloaded versioned executable and remove every older build.
+    $oldFiles = @(Get-ChildItem -LiteralPath $targetDir -Filter 'AgentLite-v*.exe' -File | Where-Object {{
+        $_.FullName -ine $newExe
+    }})
+    foreach ($oldFile in $oldFiles) {{
+        $deleted = $false
+        for ($attempt = 0; $attempt -lt 10; $attempt++) {{
+            try {{
+                Remove-Item -LiteralPath $oldFile.FullName -Force -ErrorAction Stop
+                $deleted = $true
+                break
+            }} catch {{
+                Start-Sleep -Milliseconds 500
+            }}
+        }}
+        if (-not $deleted) {{ throw "failed to delete old executable: $($oldFile.FullName)" }}
+    }}
+
+    Start-Process -FilePath $newExe -WorkingDirectory $targetDir
+    Write-UpdateLog "update completed and new version started: $newExe"
+}} catch {{
+    Write-UpdateLog "update failed: $($_.Exception.Message)"
+    exit 1
+}}
+""".strip()
+
+
+def _load_tray_icon():
+    """Load tray icon image. Try data dir first, then APP_DIR, fall back to generated."""
+    # Try data dir first (copied there by launcher on first run — most reliable)
+    for base in [DATA_DIR, APP_DIR]:
+        icon_path = base / "agent-lite-icon.ico"
+        if icon_path.exists():
+            try:
+                # Fully decode and detach the image from its source file. This is
+                # important for PyInstaller one-file builds, whose extraction
+                # directory is temporary and may be cleaned while the app runs.
+                with Image.open(str(icon_path)) as source:
+                    source.load()
+                    return source.convert("RGBA")
+            except Exception:
+                pass
+    # Bright 32x32 RGB fallback
+    img = Image.new("RGB", (32, 32), (220, 50, 50))
+    for y in range(4, 28):
+        for x in range(4, 28):
+            img.putpixel((x, y), (255, 255, 255))
+    for y in range(10, 22):
+        for x in range(10, 22):
+            img.putpixel((x, y), (220, 50, 50))
+    return img
+
+
+if TRAY_AVAILABLE and os.name == "nt":
+    class AgentLiteTrayIcon(pystray.Icon):
+        """Windows tray icon with a stable notification ID.
+
+        pystray 0.19.x passes ``hID`` to NOTIFYICONDATAW, but the structure
+        field is named ``uID``. ctypes silently ignores that unknown keyword,
+        leaving the ID as zero. Explorer tolerates this for pythonw in some
+        cases, but PyInstaller one-file processes can reject the registration.
+        """
+
+        _NOTIFY_ID = 1
+
+        def _message(self, code, flags, **kwargs):
+            from pystray._win32 import win32
+
+            data = win32.NOTIFYICONDATAW(
+                cbSize=ctypes.sizeof(win32.NOTIFYICONDATAW),
+                hWnd=self._hwnd,
+                uID=self._NOTIFY_ID,
+                uFlags=flags,
+                **kwargs,
+            )
+            result = win32.Shell_NotifyIcon(code, data)
+            _tray_log(
+                f"Shell_NotifyIcon code={code} result={int(bool(result))} "
+                f"hwnd={self._hwnd} id={self._NOTIFY_ID} "
+                f"iconHandle={getattr(self, '_icon_handle', None)}"
+            )
+            return result
+else:
+    AgentLiteTrayIcon = pystray.Icon if TRAY_AVAILABLE else None
+
+
+def _tray_setup(icon):
+    """Make the icon visible and record the state after registration."""
+    try:
+        icon.visible = True
+        _tray_log(
+            f"tray setup complete visible={icon.visible} "
+            f"hwnd={getattr(icon, '_hwnd', None)} "
+            f"iconHandle={getattr(icon, '_icon_handle', None)}"
+        )
+    except Exception as e:
+        _tray_log(f"tray setup error: {e}")
+        raise
+
+
+def _raw_shell_notify_test(hwnd=0):
+    """Test: call Shell_NotifyIcon directly via ctypes to diagnose pystray issues."""
+    import ctypes.wintypes as w
+    NIM_ADD = 0
+    NIM_SETVERSION = 0x00000004
+    NIF_MESSAGE = 1
+    NIF_ICON = 2
+    NIF_TIP = 4
+    NOTIFYICON_VERSION_4 = 4
+    WM_USER = 0x0400
+    WM_TRAY = WM_USER + 100
+
+    class GUID(ctypes.Structure):
+        _fields_ = [("Data1", w.DWORD), ("Data2", w.WORD), ("Data3", w.WORD),
+                    ("Data4", w.BYTE * 8)]
+
+    class NOTIFYICONDATA(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", w.DWORD), ("hWnd", w.HWND), ("uID", w.UINT),
+            ("uFlags", w.UINT), ("uCallbackMessage", w.UINT),
+            ("hIcon", w.HICON), ("szTip", w.CHAR * 128),
+            ("dwState", w.DWORD), ("dwStateMask", w.DWORD),
+            ("szInfo", w.CHAR * 256), ("uTimeoutOrVersion", w.UINT),
+            ("szInfoTitle", w.CHAR * 64), ("dwInfoFlags", w.DWORD),
+            ("guidItem", GUID), ("hBalloonIcon", w.HICON),
+        ]
+
+    # Load icon from the exe itself (resource #1)
+    shell32 = ctypes.windll.shell32
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    # Get the EXE's own icon
+    hicon = user32.LoadIconW(0, 32512)  # IDI_APPLICATION as fallback
+    _tray_log(f"raw test: LoadIcon returned {hicon}")
+
+    nid = NOTIFYICONDATA()
+    nid.cbSize = ctypes.sizeof(NOTIFYICONDATA)
+    nid.hWnd = hwnd
+    nid.uID = 999
+    nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP
+    nid.uCallbackMessage = WM_TRAY
+    nid.hIcon = hicon
+    nid.szTip = b"Agent Lite Test"
+
+    result = shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
+    _tray_log(f"raw test: Shell_NotifyIconW(NIM_ADD) returned {result}")
+
+    err = kernel32.GetLastError()
+    _tray_log(f"raw test: GetLastError() = {err}")
+
+
+def _create_tray_icon(port, server_ref=None, img=None):
+    """Create the pystray Icon with right-click menu. Returns Icon (not running)."""
+    if img is None:
+        img = _load_tray_icon()
+
+    def on_open(icon=None, item=None):
         webbrowser.open(f"http://127.0.0.1:{port}")
 
-    def on_exit():
+    def on_exit(icon=None, item=None):
         if server_ref:
             server_ref.shutdown()
-        os._exit(0)
+            server_ref.server_close()
+        if icon:
+            icon.stop()
 
     menu = pystray.Menu(
         pystray.MenuItem("Open Agent Lite", on_open, default=True),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Exit", on_exit),
     )
-    return pystray.Icon("Agent Lite", img, "Agent Lite", menu)
+    return AgentLiteTrayIcon("Agent Lite", img, "Agent Lite", menu)
 
 
 def start_tray(port=3010, server_ref=None):
     """Start tray icon in a daemon thread. No-op if already running or not available."""
-    global _tray_thread_ref
+    global _tray_thread_ref, _tray_icon_ref, _tray_loop_active
     _tlog = _tray_log
     if not TRAY_AVAILABLE:
         _tlog("pystray or PIL not available")
@@ -145,12 +353,21 @@ def start_tray(port=3010, server_ref=None):
     if _tray_thread_ref is not None and _tray_thread_ref.is_alive():
         return None
     try:
-        icon = _create_tray_icon(port, server_ref)
         def _run_tray():
+            global _tray_icon_ref, _tray_loop_active
             try:
-                icon.run()
+                img = _load_tray_icon()
+                _tlog("tray thread running")
+                icon = _create_tray_icon(port, server_ref, img)
+                _tray_icon_ref = icon
+                _tray_loop_active = True
+                icon.run(setup=_tray_setup)
             except Exception as e:
                 _tlog(f"runtime error: {e}")
+            finally:
+                _tray_loop_active = False
+                _tray_icon_ref = None
+            _tlog("tray thread exited")
         t = threading.Thread(target=_run_tray, daemon=True, name="tray-icon")
         t.start()
         _tray_thread_ref = t
@@ -161,13 +378,46 @@ def start_tray(port=3010, server_ref=None):
         return None
 
 
+def run_tray_main_thread(port=3010, server_ref=None):
+    """Run the Windows tray loop on the current (main) thread.
+
+    pystray requires Icon.run() to execute on the main thread. The threaded
+    helper above remains available for the source/dev server, while packaged
+    builds call this function and run the HTTP server in a worker thread.
+    """
+    global _tray_icon_ref, _tray_loop_active
+    if not TRAY_AVAILABLE:
+        _tray_log("pystray or PIL not available")
+        return False
+    try:
+        img = _load_tray_icon()
+        icon = _create_tray_icon(port, server_ref, img)
+        _tray_icon_ref = icon
+        _tray_loop_active = True
+        _tray_log("tray main-thread loop running")
+        icon.run(setup=_tray_setup)
+        _tray_log("tray main-thread loop exited")
+        return True
+    except Exception as e:
+        _tray_log(f"main-thread runtime error: {e}")
+        return False
+    finally:
+        _tray_loop_active = False
+        _tray_icon_ref = None
+
+
+_tray_diag = []  # in-memory diagnostic buffer (survives file I/O failures)
+
+
 def _tray_log(msg):
-    """Write tray diagnostic message to a log file (stdout is invisible in --noconsole mode)."""
+    """Write tray diagnostic message to memory buffer + log file."""
+    ts = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"{ts} {msg}"
+    _tray_diag.append(line)
     try:
         log_path = DATA_DIR / "tray.log"
-        ts = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(log_path, "a", encoding="utf-8") as f:
-            f.write(f"{ts} {msg}\n")
+            f.write(line + "\n")
     except Exception:
         pass
 
@@ -1196,6 +1446,9 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             if route == "/api/check-update":
                 self.send_json(self._check_update())
                 return
+            if route == "/api/tray-diag":
+                self.send_json({"diag": _tray_diag, "trayAvailable": TRAY_AVAILABLE, "threadAlive": _tray_thread_ref is not None and _tray_thread_ref.is_alive(), "loopActive": _tray_loop_active})
+                return
             if route == "/api/download-progress":
                 did = query.get("id", [None])[0]
                 state = _active_downloads.get(did)
@@ -1330,6 +1583,9 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/restart":
                 self._handle_restart()
+                return
+            if self.path == "/api/tray-diag":
+                self.send_json({"diag": _tray_diag, "trayAvailable": TRAY_AVAILABLE, "threadAlive": _tray_thread_ref is not None and _tray_thread_ref.is_alive(), "loopActive": _tray_loop_active})
                 return
             if self.path == "/api/agent-lite/sync-keys":
                 self._handle_sync_keys()
@@ -2648,23 +2904,27 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         if m:
             ver_tag = m.group(1)
         new_exe = target_dir / f"AgentLite-v{ver_tag}.exe"
+        partial_exe = new_exe.with_suffix(new_exe.suffix + ".part")
         download_id = str(uuid.uuid4())
         state = {"progress": 0, "done": False, "error": None, "path": str(new_exe), "total": 0}
         _active_downloads[download_id] = state
 
         def _do_download():
             try:
+                partial_exe.unlink(missing_ok=True)
                 def _report(b, s, t):
                     if t > 0:
                         state["total"] = t
                         state["progress"] = min(int(b * s / t * 100), 100)
-                request.urlretrieve(url, str(new_exe), reporthook=_report)
+                request.urlretrieve(url, str(partial_exe), reporthook=_report)
+                if not _is_valid_windows_executable(partial_exe):
+                    raise ValueError("Downloaded file is not a valid Windows executable")
+                os.replace(partial_exe, new_exe)
                 state["done"] = True
                 state["progress"] = 100
-                # Clean up old versioned installers, keep only latest
-                _cleanup_old_versions(target_dir)
             except Exception as e:
                 state["error"] = str(e)
+                partial_exe.unlink(missing_ok=True)
 
         t = threading.Thread(target=_do_download, daemon=True)
         t.start()
@@ -2701,28 +2961,22 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         if not getattr(sys, 'frozen', False):
             self.send_json({"error": "Update only supported in compiled exe", "devMode": True}, 400)
             return
-        current_exe = Path(sys.executable)
-        new_exe = Path(new_exe_path)
-        if not new_exe.exists():
+        current_exe = Path(sys.executable).resolve()
+        new_exe = Path(new_exe_path).resolve()
+        expected_name = re.compile(r'^AgentLite-v[0-9]+(?:[.][0-9]+)*[.]exe$', re.IGNORECASE)
+        if new_exe.parent != current_exe.parent or not expected_name.match(new_exe.name):
+            self.send_json({"error": "Update executable must be a versioned Agent Lite file in the installation directory"}, 400)
+            return
+        if new_exe == current_exe:
+            self.send_json({"error": "Downloaded version is already running"}, 400)
+            return
+        if not _is_valid_windows_executable(new_exe):
             self.send_json({"error": "Update file not found"}, 400)
             return
-        # PowerShell: delete old exe first (can't overwrite a running exe on Windows),
-        # then copy new to old name, then launch. Retry delete up to 10s.
-        ps_script = (
-            f'Start-Sleep -Seconds 2;'
-            f'$ok = $false;'
-            f'for ($i = 0; $i -lt 10; $i++) {{'
-            f'  try {{ Remove-Item -Path "{current_exe}" -Force -ErrorAction Stop; $ok = $true; break }}'
-            f'  catch {{ Start-Sleep -Seconds 1 }}'
-            f'}};'
-            f'if ($ok) {{'
-            f'  Copy-Item -Path "{new_exe}" -Destination "{current_exe}" -Force;'
-            f'  Remove-Item "{new_exe}" -Force -ErrorAction SilentlyContinue;'
-            f'  Start-Process "{current_exe}"'
-            f'}}'
-        )
+        log_path = DATA_DIR / "update.log"
+        ps_script = _build_update_script(current_exe, new_exe, log_path)
         encoded = base64.b64encode(ps_script.encode("utf-16-le")).decode("ascii")
-        self.send_json({"ok": True})
+        self.send_json({"ok": True, "nextExecutable": str(new_exe)})
         # Launch PowerShell detached and exit immediately
         subprocess.Popen(
             ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],

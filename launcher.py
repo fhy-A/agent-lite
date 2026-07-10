@@ -54,7 +54,21 @@ def ensure_dirs():
     return data_home
 
 
+def hide_console():
+    """Hide the console window (--console build) so user only sees tray + browser."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+    except Exception:
+        pass
+
+
 def main():
+    hide_console()
     try:
         _main()
     except Exception as e:
@@ -75,6 +89,14 @@ def _main():
 
     base = get_base_dir()
     data_dir = ensure_dirs()
+
+    # Copy tray icon to data dir so pystray can load it reliably (PyInstaller
+    # extraction can corrupt binary files in the temp directory)
+    _ico_src = base / "agent-lite-icon.ico"
+    _ico_dst = data_dir / "agent-lite-icon.ico"
+    if _ico_src.exists():
+        import shutil as _shutil
+        _shutil.copy2(_ico_src, _ico_dst)
 
     # Copy bundled data files if this is first run
     bundled_data = base / "data"
@@ -115,15 +137,27 @@ def _main():
     port = int(os.environ.get("AGENT_LITE_PORT", "3010"))
     server_obj = ThreadingHTTPServer(("127.0.0.1", port), server.AgentLiteHandler)
 
-    server.start_tray(port, server_obj)
+    # pystray's Windows backend requires its message loop on the main thread.
+    # Keep the HTTP server in a worker so the packaged app gets a reliable tray.
+    server_thread = threading.Thread(
+        target=server_obj.serve_forever,
+        daemon=False,
+        name="agent-lite-http",
+    )
+    server_thread.start()
     print(f"Agent Lite running at http://127.0.0.1:{port}")
     webbrowser.open(f"http://127.0.0.1:{port}")
 
     try:
-        server_obj.serve_forever()
+        tray_started = server.run_tray_main_thread(port, server_obj)
+        if not tray_started:
+            server_thread.join()
     except KeyboardInterrupt:
         print("\nShutting down...")
+    finally:
         server_obj.shutdown()
+        server_obj.server_close()
+        server_thread.join(timeout=5)
 
 
 if __name__ == "__main__":

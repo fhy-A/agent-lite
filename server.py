@@ -73,15 +73,29 @@ def _read_version_file():
 
 
 def _read_remote_version():
-    """Fetch remote VERSION from GitHub. Returns None on failure."""
+    """Fetch latest release version + download URL from GitHub Releases API.
+    Only returns a version if a release with an .exe asset actually exists.
+    Returns (version, download_url) or (None, None)."""
     try:
-        resp = request.urlopen(
-            "https://raw.githubusercontent.com/fhy-A/agent-lite/master/VERSION",
-            timeout=5
+        req = request.Request(
+            "https://api.github.com/repos/fhy-A/agent-lite/releases/latest",
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "AgentLite"},
         )
-        return resp.read().decode("utf-8").strip()
+        resp = request.urlopen(req, timeout=10)
+        data = json.loads(resp.read())
+        tag = data.get("tag_name", "").lstrip("v")
+        assets = data.get("assets") or []
+        exe_url = None
+        for a in assets:
+            name = a.get("name", "")
+            if name.endswith(".exe"):
+                exe_url = a.get("browser_download_url")
+                break
+        if tag and exe_url:
+            return tag, exe_url
     except Exception:
-        return None
+        pass
+    return None, None
 
 
 def _cleanup_old_versions(target_dir):
@@ -2870,17 +2884,14 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
 
     def _check_update(self):
         local = _read_version_file()
-        remote = _read_remote_version()
+        remote, download_url = _read_remote_version()
         is_frozen = getattr(sys, 'frozen', False)
         update_available = False
-        download_url = None
-        if remote:
+        if remote and download_url:
             try:
                 lv = tuple(int(x) for x in local.split("."))
                 rv = tuple(int(x) for x in remote.split("."))
                 update_available = rv > lv
-                if update_available:
-                    download_url = f"https://github.com/fhy-A/agent-lite/releases/download/v{remote}/AgentLite-v{remote}.exe"
             except Exception:
                 pass
         return {

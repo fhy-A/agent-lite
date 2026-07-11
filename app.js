@@ -9258,9 +9258,7 @@ async function sendMessage(userText) {
         // Multiple queued messages — dispatch as parallel sub-agents
         ctx.messages.push({
           role: "user",
-          content: `[系统] 以下 ${parallelSubTasks.length} 条排队消息已派发给子 Agent 并行处理：
-${parallelSubTasks.map((t, i) => `${i + 1}. ${t.text.slice(0, 80)}`).join("
-")}`,
+          content: `[系统] 以下 ${parallelSubTasks.length} 条排队消息已派发给子 Agent 并行处理：\n${parallelSubTasks.map((t, i) => `${i + 1}. ${t.text.slice(0, 80)}`).join("\n")}`,
           meta: { _system: true },
         });
         setSessionMessages(sessionId, ctx.messages);

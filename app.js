@@ -8084,49 +8084,46 @@ async function dispatchBackgroundSubAgent(sessionId, userText, images = []) {
     ? `[背景] 主 Agent 正在处理：${currentTask.slice(0, 150)}\n\n[新请求] ${userText}\n\n你是一个后台子 Agent，收到了一条用户在等待中发送的新消息。请独立处理这条新请求。如果新请求与主 Agent 正在执行的任务相关，优先给出简洁回复后让主 Agent 继续；如果无关，直接完成新请求。完成后输出结果，不要与主 Agent 交互。`
     : userText;
 
-  // Push a placeholder for the queued message
-  const placeholderIndex = state.messages.push({
-    role: "user",
-    content: userText,
-    _model: parentCtx.model || getSelectedModel(),
-    _time: new Date().toISOString(),
-  }) - 1;
-  renderMessages();
-
+  // Buffer results — don't mutate state.messages while main agent may be reading it
   try {
     const subCtx = createSubContext(parentCtx, prompt);
     subCtx.authorizationLabel = userText.slice(0, 24) || "后台任务";
     await runAgentLoop(subCtx);
     const sub = subCtx.subResult || { ok: false, result: "后台子 Agent 未返回结果" };
-    // Show result to user
-    const resultText = `**后台处理**：${userText.slice(0, 80)}\n\n${sub.result}`;
-    state.messages.push({
-      role: "assistant",
-      content: resultText,
-      meta: { kind: "background-subagent" },
-      _model: parentCtx.model || getSelectedModel(),
-      _time: new Date().toISOString(),
-    });
-    // Inject into main agent context so it can adapt if the new request is related
-    state.messages.push({
+
+    // Safely push results after sub-agent completes
+    const msgs = getSessionMessages(sessionId);
+    msgs.push({
       role: "user",
       content: `[系统通知] 用户在你执行任务期间发送了一条新消息，已完成处理。如需调整当前任务，请参考此结果。\n新消息：${userText.slice(0, 200)}\n处理结果：${sub.result.slice(0, 500)}`,
       meta: { _system: true, kind: "background-subagent-notify" },
       _time: new Date().toISOString(),
     });
+    msgs.push({
+      role: "assistant",
+      content: `**后台处理**：${userText.slice(0, 80)}\n\n${sub.result}`,
+      meta: { kind: "background-subagent" },
+      _model: parentCtx.model || getSelectedModel(),
+      _time: new Date().toISOString(),
+    });
+    setSessionMessages(sessionId, msgs);
+    renderMessages();
+    await saveSessionState(sessionId, msgs, getSessionStats(sessionId));
+    renderSessions();
   } catch (err) {
-    state.messages.push({
+    const msgs = getSessionMessages(sessionId);
+    msgs.push({
       role: "assistant",
       content: `**后台处理失败**：${userText.slice(0, 80)}\n\n${err.message || err}`,
       meta: { kind: "background-subagent", error: true },
       _model: parentCtx.model || getSelectedModel(),
       _time: new Date().toISOString(),
     });
+    setSessionMessages(sessionId, msgs);
+    renderMessages();
+    await saveSessionState(sessionId, msgs, getSessionStats(sessionId));
+    renderSessions();
   }
-  setSessionMessages(sessionId, state.messages);
-  renderMessages();
-  await saveSessionState(sessionId, state.messages, getSessionStats(sessionId));
-  renderSessions();
 }
 
 async function executeToolWithDelegation(tool, parentCtx, options = {}) {

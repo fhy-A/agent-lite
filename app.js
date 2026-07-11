@@ -7892,7 +7892,7 @@ async function commitPendingEdit() {
 function createSubContext(parentCtx, taskPrompt) {
   const subSystem = [
     SYSTEM_SECURITY_LAYER,
-    `你是一个编程子 Agent，负责完成主 Agent 分配的子任务。`,
+    `你是一个编程子 Agent，拥有和主 Agent 完全相同的工具集（读文件、写文件、运行命令、搜索等），负责完成主 Agent 分配的子任务。`,
     `环境：Windows + PowerShell。项目根目录：${els.projectRoot?.value || "未设置"}`,
     `完成任务后直接输出结果，不要再调用额外工具。`,
   ].join("\n\n");

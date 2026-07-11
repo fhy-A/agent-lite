@@ -1,5 +1,8 @@
 # Data (user sessions, backups, attachments — runtime state)
-data/
+data/sessions/
+data/attachments/
+data/file-backups/
+data/config.json
 
 # Python
 __pycache__/

@@ -11653,15 +11653,18 @@ els.chatForm.addEventListener("submit", async (event) => {
 
   if (isSessionStreaming(state.sessionId)) {
     // Dispatch immediately as a background sub-agent instead of queuing
+    const sessionId = state.sessionId;
     const imgs = [...state.attachedImages];
     els.prompt.value = "";
     els.prompt.rows = 2;
     state.attachedImages = [];
     renderImageThumbs();
     updateSendButtonState();
-    dispatchBackgroundSubAgent(state.sessionId, text, imgs).catch((err) => {
-      console.error("Background sub-agent dispatch failed:", err);
-    });
+    setTimeout(() => {
+      dispatchBackgroundSubAgent(sessionId, text, imgs).catch((err) => {
+        console.error("Background sub-agent dispatch failed:", err);
+      });
+    }, 0);
     return;
   }
 

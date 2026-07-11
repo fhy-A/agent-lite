@@ -8096,12 +8096,20 @@ async function dispatchBackgroundSubAgent(sessionId, userText, images = []) {
     subCtx.authorizationLabel = userText.slice(0, 24) || "后台任务";
     await runAgentLoop(subCtx);
     const sub = subCtx.subResult || { ok: false, result: "后台子 Agent 未返回结果" };
+    // Show result to user
     const resultText = `**后台处理**：${userText.slice(0, 80)}\n\n${sub.result}`;
     state.messages.push({
       role: "assistant",
       content: resultText,
       meta: { kind: "background-subagent" },
       _model: parentCtx.model || getSelectedModel(),
+      _time: new Date().toISOString(),
+    });
+    // Inject into main agent context so it can adapt if the new request is related
+    state.messages.push({
+      role: "user",
+      content: `[系统通知] 用户在你执行任务期间发送了一条新消息，已完成处理。如需调整当前任务，请参考此结果。\n新消息：${userText.slice(0, 200)}\n处理结果：${sub.result.slice(0, 500)}`,
+      meta: { _system: true, kind: "background-subagent-notify" },
       _time: new Date().toISOString(),
     });
   } catch (err) {

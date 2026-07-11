@@ -1723,6 +1723,9 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         path = session_path(session_id)
         if path.exists():
             session = read_json(path, {})
+            if not session.get("id"):
+                session["id"] = safe_session_id(session_id)
+                session["createdAt"] = session.get("createdAt") or now_iso()
         else:
             session = {"id": safe_session_id(session_id), "createdAt": now_iso()}
         session["title"] = body.get("title") or session.get("title") or "未命名会话"

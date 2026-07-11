@@ -40,6 +40,10 @@ const state = {
 
   pendingEdits: {},
 
+  authorizationRequests: [],
+
+  authorizationPanelCollapsed: false,
+
   confirmingEditId: null,
 
   renamingSessionId: null,
@@ -413,6 +417,8 @@ const els = {
 
   liveTimer: document.getElementById("liveTimer"),
 
+  authorizationPanel: document.getElementById("authorizationPanel"),
+
 };
 
 
@@ -423,7 +429,7 @@ const MAX_TOOL_ROUNDS = 200;
 
 const toolPolicy = {
 
-  plan: new Set(["list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "use_skill"]),
+  plan: new Set(["list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "task", "use_skill"]),
 
   accept: new Set(["list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "run_command", "task", "use_skill", "write_file", "delete_file", "save_memory"]),
 
@@ -2955,6 +2961,8 @@ function sessionFilePath(session) {
 
 function calcStats(messages = state.messages, stats = state.stats) {
 
+  messages = Array.isArray(messages) ? messages.filter(Boolean) : [];
+
   const counts = {
 
     user: messages.filter((msg) => msg.role === "user").length,
@@ -4067,17 +4075,19 @@ function renderEditSuggestionProjection(msg, index) {
   const editState = state.pendingEdits[pendingId] || {};
   const applied = !!(meta.applied || editState.applied);
   const rejected = !!(meta.rejected || editState.rejected || editState.resolved && !editState.applied);
+  const queued = state.authorizationRequests.some((item) => item.status === "pending" && item.editId === pendingId);
+  const proposalOnly = getPermissionProfile() === "plan" || !!meta.proposalOnly;
   const diffText = normalizeDiffText(content);
   if (/^\(no changes\)$/i.test(diffText.trim())) return "";
   const isDiff = /(^|\n)(--- |\+\+\+ |@@ )/.test(diffText);
   const body = isDiff ? renderDiff(diffText) : `<div class="tool-edit-markdown">${renderMarkdownLite(content)}</div>`;
   const stats = isDiff ? getDiffStats(diffText) : { additions: 0, removals: 0 };
   const canReject = getPermissionProfile() !== "bypass";
-  const status = applied ? t("appliedLabel") : (rejected ? t("rejectedLabel") : "待确认");
+  const status = applied ? t("appliedLabel") : (rejected ? t("rejectedLabel") : (proposalOnly ? "仅方案" : (queued ? "等待批准" : "待确认")));
   const statusClass = applied ? "is-applied" : (rejected ? "is-rejected" : "is-review");
 
   let actions = "";
-  if (!applied && !rejected) {
+  if (!applied && !rejected && !queued && !proposalOnly) {
     actions = `
       <div class="apply-edit-bar">
         <button class="apply-edit-btn" type="button" data-edit-id="${escapeHtml(pendingId)}">${t("applyEdit")}</button>
@@ -4087,7 +4097,7 @@ function renderEditSuggestionProjection(msg, index) {
   }
 
   return `
-    <article class="msg assistant edit-suggestion" data-msg-index="${index}">
+    <article class="msg assistant edit-suggestion" data-msg-index="${index}" data-edit-id="${escapeHtml(pendingId)}">
       <div class="tool-edit-card">
         <div class="tool-edit-head">
           <div class="tool-edit-heading">
@@ -4139,6 +4149,8 @@ function renderFinalAssistantProjection(msg, index) {
 }
 
 function renderMessages() {
+
+  renderAuthorizationPanel();
 
   // Ensure state.messages reflects current session (syncs ctx.messages changes)
   const curMsgs = getSessionMessages(state.sessionId);
@@ -6625,68 +6637,188 @@ function describeToolForConfirm(tool) {
 
 
 
-function showInlineConfirm(tool) {
+function authorizationSource(ctx) {
+  if (ctx?.isSubAgent) {
+    return {
+      key: `sub:${ctx.authorizationId || "unknown"}`,
+      label: `子 Agent · ${ctx.authorizationLabel || "子任务"}`,
+    };
+  }
+  return { key: "main", label: "主 Agent" };
+}
 
+function authorizationActionLabel(action) {
+  const labels = {
+    propose_edit: "修改",
+    write_file: "写入",
+    delete_file: "删除",
+    run_command: "运行",
+  };
+  return labels[action] || action || "操作";
+}
+
+function authorizationTarget(tool) {
+  if (tool.action === "run_command") return tool.command || "命令";
+  return tool.path || tool.query || describeToolForConfirm(tool);
+}
+
+function pendingAuthorizations(sessionId = state.sessionId) {
+  return state.authorizationRequests.filter((item) => item.status === "pending" && item.sessionId === sessionId);
+}
+
+function groupAuthorizations(items) {
+  const groups = [];
+  const byKey = new Map();
+  for (const item of items) {
+    let group = byKey.get(item.sourceKey);
+    if (!group) {
+      group = { key: item.sourceKey, label: item.sourceLabel, items: [] };
+      byKey.set(item.sourceKey, group);
+      groups.push(group);
+    }
+    group.items.push(item);
+  }
+  return groups;
+}
+
+function renderAuthorizationPanel() {
+  const panel = els.authorizationPanel;
+  if (!panel) return;
+  const items = pendingAuthorizations();
+  if (!items.length) {
+    panel.classList.add("hidden");
+    panel.innerHTML = "";
+    return;
+  }
+
+  const selectedCount = items.filter((item) => item.selected).length;
+  const editCount = items.filter((item) => ["propose_edit", "write_file", "delete_file"].includes(item.tool.action)).length;
+  const commandCount = items.filter((item) => item.tool.action === "run_command").length;
+  const summary = [editCount ? `${editCount} 个文件操作` : "", commandCount ? `${commandCount} 条命令` : ""].filter(Boolean).join(" · ");
+  const groups = groupAuthorizations(items);
+
+  panel.classList.toggle("is-collapsed", state.authorizationPanelCollapsed);
+  panel.classList.remove("hidden");
+  panel.innerHTML = `
+    <button class="authorization-collapsed-bar" type="button" data-auth-action="toggle">
+      <span>等待批准 · ${items.length} 项操作</span><span aria-hidden="true">›</span>
+    </button>
+    <div class="authorization-card">
+      <div class="authorization-head">
+        <div><strong>需要确认 · ${items.length} 项操作</strong><span>${escapeHtml(summary)}</span></div>
+        <button class="authorization-collapse" type="button" data-auth-action="toggle" title="收起">⌄</button>
+      </div>
+      <div class="authorization-groups">
+        ${groups.map((group) => {
+          const groupSelected = group.items.every((item) => item.selected);
+          return `
+            <section class="authorization-group">
+              <label class="authorization-group-head">
+                <input type="checkbox" data-auth-group="${escapeHtml(group.key)}" ${groupSelected ? "checked" : ""} />
+                <strong>${escapeHtml(group.label)}</strong><span>${group.items.length} 项</span>
+              </label>
+              ${group.items.map((item) => `
+                <div class="authorization-row" data-auth-id="${escapeHtml(item.id)}">
+                  <input type="checkbox" data-auth-select="${escapeHtml(item.id)}" ${item.selected ? "checked" : ""} />
+                  <span class="authorization-kind">${escapeHtml(authorizationActionLabel(item.tool.action))}</span>
+                  <span class="authorization-target" title="${escapeHtml(authorizationTarget(item.tool))}">${escapeHtml(authorizationTarget(item.tool))}</span>
+                  ${item.stats ? `<span class="authorization-stats"><b>+${item.stats.additions || 0}</b><i>−${item.stats.removals || 0}</i></span>` : ""}
+                  ${item.editId ? `<button class="authorization-view" type="button" data-auth-view="${escapeHtml(item.editId)}">查看</button>` : ""}
+                </div>`).join("")}
+            </section>`;
+        }).join("")}
+      </div>
+      <div class="authorization-actions">
+        <button type="button" class="authorization-reject-all" data-auth-action="reject-all">全部拒绝</button>
+        <button type="button" class="authorization-approve" data-auth-action="approve" ${selectedCount ? "" : "disabled"}>批准所选${selectedCount ? ` (${selectedCount})` : ""}</button>
+      </div>
+    </div>`;
+}
+
+function resolveAuthorization(item, approved) {
+  if (!item || item.status !== "pending") return;
+  item.status = approved ? "approved" : "rejected";
+  if (item.abortSignal && item.abortHandler) item.abortSignal.removeEventListener("abort", item.abortHandler);
+  item.resolve(Boolean(approved));
+  state.authorizationRequests = state.authorizationRequests.filter((entry) => entry !== item);
+}
+
+function requestAuthorization(tool, ctx = null, options = {}) {
   return new Promise((resolve) => {
-
-    const action = tool.action || "tool";
-
-    const detail = describeToolForConfirm(tool);
-
-    const id = `confirm-${Date.now()}`;
-
-    const html = `
-
-      <div class="inline-confirm" id="${id}">
-
-        <div class="inline-confirm-body">
-
-          <strong>Agent 请求执行：${escapeHtml(action)}</strong>
-
-          <span>${escapeHtml(detail)}</span>
-
-        </div>
-
-        <div class="inline-confirm-actions">
-
-          <button class="inline-confirm-accept" type="button">允许</button>
-
-          <button class="inline-confirm-reject" type="button">拒绝</button>
-
-        </div>
-
-      </div>`;
-
-    els.messages.insertAdjacentHTML("beforeend", html);
-
-    els.messages.scrollTop = els.messages.scrollHeight;
-
-
-
-    const card = document.getElementById(id);
-
-    card.querySelector(".inline-confirm-accept").addEventListener("click", () => {
-
-      card.classList.add("resolved", "accepted");
-
-      setTimeout(() => card.remove(), 300);
-
-      resolve(true);
-
-    });
-
-    card.querySelector(".inline-confirm-reject").addEventListener("click", () => {
-
-      card.classList.add("resolved", "rejected");
-
-      setTimeout(() => card.remove(), 300);
-
-      resolve(false);
-
-    });
-
+    const source = authorizationSource(ctx);
+    const request = {
+      id: `authorization-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      sessionId: ctx?.sessionId || state.sessionId,
+      sourceKey: source.key,
+      sourceLabel: source.label,
+      tool: { ...tool },
+      editId: options.editId || "",
+      stats: options.stats || null,
+      selected: true,
+      status: "pending",
+      resolve,
+    };
+    const abortSignal = ctx?.run?.abortController?.signal;
+    if (abortSignal) {
+      request.abortSignal = abortSignal;
+      request.abortHandler = () => {
+        resolveAuthorization(request, false);
+        renderAuthorizationPanel();
+      };
+      if (abortSignal.aborted) {
+        request.status = "rejected";
+        resolve(false);
+        return;
+      }
+      abortSignal.addEventListener("abort", request.abortHandler, { once: true });
+    }
+    state.authorizationRequests.push(request);
+    state.authorizationPanelCollapsed = false;
+    renderAuthorizationPanel();
+    if (document.hidden) notifyPermissionNeeded(tool.action, tool.path || tool.command || "");
   });
+}
 
+function bindAuthorizationPanel() {
+  const panel = els.authorizationPanel;
+  if (!panel) return;
+  panel.addEventListener("change", (event) => {
+    const itemId = event.target.dataset.authSelect;
+    if (itemId) {
+      const item = state.authorizationRequests.find((entry) => entry.id === itemId);
+      if (item) item.selected = event.target.checked;
+      renderAuthorizationPanel();
+      return;
+    }
+    const groupKey = event.target.dataset.authGroup;
+    if (groupKey) {
+      pendingAuthorizations().filter((item) => item.sourceKey === groupKey).forEach((item) => { item.selected = event.target.checked; });
+      renderAuthorizationPanel();
+    }
+  });
+  panel.addEventListener("click", (event) => {
+    const actionButton = event.target.closest("[data-auth-action]");
+    if (actionButton) {
+      const action = actionButton.dataset.authAction;
+      if (action === "toggle") {
+        state.authorizationPanelCollapsed = !state.authorizationPanelCollapsed;
+        renderAuthorizationPanel();
+      } else if (action === "approve") {
+        pendingAuthorizations().filter((item) => item.selected).forEach((item) => resolveAuthorization(item, true));
+        renderAuthorizationPanel();
+      } else if (action === "reject-all") {
+        pendingAuthorizations().forEach((item) => resolveAuthorization(item, false));
+        renderAuthorizationPanel();
+      }
+      return;
+    }
+    const viewButton = event.target.closest("[data-auth-view]");
+    if (viewButton) {
+      const editId = viewButton.dataset.authView;
+      const target = els.messages.querySelector(`[data-edit-id="${CSS.escape(editId)}"]`)?.closest(".edit-suggestion");
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  });
 }
 
 
@@ -6831,6 +6963,12 @@ function shouldRetryWithoutNativeTools(errorText = "") {
 
 
 function mapMessageForApi(msg, includeNativeTools = true) {
+
+  if (!msg || typeof msg !== "object") return null;
+
+  if (msg.role === "system") {
+    return { role: "system", content: getMsgText(msg) };
+  }
 
   if (msg.role === "assistant") {
 
@@ -7625,7 +7763,7 @@ async function extractAndSuggestMemories() {
   els.messages.scrollTop = els.messages.scrollHeight;
 }
 
-async function executeToolCall(tool) {
+async function executeToolCall(tool, options = {}) {
 
   if (!tool || !tool.action) {
 
@@ -7659,9 +7797,15 @@ async function executeToolCall(tool) {
 
   }
 
+  // A task tool is itself the user's delegation boundary. Child agents may
+  // execute only the tools exposed by their inherited policy; suppressing the
+  // shared UI confirmation prevents concurrent children from deadlocking on
+  // overlapping inline prompts. Server-side path and command checks still run.
   if (shouldAskBeforeTool(tool.action)) {
 
-    const ok = await showInlineConfirm(tool);
+    const ok = typeof options.authorizationDecision === "boolean"
+      ? options.authorizationDecision
+      : await requestAuthorization(tool, options.context || null);
 
     if (!ok) {
 
@@ -7890,11 +8034,15 @@ async function commitPendingEdit() {
 
 
 function createSubContext(parentCtx, taskPrompt) {
+  const prompt = String(taskPrompt || "").trim();
+  const authorizationLabel = prompt.replace(/\s+/g, " ").slice(0, 24) || "子任务";
+  const requiresToolUse = /(创建|写入|修改|编辑|删除|读取|搜索|查找|列出|运行|执行|验证|测试|抓取|文件|目录|路径|create|write|edit|delete|read|search|list|run|execute|verify|test|fetch|file|folder|directory|path)/i.test(prompt);
   const subSystem = [
     SYSTEM_SECURITY_LAYER,
-    `你是一个编程子 Agent，拥有和主 Agent 完全相同的工具集（读文件、写文件、运行命令、搜索等），负责完成主 Agent 分配的子任务。`,
+    `你是一个编程子 Agent，负责亲自完成主 Agent 分配的子任务。你只能使用主 Agent 当前权限策略开放给你的工具，不得尝试提升权限。`,
     `环境：Windows + PowerShell。项目根目录：${els.projectRoot?.value || "未设置"}`,
-    `完成任务后直接输出结果，不要再调用额外工具。`,
+    `禁止再次委派子 Agent。禁止用 JSON、代码块或文字模拟工具调用；需要操作时必须真正调用可用工具。`,
+    `完成前验证任务目标是否达成；完成后只返回简洁的结果摘要、验证结果和必要的路径。`,
   ].join("\n\n");
 
   const subCtx = {
@@ -7905,8 +8053,18 @@ function createSubContext(parentCtx, taskPrompt) {
     ],
     parent: parentCtx,
     isSubAgent: true,
+    authorizationId: `sub-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    authorizationLabel,
     depth: (parentCtx.depth || 0) + 1,
     subResult: null,
+    requiresToolUse,
+    toolCallCount: 0,
+    toolRoundCount: 0,
+    successfulToolCount: 0,
+    toolMutationEpoch: 0,
+    successfulToolSignatures: new Set(),
+    noToolRetries: 0,
+    tools: (parentCtx.tools || getNativeTools()).filter((tool) => tool.function?.name !== "task"),
     stats: { input: 0, output: 0, cache: 0 },
     taskUsage: { input: 0, output: 0, cache: 0 },
     autoCompacted: 0,
@@ -7914,9 +8072,82 @@ function createSubContext(parentCtx, taskPrompt) {
   return subCtx;
 }
 
+async function executeToolWithDelegation(tool, parentCtx, options = {}) {
+  let signature = "";
+  if (parentCtx?.isSubAgent) {
+    const args = Object.fromEntries(
+      Object.entries(tool || {})
+        .filter(([key]) => !key.startsWith("_") && key !== "action")
+        .sort(([left], [right]) => left.localeCompare(right)),
+    );
+    const readOnlyAction = ["list_files", "read_file", "search_files", "glob_files", "web_fetch", "use_skill"].includes(tool.action);
+    signature = `${tool.action}:${JSON.stringify(args)}${readOnlyAction ? `:epoch-${parentCtx.toolMutationEpoch || 0}` : ""}`;
+    if (parentCtx.successfulToolSignatures?.has(signature)) {
+      return {
+        ok: false,
+        action: tool.action,
+        error: "已跳过完全相同且此前成功的工具调用。请使用已有结果完成总结，不要重复执行。",
+      };
+    }
+  }
+
+  let result = requireActionableEditResult(await executeToolCall(tool, {
+    context: parentCtx || null,
+    authorizationDecision: options.authorizationDecision,
+  }));
+  if (parentCtx?.isSubAgent && result.ok) {
+    parentCtx.successfulToolSignatures?.add(signature);
+    parentCtx.successfulToolCount = (parentCtx.successfulToolCount || 0) + 1;
+    if (["write_file", "delete_file", "run_command"].includes(tool.action)) {
+      parentCtx.toolMutationEpoch = (parentCtx.toolMutationEpoch || 0) + 1;
+    }
+  }
+  if (!result.delegated || tool.action !== "task") return result;
+
+  const taskPrompt = result.prompt || tool.prompt || "";
+  const subCtx = createSubContext(parentCtx, taskPrompt);
+  try {
+    await runAgentLoop(subCtx);
+    const sub = subCtx.subResult || { ok: false, result: "Sub-agent did not produce a result" };
+    return {
+      ok: sub.ok,
+      action: "task",
+      prompt: taskPrompt,
+      result: sub.result,
+      rounds: sub.rounds || 0,
+      tool_rounds: sub.tool_rounds || 0,
+      tool_calls: sub.tool_calls || 0,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      action: "task",
+      prompt: taskPrompt,
+      result: `Sub-agent error: ${err.message || err}`,
+      rounds: 0,
+      tool_rounds: 0,
+      tool_calls: 0,
+    };
+  }
+}
+
+async function mapWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const runners = Array.from({ length: Math.min(Math.max(1, limit), items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await worker(items[index], index);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
 async function runAgentLoop(ctx = null) {
 
   ctx = ctx || buildRunContext(state.sessionId);
+  ctx.messages = Array.isArray(ctx.messages) ? ctx.messages.filter(Boolean) : [];
   if (ctx.isSubAgent) state._subAgentDepth++;
   try {
   if (!ctx.isSubAgent) {
@@ -7934,7 +8165,7 @@ async function runAgentLoop(ctx = null) {
     return;
   }
 
-  const maxRounds = ctx.isSubAgent ? 5 : MAX_TOOL_ROUNDS;
+  const maxRounds = ctx.isSubAgent ? 6 : MAX_TOOL_ROUNDS;
 
   for (let round = 0; round < maxRounds; round += 1) {
 
@@ -8031,8 +8262,11 @@ async function runAgentLoop(ctx = null) {
     const turnUsage = ctx.responseUsage ? { ...ctx.responseUsage } : null;
     ctx.responseUsage = null;
 
-    // Pull streaming updates (thought+content from SSE) into ctx.messages
-    ctx.messages = getSessionMessages(ctx.sessionId);
+    // Main sessions may have switched while streaming. Sub-agents always keep
+    // their private message array; reading the session cache here would replace
+    // it with the parent's messages and corrupt assistant/tool indexes.
+    if (!ctx.isSubAgent) ctx.messages = getSessionMessages(ctx.sessionId);
+    ctx.messages = Array.isArray(ctx.messages) ? ctx.messages.filter(Boolean) : [];
     if (turnUsage) {
       const currentAssistant = ctx.messages[assistantIndex] || {};
       ctx.messages[assistantIndex] = {
@@ -8052,6 +8286,9 @@ async function runAgentLoop(ctx = null) {
 
 
     if (nativeCalls.length > 0) {
+
+      ctx.toolCallCount = (ctx.toolCallCount || 0) + nativeCalls.length;
+      ctx.toolRoundCount = (ctx.toolRoundCount || 0) + 1;
 
       const current = ctx.messages[assistantIndex] || {};
 
@@ -8086,64 +8323,60 @@ async function runAgentLoop(ctx = null) {
       const pendingVisionImages = [];
       const pendingVisionPaths = new Set();
 
-      for (const nativeCall of nativeCalls) {
-
-        const tool = normalizeNativeToolCall(nativeCall);
-
+      const normalizedCalls = nativeCalls.map(normalizeNativeToolCall);
+      for (const tool of normalizedCalls) {
         ctx.messages.push({
-
           role: "tool-call",
-
           content: formatToolCall(tool),
-
           meta: {
-
             action: tool.action,
-
             tool,
-
             toolCallId: tool._toolCallId,
-
             native: true,
-
           },
-
         });
+      }
+      if (!ctx.isSubAgent) {
+        renderSessionMessages(ctx.sessionId);
+        await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats);
+        renderSessions();
+      }
 
-        if (!ctx.isSubAgent) { renderSessionMessages(ctx.sessionId); }
-
-        if (!ctx.isSubAgent) { await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions(); }
-
-
-
-        let result = requireActionableEditResult(await executeToolCall(tool));
-
-        // If server delegated task execution, run sub-agent loop in frontend
-        if (result.delegated && tool.action === "task") {
-          const taskPrompt = result.prompt || tool.prompt || "";
-          const subCtx = createSubContext(ctx, taskPrompt);
-          try {
-            await runAgentLoop(subCtx);
-            const sub = subCtx.subResult || { ok: false, result: "Sub-agent did not produce a result" };
-            result = {
-              ok: sub.ok,
-              action: "task",
-              prompt: taskPrompt,
-              result: sub.result,
-              rounds: sub.rounds || 0,
-              tool_rounds: sub.tool_rounds || 0,
-            };
-          } catch (err) {
-            result = {
-              ok: false,
-              action: "task",
-              prompt: taskPrompt,
-              result: `Sub-agent error: ${err.message || err}`,
-              rounds: 0,
-              tool_rounds: 0,
-            };
-          }
+      // Queue all direct destructive operations from this model turn before
+      // executing any of them, so the user can review the whole batch once.
+      const authorizationDecisions = new Map();
+      if (getPermissionProfile() === "accept") {
+        const gatedCalls = normalizedCalls
+          .map((tool, index) => ({ tool, index }))
+          .filter(({ tool }) => shouldAskBeforeTool(tool.action));
+        if (gatedCalls.length) {
+          const decisions = await Promise.all(gatedCalls.map(({ tool }) => requestAuthorization(tool, ctx)));
+          gatedCalls.forEach(({ index }, decisionIndex) => authorizationDecisions.set(index, decisions[decisionIndex]));
         }
+      }
+
+      // A model can dispatch several independent task calls in one response.
+      // Execute an all-task batch concurrently, with a conservative limit so
+      // one request cannot flood the local gateway.
+      let parallelTaskResults = null;
+      if (normalizedCalls.length > 1 && normalizedCalls.every((tool) => tool.action === "task")) {
+        parallelTaskResults = await mapWithConcurrency(
+          normalizedCalls,
+          3,
+          (tool) => executeToolWithDelegation(tool, ctx),
+        );
+      }
+
+      for (let callIndex = 0; callIndex < normalizedCalls.length; callIndex += 1) {
+
+        const tool = normalizedCalls[callIndex];
+        let result = parallelTaskResults
+          ? parallelTaskResults[callIndex]
+          : await executeToolWithDelegation(tool, ctx, {
+              authorizationDecision: authorizationDecisions.has(callIndex)
+                ? authorizationDecisions.get(callIndex)
+                : undefined,
+            });
 
         const visionImage = toolImageVisionPayload(result);
         if (visionImage && !pendingVisionPaths.has(visionImage.path)) {
@@ -8163,6 +8396,7 @@ async function runAgentLoop(ctx = null) {
 
         };
 
+        let proposalContent = "";
         if (result.ok && result.action === "propose_edit") {
 
           const editId = `edit-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -8184,8 +8418,12 @@ async function runAgentLoop(ctx = null) {
 
           meta.applied = false;
 
-          // Auto-apply in bypass mode or sub-agent
-          if (getPermissionProfile() === "bypass" || ctx.isSubAgent) {
+          meta.proposalOnly = getPermissionProfile() === "plan";
+
+          proposalContent = formatToolResult(result);
+
+          // Automatic mode is the only mode that writes without authorization.
+          if (getPermissionProfile() === "bypass") {
             const applied = await apiJson("/api/tools/apply_edit", {
               method: "POST",
               body: JSON.stringify({ action: "apply_edit", path: result.path, newContent: result.newContent }),
@@ -8198,15 +8436,25 @@ async function runAgentLoop(ctx = null) {
 
         }
 
-        ctx.messages.push({
+        const resultMessage = {
 
           role: "tool-result",
 
-          content: formatToolResult(result),
+          content: proposalContent || formatToolResult(result),
 
           meta,
 
-        });
+        };
+        ctx.messages.push(resultMessage);
+
+        // Sub-agent edit proposals must be reviewable in the parent conversation.
+        // Sharing the same meta object keeps approval state synchronized.
+        if (ctx.isSubAgent && meta.pendingEditId && ctx.parent) {
+          ctx.parent.messages.push({ ...resultMessage, meta });
+          setSessionMessages(ctx.parent.sessionId, ctx.parent.messages);
+          if (ctx.parent.sessionId === state.sessionId) renderMessages();
+          await saveSessionState(ctx.parent.sessionId, ctx.parent.messages, ctx.parent.stats);
+        }
 
         if (!ctx.isSubAgent) { renderSessionMessages(ctx.sessionId); }
 
@@ -8217,50 +8465,51 @@ async function runAgentLoop(ctx = null) {
 
         if (!ctx.isSubAgent) { await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions(); }
 
-        // ── Pause on propose_edit in plan/accept mode (skip for sub-agent) ──
+        // ── Accept mode: queue edit authorization for main and sub-agents ──
         const profile = getPermissionProfile();
-        if (!ctx.isSubAgent && profile !== "bypass" && result.action === "propose_edit" && !meta.applied) {
+        if (profile === "accept" && result.action === "propose_edit" && !meta.applied) {
           const editId = meta.pendingEditId;
           if (editId) {
-            // Check if user already clicked reject before we got here
-            if (state._rejectedEditId === editId) {
-              for (const msg of ctx.messages) {
-                if (msg.meta?.pendingEditId === editId) msg.meta.rejected = true;
+            const stats = getDiffStats(normalizeDiffText(proposalContent));
+            const approved = await requestAuthorization({
+              action: "propose_edit",
+              path: result.path,
+              newContent: result.newContent,
+            }, ctx, { editId, stats });
+            if (approved) {
+              try {
+                await apiJson("/api/tools/apply_edit", {
+                  method: "POST",
+                  body: JSON.stringify({ action: "apply_edit", path: result.path, newContent: result.newContent }),
+                });
+                state.pendingEdits[editId].applied = true;
+                meta.applied = true;
+                await loadFiles().catch(() => {});
+              } catch (error) {
+                meta.applyError = error.message;
+                ctx.messages.push({
+                  role: "user",
+                  content: `[系统] 用户已批准修改，但写入失败：${error.message}。请说明失败原因，不要假装修改成功。`,
+                  meta: { _system: true },
+                });
               }
-              state._rejectedEditId = null;
+            } else {
+              meta.rejected = true;
+              state.pendingEdits[editId].resolved = true;
               ctx.messages.push({
                 role: "user",
-                content: "[系统] 用户拒绝了你的修改方案。不要猜测原因，不要提新方案——直接问用户：哪个部分需要调整、期望改成什么样。回复控制在 50 字以内。",
+                content: "[系统] 用户拒绝了这项修改。请保留其他已批准操作的结果，并简洁说明该项未执行。",
                 meta: { _system: true },
               });
-              if (!ctx.isSubAgent) { renderSessionMessages(ctx.sessionId); }
-              if (!ctx.isSubAgent) { await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions(); }
-              continue;
             }
-
-            const userChoice = await new Promise((resolve) => {
-              state._editResolver = resolve;
-              state._pendingEditForPause = editId;
-            });
-            state._editResolver = null;
-            state._pendingEditForPause = null;
-            state._rejectedEditId = null;
-            if (userChoice === "reject") {
-              for (const msg of ctx.messages) {
-                if (msg.meta?.pendingEditId === editId) msg.meta.rejected = true;
-              }
-              ctx.messages.push({
-                role: "user",
-                content: "[系统] 用户拒绝了你的修改方案。不要猜测原因，不要提新方案——直接问用户：哪个部分需要调整、期望改成什么样。回复控制在 50 字以内。",
-                meta: { _system: true },
-              });
-              if (!ctx.isSubAgent) { renderSessionMessages(ctx.sessionId); }
-              if (!ctx.isSubAgent) { await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions(); }
-              continue; // give model one turn to respond, then stop
-            }
-            // "apply" — update meta to mark as applied
-            for (const m of ctx.messages) {
-              if (m.meta?.pendingEditId === editId) m.meta.applied = true;
+            if (ctx.isSubAgent && ctx.parent) {
+              setSessionMessages(ctx.parent.sessionId, ctx.parent.messages);
+              if (ctx.parent.sessionId === state.sessionId) renderMessages();
+              await saveSessionState(ctx.parent.sessionId, ctx.parent.messages, ctx.parent.stats);
+            } else {
+              renderSessionMessages(ctx.sessionId);
+              await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats);
+              renderSessions();
             }
           }
         }
@@ -8363,11 +8612,21 @@ async function runAgentLoop(ctx = null) {
       ctx.messages[assistantIndex].streaming = false;
       // Sub-agent: capture result and return without updating main session UI
       if (ctx.isSubAgent) {
+        if (ctx.requiresToolUse && (ctx.toolCallCount || 0) === 0 && ctx.noToolRetries < 1) {
+          ctx.noToolRetries += 1;
+          ctx.messages.push({
+            role: "user",
+            content: "[系统] 你尚未真正执行任何工具，因此任务还没有完成。不要输出或模拟工具调用 JSON；现在必须亲自调用可用工具完成任务并验证结果。",
+            meta: { _system: true },
+          });
+          continue;
+        }
         ctx.subResult = {
-          ok: true,
+          ok: !ctx.requiresToolUse || (ctx.successfulToolCount || 0) > 0,
           result: rawContent.trim() || "(sub-agent returned empty response)",
           rounds: round + 1,
-          tool_rounds: 0, // will be counted separately if needed
+          tool_rounds: ctx.toolRoundCount || 0,
+          tool_calls: ctx.toolCallCount || 0,
         };
         return;
       }
@@ -8417,10 +8676,11 @@ async function runAgentLoop(ctx = null) {
 
 
 
-    const result = requireActionableEditResult(await executeToolCall(tool));
+    const result = requireActionableEditResult(await executeToolCall(tool, { context: ctx }));
 
     const meta = { action: result.action || tool.action, path: result.path };
 
+    let proposalContent = "";
     if (result.ok && result.action === "propose_edit") {
 
       const editId = `edit-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -8442,17 +8702,38 @@ async function runAgentLoop(ctx = null) {
 
       meta.applied = false;
 
+      meta.proposalOnly = getPermissionProfile() === "plan";
+
+      proposalContent = formatToolResult(result);
+
+      if (getPermissionProfile() === "bypass") {
+        await apiJson("/api/tools/apply_edit", {
+          method: "POST",
+          body: JSON.stringify({ action: "apply_edit", path: result.path, newContent: result.newContent }),
+        });
+        state.pendingEdits[editId].applied = true;
+        meta.applied = true;
+      }
+
     }
 
-    ctx.messages.push({
+    const resultMessage = {
 
       role: "tool-result",
 
-      content: formatToolResult(result),
+      content: proposalContent || formatToolResult(result),
 
       meta,
 
-    });
+    };
+    ctx.messages.push(resultMessage);
+
+    if (ctx.isSubAgent && meta.pendingEditId && ctx.parent) {
+      ctx.parent.messages.push({ ...resultMessage, meta });
+      setSessionMessages(ctx.parent.sessionId, ctx.parent.messages);
+      if (ctx.parent.sessionId === state.sessionId) renderMessages();
+      await saveSessionState(ctx.parent.sessionId, ctx.parent.messages, ctx.parent.stats);
+    }
 
     const visionMessage = buildToolImageVisionMessage([toolImageVisionPayload(result)].filter(Boolean));
     if (visionMessage) ctx.messages.push(visionMessage);
@@ -8464,6 +8745,43 @@ async function runAgentLoop(ctx = null) {
     }
 
     await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+
+    if (getPermissionProfile() === "accept" && result.action === "propose_edit" && !meta.applied && meta.pendingEditId) {
+      const approved = await requestAuthorization({
+        action: "propose_edit",
+        path: result.path,
+        newContent: result.newContent,
+      }, ctx, { editId: meta.pendingEditId, stats: getDiffStats(normalizeDiffText(proposalContent)) });
+      if (approved) {
+        try {
+          await apiJson("/api/tools/apply_edit", {
+            method: "POST",
+            body: JSON.stringify({ action: "apply_edit", path: result.path, newContent: result.newContent }),
+          });
+          state.pendingEdits[meta.pendingEditId].applied = true;
+          meta.applied = true;
+          await loadFiles().catch(() => {});
+        } catch (error) {
+          meta.applyError = error.message;
+        }
+      } else {
+        meta.rejected = true;
+        state.pendingEdits[meta.pendingEditId].resolved = true;
+        ctx.messages.push({
+          role: "user",
+          content: "[系统] 用户拒绝了这项修改。请保留其他已批准操作的结果，并简洁说明该项未执行。",
+          meta: { _system: true },
+        });
+      }
+      if (ctx.isSubAgent && ctx.parent) {
+        setSessionMessages(ctx.parent.sessionId, ctx.parent.messages);
+        if (ctx.parent.sessionId === state.sessionId) renderMessages();
+        await saveSessionState(ctx.parent.sessionId, ctx.parent.messages, ctx.parent.stats);
+      } else {
+        renderSessionMessages(ctx.sessionId);
+        await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats);
+      }
+    }
 
   }
 
@@ -8478,11 +8796,25 @@ async function runAgentLoop(ctx = null) {
         break;
       }
     }
+    if (!lastContent) {
+      const completedActions = ctx.messages
+        .filter((message) => message?.role === "tool-result" && !/失败|error|failed/i.test(message.content || ""))
+        .slice(-6)
+        .map((message) => {
+          const action = message.meta?.action || "tool";
+          const firstLine = String(message.content || "").split(/\r?\n/).find(Boolean) || "完成";
+          return `- ${action}: ${firstLine.slice(0, 180)}`;
+        });
+      lastContent = completedActions.length
+        ? `子 Agent 已完成工具操作，但未生成最终文字总结。\n${completedActions.join("\n")}`
+        : "(sub-agent completed without final response)";
+    }
     ctx.subResult = {
-      ok: true,
-      result: lastContent || "(sub-agent completed without final response)",
+      ok: !ctx.requiresToolUse || (ctx.successfulToolCount || 0) > 0,
+      result: lastContent,
       rounds: maxRounds,
-      tool_rounds: 0,
+      tool_rounds: ctx.toolRoundCount || 0,
+      tool_calls: ctx.toolCallCount || 0,
     };
     return;
   }
@@ -11432,6 +11764,8 @@ function showKeySyncModal(tokens, fullKeys) {
 // ── End Platform Auth ──
 
 async function init() {
+
+  bindAuthorizationPanel();
 
     // Keep the current page connected. When the backend process is replaced,
     // its instance ID changes and this existing page refreshes in place.

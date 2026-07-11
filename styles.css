@@ -3376,6 +3376,143 @@ body.theme-dark .syn-fn { color: #61afef; }
   color: var(--text);
 }
 
+/* ── Consolidated authorization queue ── */
+.authorization-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 132px;
+  z-index: 8;
+  width: min(650px, 88%);
+  max-height: min(440px, 48%);
+  transform: translateX(-50%);
+  color: var(--text);
+}
+.authorization-panel.hidden { display: none; }
+.authorization-collapsed-bar {
+  display: none;
+  width: 100%;
+  height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .16);
+  cursor: pointer;
+}
+.authorization-panel.is-collapsed .authorization-collapsed-bar { display: flex; }
+.authorization-panel.is-collapsed .authorization-card { display: none; }
+.authorization-card {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, .22);
+}
+.authorization-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 15px 11px;
+  border-bottom: 1px solid var(--line);
+}
+.authorization-head > div { min-width: 0; }
+.authorization-head strong { display: block; font-size: 14px; }
+.authorization-head span { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
+.authorization-collapse {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.authorization-collapse:hover { background: var(--panel-2); color: var(--text); }
+.authorization-groups {
+  max-height: 290px;
+  overflow: auto;
+  padding: 6px 14px;
+}
+.authorization-group + .authorization-group { border-top: 1px solid var(--line); }
+.authorization-group-head {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  color: var(--text);
+  cursor: pointer;
+}
+.authorization-group-head strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.authorization-group-head span { color: var(--muted); font-size: 11px; }
+.authorization-group input { accent-color: var(--accent); }
+.authorization-row {
+  display: grid;
+  grid-template-columns: 16px 42px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding-left: 2px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 58%, transparent);
+  font-size: 12px;
+}
+.authorization-kind { color: var(--muted); }
+.authorization-target {
+  overflow: hidden;
+  color: var(--text);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.authorization-stats { display: inline-flex; gap: 7px; font-size: 11px; }
+.authorization-stats b { color: var(--green); font-weight: 700; }
+.authorization-stats i { color: var(--red); font-style: normal; font-weight: 700; }
+.authorization-view {
+  padding: 3px 5px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+}
+.authorization-view:hover { text-decoration: underline; }
+.authorization-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--line);
+}
+.authorization-actions button {
+  height: 32px;
+  padding: 0 13px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.authorization-reject-all { border: 1px solid var(--line); background: transparent; color: var(--muted); }
+.authorization-reject-all:hover { background: var(--panel-2); color: var(--text); }
+.authorization-approve { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
+.authorization-approve:hover:not(:disabled) { filter: brightness(1.08); }
+.authorization-approve:disabled { opacity: .45; cursor: default; }
+
+@media (max-width: 720px) {
+  .authorization-panel { width: calc(100% - 24px); bottom: 126px; }
+  .authorization-row { grid-template-columns: 16px 38px minmax(0, 1fr) auto; }
+  .authorization-stats { display: none; }
+}
+
 .ctx-ring-wrap {
   display: inline-flex;
   align-items: center;

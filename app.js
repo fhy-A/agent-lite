@@ -2151,7 +2151,7 @@ function getSystemPrompt(options = {}) {
   const now = new Date();
   const dateStr = now.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", weekday: "long" });
   const timeStr = now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-  const parts = [customPrompt, `当前时间：${dateStr} ${timeStr}（北京时间）`, `项目根目录：${els.projectRoot?.value || "未设置"}`, `提示：项目目录外的文件（如 Desktop、Documents）也可以直接尝试读取，系统会自动处理路径权限。`, `提示：用户消息中的 @图片路径 可能没有直接附带视觉内容。如果需要查看图片，请用 read_file 读取该路径；系统会自动把工具读取到的图片转换成视觉输入。`, `Agent Lite 版本：${state.appVersion || "unknown"}`];
+  const parts = [customPrompt, `当前时间：${dateStr} ${timeStr}（北京时间）`, `项目根目录：${els.projectRoot?.value || "未设置"}`, `提示：项目目录外的文件（如 Desktop、Documents）也可以直接尝试读取，系统会自动处理路径权限。`, `提示：用户消息中的 @图片路径 可能没有直接附带视觉内容。如果需要查看图片，请用 read_file 读取该路径；系统会自动把工具读取到的图片转换成视觉输入。`, `提示：你可以在回复中用 ![描述](图片路径) 的 Markdown 语法嵌入已有的本地图片文件（如生成的图表、截图等），系统会直接把图片渲染到消息中给用户看到。支持 png/jpg/gif/webp/svg 格式，支持相对路径和绝对路径（如 C:/Users/Admin/Desktop/output/chart.png）。`, `Agent Lite 版本：${state.appVersion || "unknown"}`];
 
   // Language detection: instruct the model to match the user's language
   if (userLang !== "Chinese") {
@@ -3366,7 +3366,7 @@ function renderAnsi(text) {
 
   };
 
-  marked.setOptions({ renderer, breaks: false, gfm: true });
+  marked.setOptions({ renderer, breaks: true, gfm: true });
 
 })();
 
@@ -3390,6 +3390,20 @@ function renderMarkdownLite(text) {
 
   // Make all links open in new tab
   html = html.replace(/<a /g, '<a target="_blank" rel="noopener" ');
+
+  // Convert local image paths to API URLs so model-generated images display inline
+  html = html.replace(/<img\s+src="([^"]+)"/g, (full, src) => {
+    // Skip already-absolute URLs (http/https/data/api)
+    if (/^(https?:|data:|\/api\/)/.test(src)) return full;
+    // Normalize: backslash → forward slash, strip leading ./
+    let imgPath = src.replace(/\\/g, "/").replace(/^\.?\/?/, "");
+    // If it's an absolute Windows path (C:/Users/...), pass as-is
+    const ext = (imgPath.split(".").pop() || "").toLowerCase();
+    const isImg = /^(png|jpg|jpeg|gif|webp|svg|bmp|ico)$/i.test(ext);
+    if (!isImg) return full;
+    const apiUrl = "/api/file?path=" + encodeURIComponent(imgPath) + "&raw=1";
+    return `<img src="${apiUrl}" loading="lazy" onclick="showImageOverlay(this.src)" class="msg-inline-img"`;
+  });
 
   return html;
 
@@ -3815,7 +3829,16 @@ function formatMsgTime(isoString) {
   if (isNaN(d.getTime())) return "";
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${hh}:${mm}`;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const msgDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diffDays = Math.round((today - msgDay) / 86400000);
+  if (diffDays === 0) return `${hh}:${mm}`;
+  if (diffDays === 1) return `昨天 ${hh}:${mm}`;
+  const MM = String(d.getMonth() + 1).padStart(2, "0");
+  const DD = String(d.getDate()).padStart(2, "0");
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return sameYear ? `${MM}-${DD} ${hh}:${mm}` : `${d.getFullYear()}-${MM}-${DD} ${hh}:${mm}`;
 }
 
 const COPY_SVG = '<svg width="14" height="14" viewBox="0 0 1024 1024" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M761.088 715.3152a38.7072 38.7072 0 0 1 0-77.4144 37.4272 37.4272 0 0 0 37.4272-37.4272V265.0112a37.4272 37.4272 0 0 0-37.4272-37.4272H425.6256a37.4272 37.4272 0 0 0-37.4272 37.4272 38.7072 38.7072 0 1 1-77.4144 0 115.0976 115.0976 0 0 1 114.8416-114.8416h335.4624a115.0976 115.0976 0 0 1 114.8416 114.8416v335.4624a115.0976 115.0976 0 0 1-114.8416 114.8416z"/><path d="M589.4656 883.0976H268.1856a121.1392 121.1392 0 0 1-121.2928-121.2928v-322.56a121.1392 121.1392 0 0 1 121.2928-121.344h321.28a121.1392 121.1392 0 0 1 121.2928 121.2928v322.56c1.28 67.1232-54.1696 121.344-121.2928 121.344zM268.1856 395.3152a43.52 43.52 0 0 0-43.8784 43.8784v322.56a43.52 43.52 0 0 0 43.8784 43.8784h321.28a43.52 43.52 0 0 0 43.8784-43.8784v-322.56a43.52 43.52 0 0 0-43.8784-43.8784z"/></svg>';
@@ -3974,11 +3997,12 @@ function renderFinalAssistantProjection(msg, index) {
   if (!content || isToolPlanningPlaceholder(content)) return "";
   const responseInfo = renderAssistantResponseInfo(msg);
   const copyBtn = renderCopyBtn(content);
+  const timeStr = formatMsgTime(msg._time);
   return `
     <article class="msg assistant" data-msg-index="${index}">
       <div class="role">${escapeHtml(model)}</div>
       ${renderAssistantContent(content)}
-      <div class="msg-footer">${copyBtn}${responseInfo}</div>
+      <div class="msg-footer">${responseInfo}<span class="msg-footer-hover">${copyBtn}${timeStr ? `<span class="msg-time">${timeStr}</span>` : ""}</span></div>
     </article>
   `;
 }
@@ -4073,6 +4097,14 @@ function renderMessages() {
     // Deliberately omit tool-call/tool-result details from the conversation.
   }
   flushThoughts();
+
+  // Render queued messages (sent while agent is busy)
+  const run = ensureSessionRun(state.sessionId);
+  if (run && run.messageQueue.length > 0) {
+    for (const q of run.messageQueue) {
+      rows.push(`<article class="msg queued"><div class="bubble"><em>${escapeHtml(q.text || "").slice(0, 80)}</em></div></article>`);
+    }
+  }
 
   var html = rows.filter(Boolean).join("");
   const stableHtml = html.replace(/<span class="streaming-timer">[^<]*<\/span>/g, '<span class="streaming-timer"></span>');
@@ -4871,6 +4903,7 @@ async function saveSessionState(sessionId, messages, stats, title) {
         meta: msg.meta || {},
         _images: msg._images || undefined,
         _model: msg._model || undefined,
+        _time: msg._time || undefined,
       })),
       stats: stats || getSessionStats(sessionId),
     }),
@@ -6297,6 +6330,8 @@ function updateAssistantMessage(index, rawContent, streaming = true, sessionId =
 
     streaming,
 
+    _time: previous._time || (streaming ? undefined : new Date().toISOString()),
+
   };
 
   setSessionMessages(sessionId, targetMessages);
@@ -7535,8 +7570,20 @@ async function executeToolCall(tool) {
 
 function toolImageVisionPayload(result) {
   if (!result?.ok || result.action !== "read_file" || !result.binary || !result.visual) return null;
-  if (!String(result.mime || "").startsWith("image/") || !result.base64) return null;
+  if (!String(result.mime || "").startsWith("image/")) return null;
   const path = String(result.path || "image");
+  // SVG: use raw text with data URI instead of base64 (avoids 33% inflation)
+  if (result.svgText) {
+    const encoded = encodeURIComponent(result.svgText).replace(/'/g, "%27");
+    return {
+      path,
+      name: path.split(/[\\/]/).pop() || "image",
+      mime: result.mime,
+      base64: encoded,
+      _isSvg: true,
+    };
+  }
+  if (!result.base64) return null;
   return {
     path,
     name: path.split(/[\\/]/).pop() || "image",
@@ -7558,7 +7605,7 @@ function buildToolImageVisionMessage(images) {
       },
       ...images.map((image) => ({
         type: "image_url",
-        image_url: { url: `data:${image.mime};base64,${image.base64}` },
+        image_url: { url: image._isSvg ? `data:${image.mime};utf8,${image.base64}` : `data:${image.mime};base64,${image.base64}` },
       })),
     ],
     _images: images.map((image) => ({ path: image.path, name: image.name, mime: image.mime })),
@@ -8527,28 +8574,44 @@ async function sendMessage(userText) {
     loopError = err;
   }
 
-  // Drain queued messages: push all as separate user messages, then one API call
-  if (!loopError && run.messageQueue.length > 0) {
+  // Handle queued messages: on error/abort, return them to input box; on success, flush normally
+  const hadQueue = run.messageQueue.length > 0;
+  if (hadQueue) {
     const queued = [...run.messageQueue];
     run.messageQueue = [];
-    renderSessionMessages(sessionId);  // clear queue cards immediately
-
-    // Push each queued message as a separate user message
-    for (const q of queued) {
-      const imgs = q.images || [];
-      const imgRefs = await uploadImagesForStorage(imgs);
-      const msgContent = imgs.length > 0
-        ? [{ type: "text", text: q.text || "" }, ...imgs.map((img) => ({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.base64}` } }))]
-        : (q.text || "");
-      ctx.messages.push({ role: "user", content: msgContent, _images: imgRefs.length > 0 ? imgRefs : undefined, _model: ctx.model || getSelectedModel(), _time: new Date().toISOString() });
-    }
-    state.attachedImages = [];
-    renderImageThumbs();
-    setSessionMessages(sessionId, ctx.messages);
     renderSessionMessages(sessionId);
-    await saveSessionState(sessionId, ctx.messages, ctx.stats);
 
-    // One API call to respond to all queued messages
+    if (loopError) {
+      // Error/abort: return queued messages to the input box
+      for (let i = queued.length - 1; i >= 0; i--) {
+        const q = queued[i];
+        els.prompt.value = (q.text || "") + (els.prompt.value ? "\n" + els.prompt.value : "");
+        if (q.images && q.images.length > 0) {
+          state.attachedImages = [...q.images, ...state.attachedImages];
+        }
+      }
+      renderImageThumbs();
+      updateSendButtonState();
+    } else {
+      // Success: flush to session and trigger API call
+      for (const q of queued) {
+        const imgs = q.images || [];
+        const imgRefs = await uploadImagesForStorage(imgs);
+        const msgContent = imgs.length > 0
+          ? [{ type: "text", text: q.text || "" }, ...imgs.map((img) => ({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.base64}` } }))]
+          : (q.text || "");
+        ctx.messages.push({ role: "user", content: msgContent, _images: imgRefs.length > 0 ? imgRefs : undefined, _model: ctx.model || getSelectedModel(), _time: new Date().toISOString() });
+      }
+      state.attachedImages = [];
+      renderImageThumbs();
+      setSessionMessages(sessionId, ctx.messages);
+      renderSessionMessages(sessionId);
+      await saveSessionState(sessionId, ctx.messages, ctx.stats);
+    }
+  }
+
+  // Only trigger API call if no error AND we had queued messages to respond to
+  if (!loopError && hadQueue) {
     ctx.taskUsage = { input: 0, output: 0, cache: 0 };
     ctx.responseUsage = { input: 0, output: 0, cache: 0 };
     setStreaming(true, sessionId);

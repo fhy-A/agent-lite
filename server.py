@@ -1947,12 +1947,55 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             # image_url block instead of sending base64 as plain tool text.
             import base64 as b64
             mime = image_mime or "application/octet-stream"
-            can_attach = bool(image_mime) and size <= MAX_TOOL_IMAGE_BYTES
+            # SVG: return raw text instead of base64 (avoids 33% inflation)
+            if ext == "svg":
+                try:
+                    svg_text = data.decode("utf-8")
+                    payload = {
+                        "ok": True, "action": "read_file",
+                        "path": display_attachment_path(root, target) if is_attachment else to_project_relative(root, target),
+                        "content": f"[Image file: {target.name} ({size} bytes, {mime}); visual content attached separately]",
+                        "size": size, "truncated": False, "binary": True,
+                        "mime": mime, "visual": True, "svgText": svg_text,
+                    }
+                    self.send_json(payload)
+                    return
+                except Exception:
+                    pass  # fall through to base64 encoding below
+
+            # Downsample large images with PIL before giving up
+            img_data = data
+            if image_mime and size > MAX_TOOL_IMAGE_BYTES:
+                try:
+                    from PIL import Image as PILImage
+                    import io as _io
+                    pil_img = PILImage.open(_io.BytesIO(data))
+                    # Try progressively smaller sizes until it fits
+                    for scale in [0.5, 0.25, 0.15]:
+                        w, h = pil_img.size
+                        new_w, new_h = int(w * scale), int(h * scale)
+                        # Don't go below 256px on longest side
+                        if max(new_w, new_h) < 256:
+                            break
+                        resized = pil_img.resize((new_w, new_h), PILImage.LANCZOS)
+                        buf = _io.BytesIO()
+                        save_fmt = pil_img.format or ext.upper()
+                        if save_fmt == "JPG":
+                            save_fmt = "JPEG"
+                        resized.save(buf, format=save_fmt, quality=80, optimize=True)
+                        compressed = buf.getvalue()
+                        if len(compressed) <= MAX_TOOL_IMAGE_BYTES:
+                            img_data = compressed
+                            break
+                except Exception:
+                    pass  # keep original data, will be oversized
+
+            can_attach = bool(image_mime) and len(img_data) <= MAX_TOOL_IMAGE_BYTES
             payload = {
                 "ok": True,
                 "action": "read_file",
                 "path": display_attachment_path(root, target) if is_attachment else to_project_relative(root, target),
-                "content": f"[Image file: {target.name} ({size} bytes, {mime}); visual content attached separately]" if can_attach else f"[Binary file: {target.name} ({size} bytes, {mime}) — too large or unsupported for visual attachment]",
+                "content": f"[Image file: {target.name} ({size} bytes, {mime}); visual content attached separately]" if can_attach else f"[Binary file: {target.name} ({size} bytes, {mime}) — too large for visual attachment]",
                 "size": size,
                 "truncated": truncated,
                 "binary": True,
@@ -1960,7 +2003,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
                 "visual": can_attach,
             }
             if can_attach:
-                payload["base64"] = b64.b64encode(data).decode("ascii")
+                payload["base64"] = b64.b64encode(img_data).decode("ascii")
             self.send_json(payload)
             return
         content = preview.decode("utf-8", errors="replace")

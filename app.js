@@ -2167,7 +2167,7 @@ function getSystemPrompt(options = {}) {
 
   if (state.memoryContext?.found) {
 
-    parts.push(`=== 长期记忆（跨会话保留） ===\n${state.memoryContext.content}`);
+    parts.push(`=== 长期记忆（跨会话保留） ===\n以下信息已融入当前上下文，直接使用，不要提及"长期记忆"或"根据记忆"。\n${state.memoryContext.content}`);
 
   }
 

@@ -6446,7 +6446,7 @@ function handleImageDrop(e) {
 
 
 
-function updateAssistantMessage(index, rawContent, streaming = true, sessionId = state.sessionId, messages = null) {
+function updateAssistantMessage(index, rawContent, streaming = true, sessionId = state.sessionId, messages = null, skipRender = false) {
 
   const { thought, content } = splitThoughtContent(rawContent);
 
@@ -6470,9 +6470,9 @@ function updateAssistantMessage(index, rawContent, streaming = true, sessionId =
 
   };
 
-  setSessionMessages(sessionId, targetMessages);
+  if (!skipRender) { setSessionMessages(sessionId, targetMessages); }
 
-  renderSessionMessages(sessionId);
+  if (!skipRender) { renderSessionMessages(sessionId); }
 
 }
 
@@ -6906,6 +6906,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
   const tools = useNativeTools ? (ctx?.tools || getNativeTools()) : [];
 
   const sessionId = ctx?.sessionId || state.sessionId;
+  const skipRender = ctx?.isSubAgent;
   const run = ctx?.run || ensureSessionRun(sessionId);
 
   // Capture messages at stream start (closure survives session switches)
@@ -7246,7 +7247,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
         rawContent += `\n\n> ⚠️ ${errMsg}\n`;
         const finalText = rawThought ? `<think>${rawThought}</think>\n${rawContent}` : rawContent;
         const toolCalls = normalizeToolCallList(toolCallsByIndex);
-        updateAssistantMessage(assistantIndex, finalText || toolProgressSummary(toolCalls) || "(empty response)", false, sessionId, _streamMsgs);
+        updateAssistantMessage(assistantIndex, finalText || toolProgressSummary(toolCalls) || "(empty response)", false, sessionId, _streamMsgs, skipRender);
         setStreaming(false, sessionId);
         return;
       }
@@ -7257,7 +7258,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
         const toolCalls = normalizeToolCallList(toolCallsByIndex);
 
-        updateAssistantMessage(assistantIndex, finalText || toolProgressSummary(toolCalls) || "(empty response)", false, sessionId, _streamMsgs);
+        updateAssistantMessage(assistantIndex, finalText || toolProgressSummary(toolCalls) || "(empty response)", false, sessionId, _streamMsgs, skipRender);
 
         if (toolCalls.length) {
 
@@ -7269,7 +7270,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
           };
 
-          renderSessionMessages(sessionId);
+          if (!skipRender) { renderSessionMessages(sessionId); }
 
         }
 
@@ -7303,7 +7304,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
         const combined = rawThought ? `<think>${rawThought}</think>\n${rawContent}` : rawContent;
 
-        updateAssistantMessage(assistantIndex, combined, true, sessionId, _streamMsgs);
+        updateAssistantMessage(assistantIndex, combined, true, sessionId, _streamMsgs, skipRender);
 
       }
 
@@ -7325,7 +7326,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
   const toolCalls = normalizeToolCallList(toolCallsByIndex);
 
-  updateAssistantMessage(assistantIndex, finalCombined || toolProgressSummary(toolCalls) || "(empty response)", false, sessionId, _streamMsgs);
+  updateAssistantMessage(assistantIndex, finalCombined || toolProgressSummary(toolCalls) || "(empty response)", false, sessionId, _streamMsgs, skipRender);
 
   if (toolCalls.length) {
 
@@ -7337,7 +7338,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
     };
 
-    renderSessionMessages(sessionId);
+    if (!skipRender) { renderSessionMessages(sessionId); }
 
   }
 

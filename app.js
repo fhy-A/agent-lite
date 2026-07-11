@@ -383,6 +383,7 @@ const els = {
   statContext: document.getElementById("statContext"),
 
   sessionCreated: document.getElementById("sessionCreated"),
+  sessionUpdated: document.getElementById("sessionUpdated"),
 
   sessionFile: document.getElementById("sessionFile"),
 
@@ -2926,10 +2927,12 @@ async function apiJson(url, options = {}) {
 
 
 
-function sessionFilePath() {
-
-  return state.sessionId ? `agent-lite/data/sessions/${state.sessionId}.json` : "-";
-
+function sessionFilePath(session) {
+  // Prefer the absolute path from the server; fall back to relative
+  const id = state.sessionId || (session && session.id);
+  if (!id) return "-";
+  if (state._sessionFilePath && state._sessionFilePath.endsWith(id + ".json")) return state._sessionFilePath;
+  return `agent-lite/data/sessions/${id}.json`;
 }
 
 
@@ -3061,6 +3064,7 @@ function updateStatsPanel() {
 
 
   els.sessionCreated.textContent = (state.sessionCreated || "").slice(0, 16).replace("T", " ") || "-";
+  els.sessionUpdated.textContent = (state.sessionUpdated || "").slice(0, 16).replace("T", " ") || "-";
 
   els.sessionFile.textContent = sessionFilePath();
 
@@ -4625,6 +4629,16 @@ function togglePinSession(id) {
 
 
 
+function formatSessionTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 function renderSessions() {
 
   if (state.sessions.length === 0) {
@@ -4875,6 +4889,8 @@ async function createSession(title = "新会话") {
   state.sessionId = session.id;
 
   state.sessionCreated = session.createdAt || "";
+  state.sessionUpdated = session.lastMessageTime || session.updatedAt || "";
+  state._sessionFilePath = session._filePath || "";
 
   state.messages = session.messages || [];
   setSessionMessages(session.id, state.messages);
@@ -4942,6 +4958,8 @@ async function loadSession(sessionId) {
   state.sessionId = session.id;
 
   state.sessionCreated = session.createdAt || "";
+  state.sessionUpdated = session.lastMessageTime || session.updatedAt || "";
+  state._sessionFilePath = session._filePath || "";
 
   // Load from active run (streaming) > cache > server
   const cached = state._sessionMsgs && state._sessionMsgs[session.id];
@@ -5220,78 +5238,74 @@ function languageFromPath(path = "") {
 
 
 function makeSessionTitle(text = "") {
-
-  const cleaned = text
-
+  // Strip @file mentions and leading whitespace/punctuation
+  let cleaned = text
+    .replace(/@\S+/g, "")           // remove @file and @mentions
+    .replace(/^[\s,，。！？!?：:：-]+/, "")  // leading noise
     .replace(/\s+/g, " ")
-
-    .replace(/[。！？!?]$/, "")
-
     .trim();
-
   if (!cleaned) return "新会话";
-
-  return cleaned.length > 22 ? `${cleaned.slice(0, 22)}...` : cleaned;
-
+  // Truncate at first sentence-ending punctuation
+  const end = cleaned.search(/[。！？!?\n]/);
+  if (end > 0) cleaned = cleaned.slice(0, end);
+  return cleaned.length > 20 ? `${cleaned.slice(0, 20)}...` : cleaned;
 }
 
 
 
-async function generateSessionTitle(userText) {
+async function generateSessionTitle(userText, assistantReply = "") {
+  // Don't overwrite a manually-set title
+  if (state._titleSource === "manual") return;
+  // Only attempt once per session
+  if (state._titleGenerated) return;
+  state._titleGenerated = true;
 
   const model = getSelectedModel();
-
   const key = els.apiKey.value.trim();
-
   if (!model || !key) return;
 
   try {
+    // Build context: user request + first line of assistant reply
+    const ctx = assistantReply
+      ? `User: ${userText.slice(0, 300)}\nAssistant: ${assistantReply.slice(0, 200)}`
+      : userText.slice(0, 400);
 
     const payload = {
-
       model,
-
       stream: false,
-
-      max_tokens: 30,
-
-      temperature: 0.1,
-
+      max_tokens: 40,
+      temperature: 0.2,
       messages: [
+        {
+          role: "system",
+          content: `Generate a 3-7 word session title that captures the main task. Match the user's language. Return only the title, no quotes, no markdown, no punctuation at the end.
 
-        { role: "system", content: "Generate a concise session title from the user request. Return only the title, no quotes, within 15 Chinese characters or 8 English words." },
-        { role: "user", content: userText.slice(0, 200) },
-
+Good: "Add JWT authentication" / "修复登录页邮箱校验" / "Refactor API client"
+Bad: "Code changes" / too long / with punctuation.`,
+        },
+        { role: "user", content: ctx },
       ],
-
     };
 
     const baseUrl = els.baseUrl.value.trim() || "http://localhost:3000";
-
     const res = await fetch("/proxy/chat", {
-
       method: "POST",
-
       headers: { "Content-Type": "application/json", "X-Base-URL": baseUrl, Authorization: `Bearer ${key}` },
-
       body: JSON.stringify(payload),
-
     });
 
     if (res.ok) {
-
       const data = await res.json();
-
-      const title = (data.choices?.[0]?.message?.content || "").replace(/[""]/g, "").trim();
-
-      if (title && title.length >= 2) {
-
-        els.sessionTitle.value = title.slice(0, 30);
-
+      const title = (data.choices?.[0]?.message?.content || "")
+        .replace(/^["'「」『』""'']+|["'「」『』""'']+$/g, "")
+        .replace(/[。！？.!?，,]$/, "")
+        .trim();
+      if (title && title.length >= 2 && title.length <= 40) {
+        state._titleSource = "auto";
+        els.sessionTitle.value = title;
         saveCurrentSession().catch(() => {});
-
+        renameSession(state.sessionId, title);
       }
-
     }
 
   } catch (_) { /* ignore, fallback to makeSessionTitle */ }
@@ -8592,7 +8606,7 @@ async function sendMessage(userText) {
 
   if (!model) throw new Error("Please refresh and select a model first.");
 
-  if (!state.sessionId) await createSession(userText.slice(0, 24) || "New session");
+  if (!state.sessionId) await createSession();
 
   const sessionId = state.sessionId;
   const run = ensureSessionRun(sessionId);
@@ -8672,11 +8686,12 @@ async function sendMessage(userText) {
   const shouldAutoTitle = ctx.messages.length === 0 && isAutoSessionTitle(els.sessionTitle.value);
 
   if (shouldAutoTitle) {
-
-    els.sessionTitle.value = makeSessionTitle(userText);
-
-    generateSessionTitle(userText);
-
+    const quickTitle = makeSessionTitle(userText);
+    els.sessionTitle.value = quickTitle;
+    // Update sidebar immediately so user sees the title change
+    const local = state.sessions.find((s) => s.id === sessionId);
+    if (local) local.title = quickTitle;
+    renderSessions();
   }
 
   ctx.messages.push({ role: "user", content: messageContent, _images: imageRefs.length > 0 ? imageRefs : undefined, _model: ctx.model || getSelectedModel(), _time: new Date().toISOString() });
@@ -8752,6 +8767,13 @@ async function sendMessage(userText) {
   setStreaming(false, sessionId);
   await saveSessionState(sessionId, ctx.messages, ctx.stats);
   renderSessions();
+
+  // Fire-and-forget AI title generation after first assistant reply
+  if (shouldAutoTitle) {
+    const firstReply = (ctx.messages || []).find((m) => m.role === "assistant" && !m._system);
+    const replyText = firstReply ? (typeof firstReply.content === "string" ? firstReply.content : "") : "";
+    generateSessionTitle(userText, replyText);
+  }
 
   notifyTaskComplete(sessionId);
 
@@ -11069,6 +11091,7 @@ document.addEventListener("click", (e) => {
 
 
 
+els.sessionTitle.addEventListener("input", () => { state._titleSource = "manual"; });
 els.sessionTitle.addEventListener("change", () => saveCurrentSession().catch(() => {}));
 
 

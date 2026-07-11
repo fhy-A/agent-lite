@@ -818,11 +818,20 @@ def session_path(session_id):
 
 def session_summary(session):
     messages = session.get("messages") or []
+    last_time = ""
+    for msg in reversed(messages):
+        t = msg.get("_time") or (msg.get("meta") or {}).get("_time")
+        if t:
+            last_time = t
+            break
+    if not last_time:
+        last_time = session.get("updatedAt") or session.get("createdAt") or ""
     return {
         "id": session["id"],
         "title": session.get("title") or "未命名会话",
         "createdAt": session.get("createdAt"),
         "updatedAt": session.get("updatedAt"),
+        "lastMessageTime": last_time,
         "messageCount": len(messages),
     }
 
@@ -1650,7 +1659,9 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         if not path.exists():
             self.send_json({"error": "session not found"}, 404)
             return
-        self.send_json(read_json(path, {}))
+        session = read_json(path, {})
+        session["_filePath"] = str(path.resolve())
+        self.send_json(session)
 
     def create_session(self):
         body = self.read_body_json()

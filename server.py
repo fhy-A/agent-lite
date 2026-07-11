@@ -1344,6 +1344,9 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         query = parse.parse_qs(parsed.query)
 
         try:
+            if route == "/api/ping":
+                self.send_json({"pong": True})
+                return
             if route == "/api/config":
                 self.send_json(load_config())
                 return
@@ -2698,10 +2701,10 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             raise ValueError("invalid memory name")
         MEMORY_DIR.mkdir(parents=True, exist_ok=True)
         project = load_config().get("projectRoot", "")
-        ts = time.strftime("%Y-%m-%dT%H:%M:%S")
+        ts = dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         md = f"---\nname: {safe}\ndescription: {description}\nproject: {project}\ncreated: {ts}\n---\n\n{content}"
         (MEMORY_DIR / f"{safe}.md").write_text(md, encoding="utf-8")
-        self.send_json({"ok": True, "name": safe, "path": str(mem_dir / "MEMORY.md")}, 201)
+        self.send_json({"ok": True, "name": safe, "path": str(MEMORY_DIR / f"{safe}.md")}, 201)
 
     def create_directory(self):
         body = self.read_body_json()

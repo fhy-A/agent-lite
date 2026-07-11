@@ -6146,7 +6146,9 @@ function appendSystemError(message) {
 
 
 function setStreaming(active, sessionId = state.sessionId) {
-  if (state._subAgentDepth > 0) return;
+  // Sub-agents must not set streaming(true) but must be allowed to set streaming(false)
+  // so the stop button and run state clean up properly when the main agent finishes.
+  if (active && state._subAgentDepth > 0) return;
 
   const run = ensureSessionRun(sessionId);
   if (run) {

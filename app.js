@@ -8084,7 +8084,17 @@ async function dispatchBackgroundSubAgent(sessionId, userText, images = []) {
     ? `[背景] 主 Agent 正在处理：${currentTask.slice(0, 150)}\n\n[新请求] ${userText}\n\n你是一个后台子 Agent，收到了一条用户在等待中发送的新消息。请独立处理这条新请求。如果新请求与主 Agent 正在执行的任务相关，优先给出简洁回复后让主 Agent 继续；如果无关，直接完成新请求。完成后输出结果，不要与主 Agent 交互。`
     : userText;
 
-  // Buffer results — don't mutate state.messages while main agent may be reading it
+  // Push placeholder so user sees their message immediately
+  const msgs0 = getSessionMessages(sessionId);
+  msgs0.push({
+    role: "user",
+    content: userText,
+    _model: parentCtx.model || getSelectedModel(),
+    _time: new Date().toISOString(),
+  });
+  setSessionMessages(sessionId, msgs0);
+  renderMessages();
+
   try {
     const subCtx = createSubContext(parentCtx, prompt);
     subCtx.authorizationLabel = userText.slice(0, 24) || "后台任务";

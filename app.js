@@ -9154,6 +9154,7 @@ async function sendMessage(userText) {
 
   // Handle queued messages: on error/abort, return them to input box; on success, flush normally
   const hadQueue = run.messageQueue.length > 0;
+  let parallelSubTasks = null;
   if (hadQueue) {
     const queued = [...run.messageQueue];
     run.messageQueue = [];
@@ -9171,25 +9172,84 @@ async function sendMessage(userText) {
       renderImageThumbs();
       updateSendButtonState();
     } else {
-      // Success: flush to session and trigger API call
+      // Success: dispatch queued messages as parallel sub-agents
+      parallelSubTasks = [];
       for (const q of queued) {
         const imgs = q.images || [];
         const imgRefs = await uploadImagesForStorage(imgs);
-        const msgContent = imgs.length > 0
-          ? [{ type: "text", text: q.text || "" }, ...imgs.map((img) => ({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.base64}` } }))]
-          : (q.text || "");
-        ctx.messages.push({ role: "user", content: msgContent, _images: imgRefs.length > 0 ? imgRefs : undefined, _model: ctx.model || getSelectedModel(), _time: new Date().toISOString() });
+        const taskPrompt = q.text || "";
+        parallelSubTasks.push({
+          prompt: taskPrompt,
+          images: imgRefs.length > 0 ? imgRefs : undefined,
+          text: q.text || "",
+        });
       }
       state.attachedImages = [];
       renderImageThumbs();
-      setSessionMessages(sessionId, ctx.messages);
-      renderSessionMessages(sessionId);
-      await saveSessionState(sessionId, ctx.messages, ctx.stats);
+
+      if (parallelSubTasks.length === 1) {
+        // Single queued message — push directly and run normal loop
+        const msgContent = parallelSubTasks[0].images && parallelSubTasks[0].images.length > 0
+          ? [{ type: "text", text: parallelSubTasks[0].text }, ...parallelSubTasks[0].images.map((img) => ({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.base64}` } }))]
+          : parallelSubTasks[0].text;
+        ctx.messages.push({ role: "user", content: msgContent, _images: parallelSubTasks[0].images, _model: ctx.model || getSelectedModel(), _time: new Date().toISOString() });
+        setSessionMessages(sessionId, ctx.messages);
+        renderSessionMessages(sessionId);
+        await saveSessionState(sessionId, ctx.messages, ctx.stats);
+      } else if (parallelSubTasks.length > 1) {
+        // Multiple queued messages — dispatch as parallel sub-agents
+        ctx.messages.push({
+          role: "user",
+          content: `[系统] 以下 ${parallelSubTasks.length} 条排队消息已派发给子 Agent 并行处理：
+${parallelSubTasks.map((t, i) => `${i + 1}. ${t.text.slice(0, 80)}`).join("
+")}`,
+          meta: { _system: true },
+        });
+        setSessionMessages(sessionId, ctx.messages);
+        renderSessionMessages(sessionId);
+        await saveSessionState(sessionId, ctx.messages, ctx.stats);
+
+        // Run sub-agents in parallel (max 3 concurrent)
+        const results = await mapWithConcurrency(
+          parallelSubTasks,
+          3,
+          async (task) => {
+            try {
+              const subCtx = createSubContext(ctx, task.prompt);
+              subCtx.authorizationLabel = task.text.slice(0, 24) || "队列任务";
+              await runAgentLoop(subCtx);
+              const sub = subCtx.subResult || { ok: false, result: "队列子任务未返回结果" };
+              return { text: task.text, ok: sub.ok, result: sub.result, rounds: sub.rounds || 0 };
+            } catch (err) {
+              return { text: task.text, ok: false, result: `队列子任务错误: ${err.message || err}`, rounds: 0 };
+            }
+          },
+        );
+
+        // Collect results into the session
+        for (const r of results) {
+          const label = r.ok ? "完成" : "失败";
+          ctx.messages.push({
+            role: "assistant",
+            content: `**排队任务**：${r.text.slice(0, 80)}
+
+${label} · ${r.rounds || 0} 轮
+
+${r.result}`,
+            meta: { kind: "queued-subtask" },
+            _model: ctx.model || getSelectedModel(),
+            _time: new Date().toISOString(),
+          });
+        }
+        setSessionMessages(sessionId, ctx.messages);
+        renderSessionMessages(sessionId);
+        await saveSessionState(sessionId, ctx.messages, ctx.stats);
+      }
     }
   }
 
-  // Only trigger API call if no error AND we had queued messages to respond to
-  if (!loopError && hadQueue) {
+  // Only trigger API call if no error AND we had single queued messages to respond to
+  if (!loopError && hadQueue && !(parallelSubTasks && parallelSubTasks.length > 1)) {
     ctx.taskUsage = { input: 0, output: 0, cache: 0 };
     ctx.responseUsage = { input: 0, output: 0, cache: 0 };
     setStreaming(true, sessionId);

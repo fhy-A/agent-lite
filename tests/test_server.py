@@ -547,6 +547,32 @@ class TestMakeUnifiedDiff(unittest.TestCase):
         self.assertIn("-old", diff)
         self.assertIn("+new", diff)
 
+    def test_ignores_line_ending_style(self):
+        diff = server.make_unified_diff("line1\r\nline2\r\n", "line1\nline2\n", "test.txt")
+        self.assertEqual(diff, "")
+
+    def test_ignores_final_newline_only(self):
+        diff = server.make_unified_diff("line1", "line1\n", "test.txt")
+        self.assertEqual(diff, "")
+
+    def test_normalizes_accidentally_doubled_windows_newlines(self):
+        source = "line1\r\r\nline2\r\r\n"
+        self.assertEqual(server.normalize_text_newlines(source), "line1\nline2\n")
+
+    def test_fuzzy_edit_remains_actionable_after_newline_normalization(self):
+        old = server.normalize_text_newlines(
+            'def greet(name):\r\r\n    return "Hello " + name\r\r\n\r\r\n'
+            'def farewell(name):\r\r\n    return "Goodbye " + name\r\r\n'
+        )
+        old_fragment = 'def greet(name):\n    return "Hello " + name\n\ndef farewell(name):\n    return "Goodbye " + name'
+        new_fragment = 'def greet(name):\n    return f"Hello {name}"\n\ndef farewell(name):\n    return f"Goodbye {name}"'
+        found = server.AgentLiteHandler._fuzzy_find(None, old, old_fragment)
+        self.assertEqual(found, old_fragment)
+        updated = old.replace(found, new_fragment, 1)
+        diff = server.make_unified_diff(old, updated, "test_utils.py")
+        self.assertIn('+    return f"Hello {name}"', diff)
+        self.assertIn('+    return f"Goodbye {name}"', diff)
+
 
 class TestNowIso(unittest.TestCase):
     def test_returns_string(self):

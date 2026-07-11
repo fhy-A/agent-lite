@@ -9,6 +9,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import subprocess
 import uuid
 import sys
@@ -901,16 +902,29 @@ def read_text_limited(path, limit_bytes):
     return preview.decode("utf-8", errors="replace"), len(data), truncated
 
 
+def normalize_text_newlines(text):
+    """Normalize valid and accidentally doubled Windows newlines to LF."""
+    return str(text).replace("\r\r\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
+
+
+def write_text_utf8(path, text):
+    """Write normalized UTF-8 bytes without platform newline translation."""
+    path.write_bytes(normalize_text_newlines(text).encode("utf-8"))
+
+
 def make_unified_diff(old_text, new_text, rel_path):
-    return "".join(
-        difflib.unified_diff(
-            old_text.splitlines(keepends=True),
-            new_text.splitlines(keepends=True),
-            fromfile=f"a/{rel_path}",
-            tofile=f"b/{rel_path}",
-            lineterm="",
-        )
+    # Compare logical lines so CRLF/LF and a final newline do not turn otherwise
+    # unchanged code into a remove/add pair. The actual file content is still
+    # written exactly as proposed; this only keeps the review diff focused.
+    lines = difflib.unified_diff(
+        normalize_text_newlines(old_text).splitlines(),
+        normalize_text_newlines(new_text).splitlines(),
+        fromfile=f"a/{rel_path}",
+        tofile=f"b/{rel_path}",
+        lineterm="",
     )
+    diff = "\n".join(lines)
+    return diff + "\n" if diff else ""
 
 
 def is_safe_command(command):
@@ -2347,10 +2361,13 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             if not target.is_file():
                 raise ValueError("目标路径不是文件")
             old_text, _, _ = read_text_limited(target, MAX_TOOL_READ_BYTES)
+            old_text = normalize_text_newlines(old_text)
 
         if "oldText" in body and "newText" in body:
-            old_fragment = body.get("oldText") or ""
-            new_fragment = body.get("newText") or ""
+            old_fragment = normalize_text_newlines(body.get("oldText") or "")
+            new_fragment = normalize_text_newlines(body.get("newText") or "")
+            if old_fragment == new_fragment:
+                raise ValueError("修改前后的内容相同，未检测到可应用的变更")
             found = self._fuzzy_find(old_text, old_fragment)
             if not found:
                 preview = old_fragment[:120].replace("\n", "\\n")
@@ -2367,9 +2384,11 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
                 new_text = body.get("content")
             if new_text is None:
                 raise ValueError("缺少 newContent/content，或 oldText/newText")
-            new_text = str(new_text)
+            new_text = normalize_text_newlines(new_text)
 
         diff = make_unified_diff(old_text, new_text, rel)
+        if not diff:
+            raise ValueError("未检测到文件内容变化。请重新读取文件并检查 oldText/newText 是否正确")
         return root, target, rel, old_text, new_text, diff
 
     def tool_propose_edit(self):
@@ -2400,9 +2419,9 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", rel)
             backup_path = FILE_BACKUP_DIR / f"{safe_name}.{stamp}.bak"
             backup_path.parent.mkdir(parents=True, exist_ok=True)
-            backup_path.write_text(old_text, encoding="utf-8")
+            shutil.copy2(target, backup_path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(new_text, encoding="utf-8")
+        write_text_utf8(target, new_text)
         self.send_json({
             "ok": True,
             "action": "apply_edit",
@@ -2500,7 +2519,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
     def tool_write_file(self):
         body = self.read_body_json()
         path = (body.get("path") or "").strip()
-        content = body.get("content") or ""
+        content = normalize_text_newlines(body.get("content") or "")
         if not path:
             raise ValueError("文件路径不能为空。请提供 path 参数。脚本超过 2000 字符时先 write_file 再 python 执行，不要塞进 python -c。")
         root, target = resolve_project_path(path)
@@ -2509,21 +2528,28 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         # Backup existing file
         backup_path = None
         old_content = ""
-        if target.exists():
+        target_existed = target.exists()
+        if target_existed:
             if not target.is_file():
                 raise ValueError("目标路径已存在且不是文件")
             try:
                 old_content, _, _ = read_text_limited(target, MAX_TOOL_READ_BYTES)
+                old_content = normalize_text_newlines(old_content)
+            except Exception as exc:
+                raise ValueError(f"读取原文件失败: {exc}")
+            if old_content == content:
+                raise ValueError("文件内容无变化，无需重复写入")
+            try:
                 stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
                 safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", rel)
                 backup_path = FILE_BACKUP_DIR / f"{safe_name}.{stamp}.bak"
                 backup_path.parent.mkdir(parents=True, exist_ok=True)
-                backup_path.write_text(old_content, encoding="utf-8")
+                shutil.copy2(target, backup_path)
             except Exception as exc:
                 raise ValueError(f"备份原文件失败: {exc}")
 
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        write_text_utf8(target, content)
         diff = make_unified_diff(old_content, content, rel)
 
         self.send_json({
@@ -2532,7 +2558,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             "path": rel,
             "size": len(content.encode("utf-8")),
             "backupPath": str(backup_path) if backup_path else None,
-            "diff": diff or "(new file)",
+            "diff": diff or ("(new file)" if not target_existed else ""),
         })
 
     def tool_delete_file(self):

@@ -972,6 +972,7 @@ const defaultSystemPrompt = `
 - 搜索文件名用 glob_files，不要用 run_command 调 dir/ls
 - 读文件用 read_file，尽量指定行范围，避免全文件读取
 - 写文件走 propose_edit 生成 diff，用户确认后写入
+- propose_edit 失败或返回无实际变更时，重新读取文件并修正参数；禁止声称修改成功
 - run_command 仅用于查看、测试、构建、git 查询等低风险命令。禁止启动持续运行的服务（Flask/Django/HTTP Server），用 read_file 和 python -c 检查代码即可
 - 独立工具可以并行调用，不确定文件位置时先用 list_files 或 glob_files 定位
 - task 子 Agent 用于独立的并行搜索和分析任务
@@ -1576,7 +1577,7 @@ const I18N = {
     skillDesc: "描述", skillKeywords: "关键词", skillTools: "工具", skillPathLabel: "文件路径",
     skillExplicitHint: "此 Skill 可以通过 /{name} 命令手动触发", skillEmptyHint: "点击 + 新建 Skill，或在左侧选择 Skill",
     skillCreateHint: "将在 data/skills/ 下创建 SKILL.md 文件",
-    applyEdit: "Apply edit", rejectEdit: "Reject",
+    applyEdit: "应用修改", rejectEdit: "拒绝",
     allowLabel: "允许", rejectLabel: "拒绝",
     copyBtn: "copy", copiedBtn: "copied", failedBtn: "failed",
     appliedLabel: "已应用", rejectedLabel: "已拒绝",
@@ -3239,27 +3240,88 @@ function highlightSyntax(code, lang) {
 
 
 
+function normalizeDiffText(text = "") {
+  const source = String(text).replace(/\r\n/g, "\n");
+  const fenced = source.match(/```(?:diff)?\s*\n([\s\S]*?)\n?```/i);
+  if (fenced) return fenced[1].trimEnd();
+
+  const lines = source.split("\n");
+  const firstHeader = lines.findIndex((line) => line.startsWith("--- "));
+  const normalized = firstHeader >= 0 ? lines.slice(firstHeader) : lines;
+  while (normalized.length && /^```(?:diff)?\s*$/i.test(normalized[0].trim())) normalized.shift();
+  while (normalized.length && /^```\s*$/.test(normalized.at(-1).trim())) normalized.pop();
+  return normalized.join("\n").trimEnd();
+}
+
+function getDiffStats(text = "") {
+  const lines = normalizeDiffText(text).split("\n");
+  return {
+    additions: lines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length,
+    removals: lines.filter((line) => line.startsWith("-") && !line.startsWith("---")).length,
+    lineCount: lines.length,
+  };
+}
+
 function renderDiff(text) {
 
-  const lines = text.split("\n");
+  const lines = normalizeDiffText(text).split("\n");
+
+  // Detect language from diff header
+  let lang = null;
+  for (const line of lines) {
+    const m = line.match(/^(---|\+\+\+) [ab]\/(.+)/);
+    if (m) {
+      const ext = m[2].split(".").pop().toLowerCase();
+      if (ext) lang = ext;
+      break;
+    }
+  }
+
+  let oldLine = 0, newLine = 0;
+
+  const gutter = (g) => `<span class="diff-gutter">${g}</span>`;
+  const num = (n) => `<span class="diff-num">${n}</span>`;
 
   const html = lines.map((line) => {
 
-    const escaped = escapeHtml(line);
+    // File headers — empty placeholder columns for alignment
+    if (line.startsWith("+++") || line.startsWith("---")) {
+      return `<span class="diff-line diff-header">${gutter("")}${num("")}<span class="diff-code">${escapeHtml(line)}</span></span>`;
+    }
 
-    if (line.startsWith("+++") || line.startsWith("---")) return `<span class="diff-line diff-header">${escaped}</span>`;
+    // Hunk header — empty line number placeholders
+    if (line.startsWith("@@")) {
+      const m = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (m) { oldLine = parseInt(m[1]) - 1; newLine = parseInt(m[2]) - 1; }
+      return `<span class="diff-line diff-hunk">${gutter("")}${num("")}<span class="diff-code">${escapeHtml(line)}</span></span>`;
+    }
 
-    if (line.startsWith("@@")) return `<span class="diff-line diff-hunk">${escaped}</span>`;
+    // Content lines
+    let lineNum = "";
+    let cls, g, content;
 
-    if (line.startsWith("+")) return `<span class="diff-line diff-add">${escaped}</span>`;
+    if (line.startsWith("+")) {
+      newLine++;
+      lineNum = newLine;
+      cls = "diff-add"; g = "+"; content = line.slice(1);
+    } else if (line.startsWith("-")) {
+      oldLine++;
+      lineNum = oldLine;
+      cls = "diff-remove"; g = "-"; content = line.slice(1);
+    } else {
+      oldLine++; newLine++;
+      lineNum = newLine;
+      cls = "diff-context"; g = " ";
+      content = line.startsWith(" ") ? line.slice(1) : line;
+    }
 
-    if (line.startsWith("-")) return `<span class="diff-line diff-remove">${escaped}</span>`;
-
-    return `<span class="diff-line diff-context">${escaped}</span>`;
+    const highlighted = lang ? highlightSyntax(content, lang) : escapeHtml(content);
+    return `<span class="diff-line ${cls}">${gutter(g)}${num(lineNum)}<span class="diff-code">${highlighted}</span></span>`;
 
   }).join("");
 
-  return `<div class="code-block diff-block"><div class="code-head"><span>diff</span></div><div class="diff-lines">${html}</div></div>`;
+  const isLong = lines.length > 40;
+  return `<div class="code-block diff-block${isLong ? " is-collapsed" : ""}"><div class="diff-lines">${html}</div>${isLong ? `<button class="diff-expand-btn" type="button" aria-expanded="false">展开全部 ${lines.length} 行</button>` : ""}</div>`;
 
 }
 
@@ -3474,6 +3536,19 @@ function bindCopyButtons() {
 
     });
 
+  });
+
+  document.querySelectorAll(".diff-expand-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const block = btn.closest(".diff-block");
+      if (!block) return;
+      const expanded = block.classList.toggle("is-expanded");
+      block.classList.toggle("is-collapsed", !expanded);
+      btn.setAttribute("aria-expanded", String(expanded));
+      btn.textContent = expanded
+        ? "收起 Diff"
+        : `展开全部 ${block.querySelectorAll(".diff-line").length} 行`;
+    });
   });
 
 }
@@ -3941,33 +4016,38 @@ function renderEditSuggestionProjection(msg, index) {
   const editState = state.pendingEdits[pendingId] || {};
   const applied = !!(meta.applied || editState.applied);
   const rejected = !!(meta.rejected || editState.rejected || editState.resolved && !editState.applied);
-  const isDiff = /(^|\n)(--- |\+\+\+ |@@ |\+|-)/.test(content);
-  const body = isDiff ? renderDiff(content) : `<div class="tool-edit-markdown">${renderMarkdownLite(content)}</div>`;
+  const diffText = normalizeDiffText(content);
+  if (/^\(no changes\)$/i.test(diffText.trim())) return "";
+  const isDiff = /(^|\n)(--- |\+\+\+ |@@ )/.test(diffText);
+  const body = isDiff ? renderDiff(diffText) : `<div class="tool-edit-markdown">${renderMarkdownLite(content)}</div>`;
+  const stats = isDiff ? getDiffStats(diffText) : { additions: 0, removals: 0 };
   const canReject = getPermissionProfile() !== "bypass";
-  const status = applied ? "Applied" : (rejected ? "Rejected" : "Review");
+  const status = applied ? t("appliedLabel") : (rejected ? t("rejectedLabel") : "待确认");
+  const statusClass = applied ? "is-applied" : (rejected ? "is-rejected" : "is-review");
 
   let actions = "";
   if (!applied && !rejected) {
     actions = `
       <div class="apply-edit-bar">
-        <button class="apply-edit-btn" type="button" data-edit-id="${escapeHtml(pendingId)}">Apply</button>
-        ${canReject ? `<button class="reject-edit-btn" type="button" data-edit-id="${escapeHtml(pendingId)}">Reject</button>` : ""}
-        <span class="apply-edit-hint">Confirm before writing changes</span>
+        <button class="apply-edit-btn" type="button" data-edit-id="${escapeHtml(pendingId)}">${t("applyEdit")}</button>
+        ${canReject ? `<button class="reject-edit-btn" type="button" data-edit-id="${escapeHtml(pendingId)}">${t("rejectEdit")}</button>` : ""}
       </div>
     `;
-  } else if (applied) {
-    actions = `<div class="apply-edit-bar done"><span class="apply-edit-done">Applied</span></div>`;
-  } else {
-    actions = `<div class="apply-edit-bar rejected"><span class="apply-edit-rejected">Rejected</span></div>`;
   }
 
   return `
     <article class="msg assistant edit-suggestion" data-msg-index="${index}">
       <div class="tool-edit-card">
         <div class="tool-edit-head">
-          <span class="tool-edit-status">${escapeHtml(status)}</span>
-          <span class="tool-edit-title">${action === "write_file" ? "文件写入建议" : "编辑建议"}</span>
-          ${target ? `<span class="tool-edit-target">${escapeHtml(target)}</span>` : ""}
+          <div class="tool-edit-heading">
+            ${target ? `<button class="tool-edit-target clickable-path" type="button" data-path="${escapeHtml(target)}" title="在预览区打开">${escapeHtml(target)}</button>` : `<span class="tool-edit-target">未命名文件</span>`}
+            <span class="tool-edit-title">${action === "write_file" ? "文件写入建议" : "编辑建议"}</span>
+          </div>
+          <div class="tool-edit-summary">
+            ${isDiff ? `<span class="diff-stat diff-stat-add">+${stats.additions}</span><span class="diff-stat diff-stat-remove">−${stats.removals}</span>` : ""}
+            ${isDiff ? renderCopyBtn(diffText) : ""}
+            <span class="tool-edit-status ${statusClass}">${escapeHtml(status)}</span>
+          </div>
         </div>
         <div class="tool-edit-diff">${body}</div>
         ${actions}
@@ -7429,6 +7509,20 @@ function formatToolResult(result) {
 
 }
 
+function requireActionableEditResult(result) {
+  if (!result?.ok || result.action !== "propose_edit") return result;
+  const diffText = normalizeDiffText(result.diff || "");
+  const stats = getDiffStats(diffText);
+  const noChanges = !diffText || /^\(no changes\)$/i.test(diffText.trim())
+    || (stats.additions === 0 && stats.removals === 0);
+  if (!noChanges) return result;
+  return {
+    ...result,
+    ok: false,
+    error: "未检测到实际文件变化。请重新读取文件，并检查 oldText/newText 后重试。",
+  };
+}
+
 
 
 async function extractAndSuggestMemories() {
@@ -7927,7 +8021,7 @@ async function runAgentLoop(ctx = null) {
 
 
 
-        const result = await executeToolCall(tool);
+        let result = requireActionableEditResult(await executeToolCall(tool));
 
         const visionImage = toolImageVisionPayload(result);
         if (visionImage && !pendingVisionPaths.has(visionImage.path)) {
@@ -8191,7 +8285,7 @@ async function runAgentLoop(ctx = null) {
 
 
 
-    const result = await executeToolCall(tool);
+    const result = requireActionableEditResult(await executeToolCall(tool));
 
     const meta = { action: result.action || tool.action, path: result.path };
 

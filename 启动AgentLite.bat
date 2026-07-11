@@ -10,13 +10,23 @@ if exist "dist\AgentLite.exe.new" (
   echo Update applied.
 )
 
-REM Check if port 3010 already in use
+REM Check if port 3010 already in use.
 netstat -ano 2>nul | find ":3010 " | find "LISTENING" >nul
-if %errorlevel%==0 (
-  REM Ask the connected page to refresh in place instead of opening a new tab.
-  powershell -NoProfile -Command "try {Invoke-WebRequest -Uri 'http://127.0.0.1:3010/api/request-browser-refresh' -TimeoutSec 2 -UseBasicParsing | Out-Null} catch {}" >nul 2>&1
-  goto :eof
-)
+if errorlevel 1 goto :start_server
+
+REM Reuse an active Agent Lite page. If the service is running without an
+REM active browser page, open one explicitly instead of refreshing nothing.
+powershell -NoProfile -Command "try {$r=Invoke-RestMethod -Uri 'http://127.0.0.1:3010/api/has-browser' -TimeoutSec 2; if ($r.hasBrowser) {exit 0} else {exit 1}} catch {exit 1}" >nul 2>&1
+if errorlevel 1 goto :open_existing_service
+powershell -NoProfile -Command "try {Invoke-WebRequest -Uri 'http://127.0.0.1:3010/api/request-browser-refresh' -TimeoutSec 2 -UseBasicParsing | Out-Null; exit 0} catch {exit 1}" >nul 2>&1
+if errorlevel 1 goto :open_existing_service
+goto :eof
+
+:open_existing_service
+start "" http://127.0.0.1:3010
+goto :eof
+
+:start_server
 
 REM Find Python (prefer pythonw for no console)
 set PY=

@@ -30,6 +30,7 @@ const state = {
 
   isStreaming: false,
   streamingSessionId: null,
+  _subAgentDepth: 0,  // >0 means a sub-agent is running; skip UI/persistence mutations
 
   // Per-session message cache for session switching
   _sessionMsgs: {},
@@ -101,7 +102,7 @@ function getSessionMessages(sessionId) {
 }
 
 function setSessionMessages(sessionId, messages) {
-  if (!sessionId) return;
+  if (!sessionId || state._subAgentDepth > 0) return;
   state._sessionMsgs[sessionId] = messages;
   if (sessionId === state.sessionId) state.messages = messages;
 }
@@ -113,7 +114,7 @@ function getSessionStats(sessionId) {
 }
 
 function setSessionStats(sessionId, stats) {
-  if (!sessionId) return;
+  if (!sessionId || state._subAgentDepth > 0) return;
   state._sessionStats[sessionId] = stats || { input: 0, output: 0, cache: 0, cost: 0 };
   if (sessionId === state.sessionId) state.stats = state._sessionStats[sessionId];
 }
@@ -144,6 +145,7 @@ function markSessionUnread(sessionId) {
 }
 
 function renderSessionMessages(sessionId) {
+  if (state._subAgentDepth > 0) return;
   if (sessionId === state.sessionId) {
     // User is viewing this session — mark messages as seen
     const s = state.sessions.find(function(s){ return s.id === sessionId; });
@@ -6132,6 +6134,7 @@ function appendSystemError(message) {
 
 
 function setStreaming(active, sessionId = state.sessionId) {
+  if (state._subAgentDepth > 0) return;
 
   const run = ensureSessionRun(sessionId);
   if (run) {
@@ -7914,7 +7917,8 @@ function createSubContext(parentCtx, taskPrompt) {
 async function runAgentLoop(ctx = null) {
 
   ctx = ctx || buildRunContext(state.sessionId);
-  // Sub-agent must not overwrite main session's messages/stats
+  if (ctx.isSubAgent) state._subAgentDepth++;
+  try {
   if (!ctx.isSubAgent) {
     setSessionMessages(ctx.sessionId, ctx.messages);
     setSessionStats(ctx.sessionId, ctx.stats);
@@ -8496,6 +8500,8 @@ async function runAgentLoop(ctx = null) {
   await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
 
   renderSessionMessages(ctx.sessionId);
+
+  } finally { if (ctx && ctx.isSubAgent) state._subAgentDepth--; }
 
 }
 

@@ -8072,6 +8072,53 @@ function createSubContext(parentCtx, taskPrompt) {
   return subCtx;
 }
 
+async function dispatchBackgroundSubAgent(sessionId, userText, images = []) {
+  const run = ensureSessionRun(sessionId);
+  const parentCtx = run?._activeCtx;
+  if (!parentCtx) return; // no active run to dispatch from
+
+  const currentTask = parentCtx._taskPrompt || "";
+  const prompt = currentTask
+    ? `[背景] 主 Agent 正在处理：${currentTask.slice(0, 150)}\n\n[新请求] ${userText}\n\n你是一个后台子 Agent，收到了一条用户在等待中发送的新消息。请独立处理这条新请求。如果新请求与主 Agent 正在执行的任务相关，优先给出简洁回复后让主 Agent 继续；如果无关，直接完成新请求。完成后输出结果，不要与主 Agent 交互。`
+    : userText;
+
+  // Push a placeholder for the queued message
+  const placeholderIndex = state.messages.push({
+    role: "user",
+    content: userText,
+    _model: parentCtx.model || getSelectedModel(),
+    _time: new Date().toISOString(),
+  }) - 1;
+  renderMessages();
+
+  try {
+    const subCtx = createSubContext(parentCtx, prompt);
+    subCtx.authorizationLabel = userText.slice(0, 24) || "后台任务";
+    await runAgentLoop(subCtx);
+    const sub = subCtx.subResult || { ok: false, result: "后台子 Agent 未返回结果" };
+    const resultText = `**后台处理**：${userText.slice(0, 80)}\n\n${sub.result}`;
+    state.messages.push({
+      role: "assistant",
+      content: resultText,
+      meta: { kind: "background-subagent" },
+      _model: parentCtx.model || getSelectedModel(),
+      _time: new Date().toISOString(),
+    });
+  } catch (err) {
+    state.messages.push({
+      role: "assistant",
+      content: `**后台处理失败**：${userText.slice(0, 80)}\n\n${err.message || err}`,
+      meta: { kind: "background-subagent", error: true },
+      _model: parentCtx.model || getSelectedModel(),
+      _time: new Date().toISOString(),
+    });
+  }
+  setSessionMessages(sessionId, state.messages);
+  renderMessages();
+  await saveSessionState(sessionId, state.messages, getSessionStats(sessionId));
+  renderSessions();
+}
+
 async function executeToolWithDelegation(tool, parentCtx, options = {}) {
   let signature = "";
   if (parentCtx?.isSubAgent) {
@@ -9051,6 +9098,9 @@ async function sendMessage(userText) {
   const run = ensureSessionRun(sessionId);
   const ctx = buildRunContext(sessionId);
   ctx.taskUsage = { input: 0, output: 0, cache: 0 };
+  // Make the active context accessible for background sub-agent dispatch
+  ctx._taskPrompt = userText;
+  run._activeCtx = ctx;
 
 
 
@@ -9267,6 +9317,7 @@ ${r.result}`,
   renderSessions();
 
   notifyTaskComplete(sessionId);
+  if (run) run._activeCtx = null;
 
   if (loopError) throw loopError;  // propagate to chatForm handler
 }
@@ -11595,15 +11646,16 @@ els.chatForm.addEventListener("submit", async (event) => {
   if (!text && !hasImages) return;
 
   if (isSessionStreaming(state.sessionId)) {
-    // Queue message instead of aborting
-    const run = ensureSessionRun(state.sessionId);
-    run.messageQueue.push({ text, images: [...state.attachedImages] });
+    // Dispatch immediately as a background sub-agent instead of queuing
+    const imgs = [...state.attachedImages];
     els.prompt.value = "";
     els.prompt.rows = 2;
     state.attachedImages = [];
     renderImageThumbs();
     updateSendButtonState();
-    renderMessages();
+    dispatchBackgroundSubAgent(state.sessionId, text, imgs).catch((err) => {
+      console.error("Background sub-agent dispatch failed:", err);
+    });
     return;
   }
 

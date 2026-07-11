@@ -7138,9 +7138,8 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
         : `请求失败（${lastError}），正在重试...`;
 
-      msgs.push({ role: "assistant", content: `🔄 ${msg}`, meta: { kind: "key-fallback" } });
-
-      renderMessages();
+      ctx.messages.push({ role: "assistant", content: `🔄 ${msg}`, meta: { kind: "key-fallback" } });
+      if (!skipRender) { renderSessionMessages(sessionId); }
 
     }
 

@@ -68,6 +68,31 @@ class TestSubAgentFrontend(unittest.TestCase):
         self.assertIn('此前成功的工具调用', self.source)
         self.assertIn('const maxRounds = ctx.isSubAgent ? 6 : MAX_TOOL_ROUNDS;', self.source)
 
+    def test_background_dispatch_uses_bounded_scheduler(self):
+        self.assertIn('globalLimit: 3', self.source)
+        self.assertIn('perSessionLimit: 2', self.source)
+        self.assertIn('function pumpBackgroundDispatcher()', self.source)
+        self.assertIn('backgroundActiveForSession(candidate.sessionId) < dispatcher.perSessionLimit', self.source)
+
+    def test_background_dispatch_has_visible_lifecycle_and_timeout(self):
+        self.assertIn('backgroundDispatch: { id, status: "pending" }', self.source)
+        self.assertIn('updateBackgroundJob(job, "running")', self.source)
+        self.assertIn('const BACKGROUND_JOB_TIMEOUT_MS = 10 * 60 * 1000;', self.source)
+        self.assertIn('后台处理中', self.source)
+
+    def test_background_dispatch_owns_abort_controller(self):
+        self.assertIn('abortController: new AbortController()', self.source)
+        self.assertIn('if (!ctx?.isSubAgent && sessionId === state.sessionId)', self.source)
+
+    def test_session_saves_are_serialized(self):
+        self.assertIn('_sessionSaveChains: {}', self.source)
+        self.assertIn('const previous = state._sessionSaveChains[sessionId] || Promise.resolve();', self.source)
+        self.assertIn('state._sessionSaveChains[sessionId] = savePromise;', self.source)
+
+    def test_active_subagent_does_not_block_main_session_updates(self):
+        self.assertNotIn('if (!sessionId || state._subAgentDepth > 0) return;', self.source)
+        self.assertNotIn('if (active && state._subAgentDepth > 0) return;', self.source)
+
 
 if __name__ == "__main__":
     unittest.main()

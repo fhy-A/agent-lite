@@ -51,6 +51,7 @@ MAX_SEARCH_FILE_BYTES = 1024 * 1024
 MAX_SEARCH_RESULTS = 100
 MAX_COMMAND_SECONDS = 30
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+_json_write_lock = threading.RLock()
 
 
 def _hidden_subprocess_kwargs():
@@ -559,7 +560,17 @@ def read_json(path, default):
 
 def write_json(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    payload = json.dumps(data, ensure_ascii=False, indent=2)
+    temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    with _json_write_lock:
+        try:
+            temp_path.write_text(payload, encoding="utf-8")
+            os.replace(temp_path, path)
+        finally:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def default_project_root():

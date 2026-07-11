@@ -1798,6 +1798,26 @@ input:focus, select:focus, textarea:focus {
 .msg-copy-btn svg { display: block; width: 14px; height: 14px; }
 .msg.user .msg-copy-btn { opacity: 1; }
 .msg.user:hover .msg-meta { pointer-events: auto; }
+.msg.user:has(.background-dispatch-status) .msg-meta { opacity: 1; }
+.background-dispatch-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.background-dispatch-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.background-dispatch-status.running .background-dispatch-dot {
+  background: var(--accent);
+  animation: queuePulse 1.2s ease-in-out infinite;
+}
 .msg-copy-btn:hover { border-color: var(--line); background: var(--panel-2); color: var(--text); }
 .msg-copy-btn.copied { border-color: color-mix(in srgb, var(--green) 36%, var(--line)); color: var(--green); }
 .msg-copy-btn.failed { border-color: color-mix(in srgb, var(--red) 36%, var(--line)); color: var(--red); }

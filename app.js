@@ -36,7 +36,15 @@ const state = {
   _sessionMsgs: {},
   _sessionRuns: {},
   _sessionStats: {},
+  _sessionSaveChains: {},
   _activeRun: null,
+
+  _backgroundDispatcher: {
+    jobs: [],
+    activeCount: 0,
+    globalLimit: 3,
+    perSessionLimit: 2,
+  },
 
   pendingEdits: {},
 
@@ -106,9 +114,17 @@ function getSessionMessages(sessionId) {
 }
 
 function setSessionMessages(sessionId, messages) {
-  if (!sessionId || state._subAgentDepth > 0) return;
+  if (!sessionId) return;
   state._sessionMsgs[sessionId] = messages;
   if (sessionId === state.sessionId) state.messages = messages;
+}
+
+function appendSessionMessages(sessionId, ...messages) {
+  if (!sessionId || messages.length === 0) return [];
+  const target = getSessionMessages(sessionId);
+  target.push(...messages.filter(Boolean));
+  setSessionMessages(sessionId, target);
+  return target;
 }
 
 function getSessionStats(sessionId) {
@@ -118,7 +134,7 @@ function getSessionStats(sessionId) {
 }
 
 function setSessionStats(sessionId, stats) {
-  if (!sessionId || state._subAgentDepth > 0) return;
+  if (!sessionId) return;
   state._sessionStats[sessionId] = stats || { input: 0, output: 0, cache: 0, cost: 0 };
   if (sessionId === state.sessionId) state.stats = state._sessionStats[sessionId];
 }
@@ -149,7 +165,6 @@ function markSessionUnread(sessionId) {
 }
 
 function renderSessionMessages(sessionId) {
-  if (state._subAgentDepth > 0) return;
   if (sessionId === state.sessionId) {
     // User is viewing this session — mark messages as seen
     const s = state.sessions.find(function(s){ return s.id === sessionId; });
@@ -4012,6 +4027,13 @@ function renderUserProjection(msg, index) {
     : getMsgText(msg);
   const images = msg._images || [];
   const timeStr = formatMsgTime(msg._time);
+  const dispatchId = msg.meta?.backgroundDispatch?.id;
+  const dispatchJob = dispatchId ? getBackgroundJob(dispatchId) : null;
+  const dispatchStatus = dispatchJob?.status === "pending"
+    ? '<span class="background-dispatch-status pending"><span class="background-dispatch-dot"></span>等待后台处理</span>'
+    : dispatchJob?.status === "running"
+      ? '<span class="background-dispatch-status running"><span class="background-dispatch-dot"></span>后台处理中</span>'
+      : "";
   // Each image as separate message, clickable to open full-size overlay
   const imageArticles = images.map((img, i) => {
     // Support both old base64 format and new path-based format
@@ -4025,7 +4047,7 @@ function renderUserProjection(msg, index) {
     </article>`;
   }).join("");
   if (!text && images.length === 0) return "";
-  const textArticle = text ? `<article class="msg user" data-msg-index="${index}"><div class="bubble">${renderMarkdownLite(text)}</div><div class="msg-meta">${timeStr} ${renderCopyBtn(text)}</div></article>` : "";
+  const textArticle = text ? `<article class="msg user" data-msg-index="${index}"><div class="bubble">${renderMarkdownLite(text)}</div><div class="msg-meta">${dispatchStatus}${timeStr} ${renderCopyBtn(text)}</div></article>` : "";
   return textArticle + imageArticles;
 }
 
@@ -5049,11 +5071,9 @@ async function saveSessionState(sessionId, messages, stats, title) {
     || (sessionId === state.sessionId ? els.sessionTitle.value.trim() : local?.title)
     || "Untitled";
 
-  await apiJson(`/api/sessions/${encodeURIComponent(sessionId)}`, {
-    method: "PUT",
-    body: JSON.stringify({
-      title: sessionTitle,
-      messages: (messages || []).map((msg) => ({
+  const payload = {
+    title: sessionTitle,
+    messages: (messages || []).map((msg) => ({
         role: msg.role,
         content: msg.content || "",
         thought: msg.thought || "",
@@ -5062,9 +5082,27 @@ async function saveSessionState(sessionId, messages, stats, title) {
         _model: msg._model || undefined,
         _time: msg._time || undefined,
       })),
-      stats: stats || getSessionStats(sessionId),
-    }),
-  });
+    stats: { ...(stats || getSessionStats(sessionId) || {}) },
+  };
+
+  // Serialize saves per session so a slower, older request cannot overwrite
+  // messages written by a background task that finished later.
+  const previous = state._sessionSaveChains[sessionId] || Promise.resolve();
+  const savePromise = previous
+    .catch(() => {})
+    .then(() => apiJson(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }));
+  state._sessionSaveChains[sessionId] = savePromise;
+
+  try {
+    await savePromise;
+  } finally {
+    if (state._sessionSaveChains[sessionId] === savePromise) {
+      delete state._sessionSaveChains[sessionId];
+    }
+  }
 
   if (local) local.messageCount = (messages || []).length;
 
@@ -6146,10 +6184,6 @@ function appendSystemError(message) {
 
 
 function setStreaming(active, sessionId = state.sessionId) {
-  // Sub-agents must not set streaming(true) but must be allowed to set streaming(false)
-  // so the stop button and run state clean up properly when the main agent finishes.
-  if (active && state._subAgentDepth > 0) return;
-
   const run = ensureSessionRun(sessionId);
   if (run) {
     run.isStreaming = active;
@@ -7200,7 +7234,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
   if (!run.abortController || run.abortController.signal.aborted) {
     run.abortController = new AbortController();
   }
-  if (sessionId === state.sessionId) {
+  if (!ctx?.isSubAgent && sessionId === state.sessionId) {
     state.abortController = run.abortController;
   }
 
@@ -8074,66 +8108,165 @@ function createSubContext(parentCtx, taskPrompt) {
   return subCtx;
 }
 
-async function dispatchBackgroundSubAgent(sessionId, userText, images = []) {
-  const run = ensureSessionRun(sessionId);
-  const parentCtx = run?._activeCtx;
-  if (!parentCtx) return; // no active run to dispatch from
+const BACKGROUND_JOB_TIMEOUT_MS = 10 * 60 * 1000;
 
+function getBackgroundJob(jobId) {
+  return state._backgroundDispatcher.jobs.find((job) => job.id === jobId) || null;
+}
+
+function updateBackgroundJob(job, status, detail = "") {
+  job.status = status;
+  job.detail = detail;
+  if (status === "running") job.startedAt = Date.now();
+  if (status === "completed" || status === "failed") job.finishedAt = Date.now();
+  if (job.userMessage?.meta?.backgroundDispatch) {
+    Object.assign(job.userMessage.meta.backgroundDispatch, { status, detail });
+  }
+  renderSessionMessages(job.sessionId);
+  renderSessions();
+}
+
+function backgroundActiveForSession(sessionId) {
+  return state._backgroundDispatcher.jobs.filter((job) => job.sessionId === sessionId && job.status === "running").length;
+}
+
+function mergeBackgroundUsage(sessionId, childStats) {
+  if (!childStats) return;
+  const stats = getSessionStats(sessionId);
+  for (const key of ["input", "output", "cache", "cost"]) {
+    stats[key] = Number(stats[key] || 0) + Number(childStats[key] || 0);
+  }
+  setSessionStats(sessionId, stats);
+}
+
+async function runBackgroundSubAgentJob(job) {
+  const { sessionId, userText, images, parentCtx } = job;
   const currentTask = parentCtx._taskPrompt || "";
   const prompt = currentTask
-    ? `[背景] 主 Agent 正在处理：${currentTask.slice(0, 150)}\n\n[新请求] ${userText}\n\n你是一个后台子 Agent，收到了一条用户在等待中发送的新消息。请独立处理这条新请求。如果新请求与主 Agent 正在执行的任务相关，优先给出简洁回复后让主 Agent 继续；如果无关，直接完成新请求。完成后输出结果，不要与主 Agent 交互。`
+    ? `[背景] 主 Agent 正在处理：${currentTask.slice(0, 150)}\n\n[新请求] ${userText}\n\n你是一个后台子 Agent，收到了一条用户在等待中发送的新消息。请独立处理这条新请求。如果与主任务相关，直接处理新请求；如果无关，也独立完成。不要修改或中断主 Agent 的运行。完成后只输出结果。`
     : userText;
 
-  // Push placeholder so user sees their message immediately
-  const msgs0 = getSessionMessages(sessionId);
-  msgs0.push({
+  const imageRefs = await uploadImagesForStorage(images || []);
+  if (imageRefs.length) job.userMessage._images = imageRefs;
+
+  const subCtx = createSubContext(parentCtx, prompt);
+  subCtx.authorizationLabel = userText.slice(0, 24) || "后台任务";
+  subCtx.run = {
+    sessionId,
+    isStreaming: false,
+    abortController: new AbortController(),
+    messageQueue: [],
+  };
+  job.abortController = subCtx.run.abortController;
+  if (images?.length) {
+    subCtx.messages[1].content = [
+      { type: "text", text: prompt },
+      ...images.map((img) => ({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.base64}` } })),
+    ];
+  }
+
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    subCtx.run.abortController.abort();
+  }, BACKGROUND_JOB_TIMEOUT_MS);
+  try {
+    await runAgentLoop(subCtx);
+    if (timedOut) throw new Error("后台任务运行超时");
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  mergeBackgroundUsage(sessionId, subCtx.stats);
+  return subCtx.subResult || { ok: false, result: "后台子 Agent 未返回结果" };
+}
+
+function pumpBackgroundDispatcher() {
+  const dispatcher = state._backgroundDispatcher;
+  while (dispatcher.activeCount < dispatcher.globalLimit) {
+    const job = dispatcher.jobs.find((candidate) => (
+      candidate.status === "pending"
+      && backgroundActiveForSession(candidate.sessionId) < dispatcher.perSessionLimit
+    ));
+    if (!job) break;
+
+    dispatcher.activeCount += 1;
+    updateBackgroundJob(job, "running");
+    runBackgroundSubAgentJob(job)
+      .then(async (sub) => {
+        const content = sub.ok === false
+          ? `**后台处理失败**：${job.userText.slice(0, 80)}\n\n${sub.result}`
+          : `**后台处理**：${job.userText.slice(0, 80)}\n\n${sub.result}`;
+        const messages = appendSessionMessages(job.sessionId, {
+          role: "assistant",
+          content,
+          meta: { kind: "background-subagent", jobId: job.id, error: sub.ok === false },
+          _model: job.parentCtx.model || getSelectedModel(),
+          _time: new Date().toISOString(),
+        });
+        updateBackgroundJob(job, sub.ok === false ? "failed" : "completed", sub.ok === false ? sub.result : "");
+        await saveSessionState(job.sessionId, messages, getSessionStats(job.sessionId))
+          .catch((err) => console.error("Failed to save completed background task:", err));
+        job.resolve({ ok: sub.ok !== false, result: sub.result });
+      })
+      .catch(async (err) => {
+        const message = err?.name === "AbortError" ? "后台任务已取消或超时" : (err.message || String(err));
+        const messages = appendSessionMessages(job.sessionId, {
+          role: "assistant",
+          content: `**后台处理失败**：${job.userText.slice(0, 80)}\n\n${message}`,
+          meta: { kind: "background-subagent", jobId: job.id, error: true },
+          _model: job.parentCtx.model || getSelectedModel(),
+          _time: new Date().toISOString(),
+        });
+        updateBackgroundJob(job, "failed", message);
+        await saveSessionState(job.sessionId, messages, getSessionStats(job.sessionId)).catch(() => {});
+        job.resolve({ ok: false, error: message });
+      })
+      .finally(() => {
+        dispatcher.activeCount = Math.max(0, dispatcher.activeCount - 1);
+        const finished = dispatcher.jobs.filter((item) => item.status === "completed" || item.status === "failed");
+        if (finished.length > 50) {
+          const remove = new Set(finished.slice(0, finished.length - 50).map((item) => item.id));
+          dispatcher.jobs = dispatcher.jobs.filter((item) => !remove.has(item.id));
+        }
+        pumpBackgroundDispatcher();
+      });
+  }
+}
+
+function dispatchBackgroundSubAgent(sessionId, userText, images = []) {
+  const run = ensureSessionRun(sessionId);
+  const parentCtx = run?._activeCtx;
+  if (!parentCtx) return Promise.reject(new Error("主 Agent 已结束，无法创建后台任务"));
+
+  const id = `background-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const userMessage = {
     role: "user",
     content: userText,
+    _images: images.length ? images : undefined,
+    meta: { backgroundDispatch: { id, status: "pending" } },
     _model: parentCtx.model || getSelectedModel(),
     _time: new Date().toISOString(),
+  };
+  const messages = appendSessionMessages(sessionId, userMessage);
+  let resolve;
+  const completion = new Promise((done) => { resolve = done; });
+  state._backgroundDispatcher.jobs.push({
+    id,
+    sessionId,
+    userText,
+    images,
+    parentCtx,
+    userMessage,
+    status: "pending",
+    queuedAt: Date.now(),
+    completion,
+    resolve,
   });
-  setSessionMessages(sessionId, msgs0);
-  renderMessages();
-
-  try {
-    const subCtx = createSubContext(parentCtx, prompt);
-    subCtx.authorizationLabel = userText.slice(0, 24) || "后台任务";
-    await runAgentLoop(subCtx);
-    const sub = subCtx.subResult || { ok: false, result: "后台子 Agent 未返回结果" };
-
-    // Safely push results after sub-agent completes
-    const msgs = getSessionMessages(sessionId);
-    msgs.push({
-      role: "user",
-      content: `[系统通知] 用户在你执行任务期间发送了一条新消息，已完成处理。如需调整当前任务，请参考此结果。\n新消息：${userText.slice(0, 200)}\n处理结果：${sub.result.slice(0, 500)}`,
-      meta: { _system: true, kind: "background-subagent-notify" },
-      _time: new Date().toISOString(),
-    });
-    msgs.push({
-      role: "assistant",
-      content: `**后台处理**：${userText.slice(0, 80)}\n\n${sub.result}`,
-      meta: { kind: "background-subagent" },
-      _model: parentCtx.model || getSelectedModel(),
-      _time: new Date().toISOString(),
-    });
-    setSessionMessages(sessionId, msgs);
-    renderMessages();
-    await saveSessionState(sessionId, msgs, getSessionStats(sessionId));
-    renderSessions();
-  } catch (err) {
-    const msgs = getSessionMessages(sessionId);
-    msgs.push({
-      role: "assistant",
-      content: `**后台处理失败**：${userText.slice(0, 80)}\n\n${err.message || err}`,
-      meta: { kind: "background-subagent", error: true },
-      _model: parentCtx.model || getSelectedModel(),
-      _time: new Date().toISOString(),
-    });
-    setSessionMessages(sessionId, msgs);
-    renderMessages();
-    await saveSessionState(sessionId, msgs, getSessionStats(sessionId));
-    renderSessions();
-  }
+  renderSessionMessages(sessionId);
+  saveSessionState(sessionId, messages, getSessionStats(sessionId)).catch((err) => console.error("Failed to save queued background task:", err));
+  pumpBackgroundDispatcher();
+  return completion;
 }
 
 async function executeToolWithDelegation(tool, parentCtx, options = {}) {
@@ -8301,7 +8434,7 @@ async function runAgentLoop(ctx = null) {
 
               ctx.autoCompacted = (ctx.autoCompacted || 0) + 1;
 
-              renderSessionMessages(ctx.sessionId);
+              if (!ctx.isSubAgent) renderSessionMessages(ctx.sessionId);
 
             }
 
@@ -8319,7 +8452,7 @@ async function runAgentLoop(ctx = null) {
 
     ctx.responseUsage = { input: 0, output: 0, cache: 0 };
 
-    renderSessionMessages(ctx.sessionId);
+    if (!ctx.isSubAgent) renderSessionMessages(ctx.sessionId);
 
     const modelResult = await callModelOnce(assistantIndex, true, ctx);
 
@@ -8514,6 +8647,7 @@ async function runAgentLoop(ctx = null) {
         // Sub-agent edit proposals must be reviewable in the parent conversation.
         // Sharing the same meta object keeps approval state synchronized.
         if (ctx.isSubAgent && meta.pendingEditId && ctx.parent) {
+          ctx.parent.messages = getSessionMessages(ctx.parent.sessionId);
           ctx.parent.messages.push({ ...resultMessage, meta });
           setSessionMessages(ctx.parent.sessionId, ctx.parent.messages);
           if (ctx.parent.sessionId === state.sessionId) renderMessages();
@@ -8649,8 +8783,10 @@ async function runAgentLoop(ctx = null) {
             content: "[系统] 已连续失败 3 次。请换一个完全不同的方法，不要再重复已失败的命令。",
             meta: { _system: true },
           });
-          renderSessionMessages(ctx.sessionId);
-          await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+          if (!ctx.isSubAgent) {
+            renderSessionMessages(ctx.sessionId);
+            await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+          }
         }
 
       }
@@ -8658,8 +8794,10 @@ async function runAgentLoop(ctx = null) {
       const visionMessage = buildToolImageVisionMessage(pendingVisionImages);
       if (visionMessage) {
         ctx.messages.push(visionMessage);
-        renderSessionMessages(ctx.sessionId);
-        await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+        if (!ctx.isSubAgent) {
+          renderSessionMessages(ctx.sessionId);
+          await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+        }
       }
 
       continue;
@@ -8734,9 +8872,9 @@ async function runAgentLoop(ctx = null) {
 
     });
 
-    renderSessionMessages(ctx.sessionId);
+    if (!ctx.isSubAgent) renderSessionMessages(ctx.sessionId);
 
-    await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+    if (!ctx.isSubAgent) { await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions(); }
 
 
 
@@ -8793,6 +8931,7 @@ async function runAgentLoop(ctx = null) {
     ctx.messages.push(resultMessage);
 
     if (ctx.isSubAgent && meta.pendingEditId && ctx.parent) {
+      ctx.parent.messages = getSessionMessages(ctx.parent.sessionId);
       ctx.parent.messages.push({ ...resultMessage, meta });
       setSessionMessages(ctx.parent.sessionId, ctx.parent.messages);
       if (ctx.parent.sessionId === state.sessionId) renderMessages();
@@ -8802,13 +8941,13 @@ async function runAgentLoop(ctx = null) {
     const visionMessage = buildToolImageVisionMessage([toolImageVisionPayload(result)].filter(Boolean));
     if (visionMessage) ctx.messages.push(visionMessage);
 
-    renderSessionMessages(ctx.sessionId);
+    if (!ctx.isSubAgent) renderSessionMessages(ctx.sessionId);
 
     if (document.hidden && (result.action === "propose_edit" || result.action === "write_file") && getPermissionProfile() !== "bypass") {
       notifyPermissionNeeded(result.action, result.path);
     }
 
-    await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+    if (!ctx.isSubAgent) { await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions(); }
 
     if (getPermissionProfile() === "accept" && result.action === "propose_edit" && !meta.applied && meta.pendingEditId) {
       const approved = await requestAuthorization({
@@ -8893,9 +9032,10 @@ async function runAgentLoop(ctx = null) {
 
   });
 
-  await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
-
-  renderSessionMessages(ctx.sessionId);
+  if (!ctx.isSubAgent) {
+    await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+    renderSessionMessages(ctx.sessionId);
+  }
 
   } finally { if (ctx && ctx.isSubAgent) state._subAgentDepth--; }
 
@@ -11669,11 +11809,12 @@ els.chatForm.addEventListener("submit", async (event) => {
     state.attachedImages = [];
     renderImageThumbs();
     updateSendButtonState();
-    setTimeout(() => {
-      dispatchBackgroundSubAgent(sessionId, text, imgs).catch((err) => {
-        console.error("Background sub-agent dispatch failed:", err);
-      });
-    }, 0);
+    // Capture the active parent context synchronously. Deferring with setTimeout
+    // can race with a fast main-agent completion and silently lose the message.
+    dispatchBackgroundSubAgent(sessionId, text, imgs).catch((err) => {
+      console.error("Background sub-agent dispatch failed:", err);
+      appendSystemError(err.message || String(err));
+    });
     return;
   }
 

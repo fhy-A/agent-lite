@@ -2494,34 +2494,14 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         task_prompt = (body.get("prompt") or body.get("description") or "").strip()
         if not task_prompt:
             raise ValueError("子任务描述不能为空。请提供 task prompt 参数描述子 Agent 的任务。")
-
-        # Build system prompt for sub-agent
-        sub_system = (
-            "你是一个编程子 Agent，负责完成主 Agent 分配的子任务。\n"
-            "环境：Windows + PowerShell。你可以使用工具读取文件、搜索代码、列出目录。\n"
-            "请高效完成任务：先用 glob_files 或 list_files 定位目标文件，再用 read_file 或 search_files 提取所需信息。\n"
-            "将所有发现整理成清晰的报告返回给主 Agent。\n"
-            "不要调用 run_command——你是只读分析角色，只能用文件/搜索工具。\n"
-            f"项目根目录: {load_config()['projectRoot']}"
-        )
-
-        model = (body.get("model") or "").strip()
-        api_key = self.headers.get("Authorization", "")
-
-        if not model:
-            raise ValueError("缺少模型名称")
-        if not api_key:
-            raise ValueError("缺少 API key")
-
-        result = run_subagent(task_prompt, sub_system, model, api_key)
+        # Delegated to app.js — the frontend now runs the sub-agent loop itself
+        # so it inherits streaming, thinking, permission control, and all tools.
         self.send_json({
-            "ok": result["ok"],
+            "ok": True,
             "action": "task",
             "prompt": task_prompt,
-            "result": result["result"],
-            "rounds": result["rounds"],
-            "tool_rounds": result.get("tool_rounds", 0),
-        }, 200 if result["ok"] else 500)
+            "delegated": True,
+        })
 
     def tool_run_command(self):
         body = self.read_body_json()

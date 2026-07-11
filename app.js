@@ -6925,7 +6925,8 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
     messages: [
 
-      {
+      // Sub-agent already has its own system prompt in ctx.messages[0]; don't double-inject
+      ...(ctx?.isSubAgent ? [] : [{
         role: "system",
         content: getSystemPrompt({
           messages: _streamMsgs,
@@ -6934,7 +6935,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
           permissionProfile: ctx?.permissionProfile,
           allowedToolNames: ctx?.allowedToolNames,
         }),
-      },
+      }]),
 
       ...(function buildMessages() {
 
@@ -7885,6 +7886,31 @@ async function commitPendingEdit() {
 
 
 
+function createSubContext(parentCtx, taskPrompt) {
+  const subSystem = [
+    SYSTEM_SECURITY_LAYER,
+    `你是一个编程子 Agent，负责完成主 Agent 分配的子任务。`,
+    `环境：Windows + PowerShell。项目根目录：${els.projectRoot?.value || "未设置"}`,
+    `完成任务后直接输出结果，不要再调用额外工具。`,
+  ].join("\n\n");
+
+  const subCtx = {
+    ...parentCtx,
+    messages: [
+      { role: "system", content: subSystem },
+      { role: "user", content: taskPrompt },
+    ],
+    parent: parentCtx,
+    isSubAgent: true,
+    depth: (parentCtx.depth || 0) + 1,
+    subResult: null,
+    stats: { input: 0, output: 0, cache: 0 },
+    taskUsage: { input: 0, output: 0, cache: 0 },
+    autoCompacted: 0,
+  };
+  return subCtx;
+}
+
 async function runAgentLoop(ctx = null) {
 
   ctx = ctx || buildRunContext(state.sessionId);
@@ -7895,9 +7921,15 @@ async function runAgentLoop(ctx = null) {
 
   ctx.autoCompacted = 0;
 
+  // Sub-agent depth guard: prevent infinite nesting
+  if (ctx.isSubAgent && ctx.depth > 2) {
+    ctx.subResult = { ok: false, result: "不允许嵌套子 Agent", rounds: 0, tool_rounds: 0 };
+    return;
+  }
 
+  const maxRounds = ctx.isSubAgent ? 5 : MAX_TOOL_ROUNDS;
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+  for (let round = 0; round < maxRounds; round += 1) {
 
     // Check abort signal so stop button works even mid-tool-execution
     if (ctx.run.abortController?.signal.aborted) throw new DOMException("Aborted", "AbortError");
@@ -8071,13 +8103,40 @@ async function runAgentLoop(ctx = null) {
 
         });
 
-        renderSessionMessages(ctx.sessionId);
+        if (!ctx.isSubAgent) { renderSessionMessages(ctx.sessionId); }
 
-        await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+        if (!ctx.isSubAgent) { await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions(); }
 
 
 
         let result = requireActionableEditResult(await executeToolCall(tool));
+
+        // If server delegated task execution, run sub-agent loop in frontend
+        if (result.delegated && tool.action === "task") {
+          const taskPrompt = result.prompt || tool.prompt || "";
+          const subCtx = createSubContext(ctx, taskPrompt);
+          try {
+            await runAgentLoop(subCtx);
+            const sub = subCtx.subResult || { ok: false, result: "Sub-agent did not produce a result" };
+            result = {
+              ok: sub.ok,
+              action: "task",
+              prompt: taskPrompt,
+              result: sub.result,
+              rounds: sub.rounds || 0,
+              tool_rounds: sub.tool_rounds || 0,
+            };
+          } catch (err) {
+            result = {
+              ok: false,
+              action: "task",
+              prompt: taskPrompt,
+              result: `Sub-agent error: ${err.message || err}`,
+              rounds: 0,
+              tool_rounds: 0,
+            };
+          }
+        }
 
         const visionImage = toolImageVisionPayload(result);
         if (visionImage && !pendingVisionPaths.has(visionImage.path)) {
@@ -8118,8 +8177,8 @@ async function runAgentLoop(ctx = null) {
 
           meta.applied = false;
 
-          // Auto-apply in bypass mode
-          if (getPermissionProfile() === "bypass") {
+          // Auto-apply in bypass mode or sub-agent
+          if (getPermissionProfile() === "bypass" || ctx.isSubAgent) {
             const applied = await apiJson("/api/tools/apply_edit", {
               method: "POST",
               body: JSON.stringify({ action: "apply_edit", path: result.path, newContent: result.newContent }),
@@ -8142,18 +8201,18 @@ async function runAgentLoop(ctx = null) {
 
         });
 
-        renderSessionMessages(ctx.sessionId);
+        if (!ctx.isSubAgent) { renderSessionMessages(ctx.sessionId); }
 
         // Notify if page is not visible and a permission-required action arrived
-        if (document.hidden && (result.action === "propose_edit" || result.action === "write_file") && getPermissionProfile() !== "bypass") {
+        if (!ctx.isSubAgent && document.hidden && (result.action === "propose_edit" || result.action === "write_file") && getPermissionProfile() !== "bypass") {
           notifyPermissionNeeded(result.action, result.path);
         }
 
-        await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+        if (!ctx.isSubAgent) { await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions(); }
 
-        // ── Pause on propose_edit in plan/accept mode ──
+        // ── Pause on propose_edit in plan/accept mode (skip for sub-agent) ──
         const profile = getPermissionProfile();
-        if (profile !== "bypass" && result.action === "propose_edit" && !meta.applied) {
+        if (!ctx.isSubAgent && profile !== "bypass" && result.action === "propose_edit" && !meta.applied) {
           const editId = meta.pendingEditId;
           if (editId) {
             // Check if user already clicked reject before we got here
@@ -8167,8 +8226,8 @@ async function runAgentLoop(ctx = null) {
                 content: "[系统] 用户拒绝了你的修改方案。不要猜测原因，不要提新方案——直接问用户：哪个部分需要调整、期望改成什么样。回复控制在 50 字以内。",
                 meta: { _system: true },
               });
-              renderSessionMessages(ctx.sessionId);
-              await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+              if (!ctx.isSubAgent) { renderSessionMessages(ctx.sessionId); }
+              if (!ctx.isSubAgent) { await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions(); }
               continue;
             }
 
@@ -8188,8 +8247,8 @@ async function runAgentLoop(ctx = null) {
                 content: "[系统] 用户拒绝了你的修改方案。不要猜测原因，不要提新方案——直接问用户：哪个部分需要调整、期望改成什么样。回复控制在 50 字以内。",
                 meta: { _system: true },
               });
-              renderSessionMessages(ctx.sessionId);
-              await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+              if (!ctx.isSubAgent) { renderSessionMessages(ctx.sessionId); }
+              if (!ctx.isSubAgent) { await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions(); }
               continue; // give model one turn to respond, then stop
             }
             // "apply" — update meta to mark as applied
@@ -8245,8 +8304,8 @@ async function runAgentLoop(ctx = null) {
             content: "[系统] 代码中重复出现未定义变量错误。请停止生成代码，直接告诉用户：当前会话出现了重复的代码质量错误，建议开启新会话重试。不要再调用任何工具。",
             meta: { _system: true },
           });
-          renderSessionMessages(ctx.sessionId);
-          await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+          if (!ctx.isSubAgent) { renderSessionMessages(ctx.sessionId); }
+          if (!ctx.isSubAgent) { await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions(); }
           break;
         }
 
@@ -8257,8 +8316,8 @@ async function runAgentLoop(ctx = null) {
             content: "[系统] 已连续失败 5 次。请停止尝试，直接告诉用户哪里出了问题，不要再调用工具。",
             meta: { _system: true },
           });
-          renderSessionMessages(ctx.sessionId);
-          await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
+          if (!ctx.isSubAgent) { renderSessionMessages(ctx.sessionId); }
+          if (!ctx.isSubAgent) { await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions(); }
           continue;
         }
         if (consecutiveFails >= 5) { break; } // already warned, stop
@@ -8295,6 +8354,16 @@ async function runAgentLoop(ctx = null) {
     if (!hasToolMarker) {
       ctx.messages[assistantIndex].content = rawContent.trim();
       ctx.messages[assistantIndex].streaming = false;
+      // Sub-agent: capture result and return without updating main session UI
+      if (ctx.isSubAgent) {
+        ctx.subResult = {
+          ok: true,
+          result: rawContent.trim() || "(sub-agent returned empty response)",
+          rounds: round + 1,
+          tool_rounds: 0, // will be counted separately if needed
+        };
+        return;
+      }
       attachTaskUsageToAssistant(ctx, assistantIndex);
       renderSessionMessages(ctx.sessionId);
       setStreaming(false, ctx.sessionId);
@@ -8392,6 +8461,24 @@ async function runAgentLoop(ctx = null) {
   }
 
 
+
+  if (ctx.isSubAgent) {
+    // Sub-agent exhausted: capture last assistant content as result
+    let lastContent = "";
+    for (let i = ctx.messages.length - 1; i >= 0; i--) {
+      if (ctx.messages[i].role === "assistant" && ctx.messages[i].content) {
+        lastContent = ctx.messages[i].content;
+        break;
+      }
+    }
+    ctx.subResult = {
+      ok: true,
+      result: lastContent || "(sub-agent completed without final response)",
+      rounds: maxRounds,
+      tool_rounds: 0,
+    };
+    return;
+  }
 
   ctx.messages.push({
 

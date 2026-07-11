@@ -4397,7 +4397,7 @@ function renderToolLog() {
 
   els.toolLogList.innerHTML = items
 
-    .map(({ msg, index }) => {
+    .map(({ msg, index }, i) => {
 
       const meta = msg.meta || {};
 
@@ -4419,7 +4419,7 @@ function renderToolLog() {
 
           <div class="tool-log-title">${escapeHtml(action)}</div>
 
-          <div class="tool-log-detail" title="${escapeHtml(detail)}">#${index + 1} ${escapeHtml(detail)}</div>
+          <div class="tool-log-detail" title="${escapeHtml(detail)}">#${i + 1} ${escapeHtml(detail)}</div>
 
           <span class="tool-log-pill">${isError ? "error" : kind} ${t("fmtToolLogSep")} ${source}</span>
 

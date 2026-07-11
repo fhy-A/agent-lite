@@ -9578,18 +9578,18 @@ function renderRecentFolders() {
 
     btn.addEventListener("click", async () => {
       const p = btn.dataset.path;
-      // Check via server since frontend can't access filesystem directly
+      cwdDropdown.classList.add("hidden");
       try {
-        const resp = await apiJson("/api/check-path?path=" + encodeURIComponent(p));
-        if (!resp.exists) {
-          showToast(`路径不存在，已从最近使用中移除：${shortPath(p)}`, "error");
+        await saveProjectRoot(p);
+      } catch (err) {
+        // If the path no longer exists, auto-remove it from recents
+        const msg = String(err.message || err);
+        if (/目录不存在|不是文件夹|not exist|not a directory/i.test(msg)) {
           removeRecentFolder(p);
           renderRecentFolders();
-          return;
         }
-      } catch (_) { /* proceed on error — might be a network path or uncheckable */ }
-      cwdDropdown.classList.add("hidden");
-      saveProjectRoot(p).catch((err) => showToast(err.message, "error"));
+        showToast(err.message || String(err), "error");
+      }
     });
 
   });

@@ -3118,6 +3118,9 @@ function splitThoughtContent(text = "") {
 
 const SYNTAX_PATTERNS = {
 
+  // JSON is tokenized separately so generated markup is never highlighted again.
+  json: [],
+
   javascript: [
 
     [/\b(function|const|let|var|return|if|else|for|while|async|await|class|import|export|from|default|try|catch|throw|new|this|typeof|instanceof|of|in|null|undefined|true|false)\b/g, "syn-kw"],
@@ -3204,7 +3207,35 @@ function _resolveSyntaxPatterns(lang) {
 
 function highlightSyntax(code, lang) {
 
-  const patterns = _resolveSyntaxPatterns(lang) || _resolveSyntaxPatterns("javascript");
+  if (lang === "json") {
+    const source = String(code ?? "");
+    const tokenPattern = /"(?:\\.|[^"\\])*"|-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b|\b(?:true|false|null)\b/g;
+    let result = "";
+    let cursor = 0;
+
+    for (const match of source.matchAll(tokenPattern)) {
+      const index = match.index ?? 0;
+      const token = match[0];
+      result += escapeHtml(source.slice(cursor, index));
+
+      let cls = "syn-num";
+      if (token.startsWith('"')) {
+        const remainder = source.slice(index + token.length);
+        cls = /^\s*:/.test(remainder) ? "syn-key" : "syn-str";
+      } else if (/^(?:true|false|null)$/.test(token)) {
+        cls = "syn-kw";
+      }
+
+      result += `<span class="${cls}">${escapeHtml(token)}</span>`;
+      cursor = index + token.length;
+    }
+
+    return result + escapeHtml(source.slice(cursor));
+  }
+
+  const patterns = _resolveSyntaxPatterns(lang);
+
+  if (!patterns) return escapeHtml(code);
 
   let result = escapeHtml(code);
 

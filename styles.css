@@ -2853,6 +2853,7 @@ input:focus, select:focus, textarea:focus {
 
 /* ── Syntax highlighting ── */
 .syn-kw { color: #c678dd; font-weight: 700; }        /* keywords */
+.syn-key { color: #61afef; }                          /* object keys */
 .syn-str { color: #98c379; }                          /* strings */
 .syn-com { color: #5c6370; font-style: italic; }      /* comments */
 .syn-num { color: #d19a66; }                          /* numbers */
@@ -2861,6 +2862,7 @@ input:focus, select:focus, textarea:focus {
 .syn-re { color: #e06c75; }                           /* regex */
 
 body.theme-dark .syn-kw { color: #c678dd; }
+body.theme-dark .syn-key { color: #61afef; }
 body.theme-dark .syn-str { color: #98c379; }
 body.theme-dark .syn-com { color: #7f848e; }
 body.theme-dark .syn-num { color: #d19a66; }

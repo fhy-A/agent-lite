@@ -1374,6 +1374,13 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
                 _browser_heartbeat = int(dt.datetime.now().timestamp())
                 self.send_json({"ok": True, "serverInstanceId": _server_instance_id})
                 return
+            if route == "/api/check-path":
+                qs = parse.urlparse(self.path).query
+                params = parse.parse_qs(qs)
+                raw = (params.get("path") or [""])[0]
+                exists = os.path.isdir(raw) or os.path.isfile(raw) if raw else False
+                self.send_json({"exists": exists, "path": raw})
+                return
             if route == "/api/has-browser":
                 alive = (int(dt.datetime.now().timestamp()) - _browser_heartbeat) < 30
                 self.send_json({"hasBrowser": alive})

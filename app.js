@@ -9576,12 +9576,20 @@ function renderRecentFolders() {
 
   cwdRecent.querySelectorAll(".cwd-recent-item").forEach((btn) => {
 
-    btn.addEventListener("click", () => {
-
-      saveProjectRoot(btn.dataset.path).catch((err) => showToast(err.message, "error"));
-
+    btn.addEventListener("click", async () => {
+      const p = btn.dataset.path;
+      // Check via server since frontend can't access filesystem directly
+      try {
+        const resp = await apiJson("/api/check-path?path=" + encodeURIComponent(p));
+        if (!resp.exists) {
+          showToast(`路径不存在，已从最近使用中移除：${shortPath(p)}`, "error");
+          removeRecentFolder(p);
+          renderRecentFolders();
+          return;
+        }
+      } catch (_) { /* proceed on error — might be a network path or uncheckable */ }
       cwdDropdown.classList.add("hidden");
-
+      saveProjectRoot(p).catch((err) => showToast(err.message, "error"));
     });
 
   });
@@ -9601,6 +9609,16 @@ function addRecentFolder(p) {
   filtered.unshift(p);
 
   localStorage.setItem("agent-lite-recent-folders", JSON.stringify(filtered.slice(0, 8)));
+
+}
+
+function removeRecentFolder(p) {
+
+  if (!p) return;
+
+  const recents = JSON.parse(localStorage.getItem("agent-lite-recent-folders") || "[]");
+
+  localStorage.setItem("agent-lite-recent-folders", JSON.stringify(recents.filter((r) => r !== p)));
 
 }
 

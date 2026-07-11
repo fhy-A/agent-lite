@@ -853,6 +853,8 @@ def session_path(session_id):
 
 
 def session_summary(session):
+    if not session.get("id"):
+        return None  # corrupted session, skip
     messages = session.get("messages") or []
     last_time = ""
     for msg in reversed(messages):
@@ -1688,7 +1690,9 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         for path in SESSIONS_DIR.glob("*.json"):
             session = read_json(path, None)
             if session:
-                sessions.append(session_summary(session))
+                summary = session_summary(session)
+                if summary:
+                    sessions.append(summary)
         sessions.sort(key=lambda item: item.get("updatedAt") or "", reverse=True)
         self.send_json({"data": sessions})
 

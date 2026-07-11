@@ -1658,7 +1658,7 @@ const I18N = {
     fmtDir: "目录", fmtFileCount: "文件数量", fmtTruncatedList: "结果较多，已截断显示",
     fmtEmptyDir: "目录为空", fmtLineRange: "行范围", fmtReadFile: "已读取文件",
     fmtTruncatedFile: "，内容已截断", fmtRegexSearch: "正则搜索", fmtSearch: "搜索",
-    fmtToolLogSep: "路",
+    fmtToolLogSep: "·",
     thoughtCollapsed: "思考已折叠", thoughtCategoryTool: "工具判断",
     srvFileNotFound: "文件不存在", srvDirNotFound: "目录不存在", srvPathNotFound: "路径不存在",
     srvCmdEmpty: "命令不能为空", srvCmdBlocked: "命令包含写入、删除、重定向或危险操作，已被安全策略拦截",
@@ -7914,8 +7914,11 @@ function createSubContext(parentCtx, taskPrompt) {
 async function runAgentLoop(ctx = null) {
 
   ctx = ctx || buildRunContext(state.sessionId);
-  setSessionMessages(ctx.sessionId, ctx.messages);
-  setSessionStats(ctx.sessionId, ctx.stats);
+  // Sub-agent must not overwrite main session's messages/stats
+  if (!ctx.isSubAgent) {
+    setSessionMessages(ctx.sessionId, ctx.messages);
+    setSessionStats(ctx.sessionId, ctx.stats);
+  }
 
   if (!ctx.taskUsage) ctx.taskUsage = { input: 0, output: 0, cache: 0 };
 
@@ -7993,7 +7996,7 @@ async function runAgentLoop(ctx = null) {
               const oldSummaries = ctx.messages.filter((m) => m.meta?.kind === "compact-summary");
 
               ctx.messages = [summaryMsg, ...oldSummaries, ...kept.filter((m) => m.meta?.kind !== "compact-summary")];
-              setSessionMessages(ctx.sessionId, ctx.messages);
+              if (!ctx.isSubAgent) { setSessionMessages(ctx.sessionId, ctx.messages); }
 
               ctx.stats = { input: 0, output: 0, cache: 0 };
 
@@ -8035,7 +8038,7 @@ async function runAgentLoop(ctx = null) {
           _usage: turnUsage,
         },
       };
-      setSessionMessages(ctx.sessionId, ctx.messages);
+      if (!ctx.isSubAgent) { setSessionMessages(ctx.sessionId, ctx.messages); }
     }
 
     const rawContent = modelResult.content || "";

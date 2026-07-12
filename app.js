@@ -3217,6 +3217,7 @@ function renderBranchTree() {
     var activeClass = node.isActive ? " active" : "";
     var html = '<div class="branch-node' + activeClass + '" data-session-id="' + escapeHtml(node.id) + '" style="padding-left:' + (indent + 12) + 'px">';
     html += '<span class="branch-title">' + escapeHtml(node.title) + '</span>';
+    html += '<button class="branch-delete-btn" data-session-id="' + escapeHtml(node.id) + '" title="' + t("delete") + '"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>';
     html += '</div>';
     for (var i = 0; i < node.children.length; i++) { html += renderNode(node.children[i], depth + 1); }
     return html;
@@ -3224,9 +3225,18 @@ function renderBranchTree() {
   els.branchTree.innerHTML = renderNode(root, 0);
   var nodes = els.branchTree.querySelectorAll(".branch-node");
   for (var i = 0; i < nodes.length; i++) {
-    nodes[i].addEventListener("click", function () {
+    nodes[i].addEventListener("click", function (e) {
+      if (e.target.closest(".branch-delete-btn")) return;
       var sid = this.getAttribute("data-session-id");
       if (sid && sid !== state.sessionId) switchToBranch(sid);
+    });
+  }
+  var deleteBtns = els.branchTree.querySelectorAll(".branch-delete-btn");
+  for (var j = 0; j < deleteBtns.length; j++) {
+    deleteBtns[j].addEventListener("click", function (e) {
+      e.stopPropagation();
+      var sid = this.getAttribute("data-session-id");
+      if (sid) deleteSession(sid);
     });
   }
 }

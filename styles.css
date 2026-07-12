@@ -811,6 +811,13 @@ input:focus, select:focus, textarea:focus {
 }
 
 .branch-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.branch-delete-btn {
+  display: none; align-items: center; justify-content: center;
+  width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px;
+  background: transparent; color: var(--muted); cursor: pointer; flex-shrink: 0;
+}
+.branch-node:hover .branch-delete-btn { display: flex; }
+.branch-delete-btn:hover { background: rgba(220,38,38,0.12); color: #dc2626; }
 .branch-empty { padding: 24px 12px; text-align: center; color: var(--muted); font-size: 12px; }
 
 /* Branch point indicator in messages */

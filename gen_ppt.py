@@ -62,32 +62,6 @@ def card(s, x, y, w, h, title="", body="", accent=BLUE):
         tb(s, x+0.25, y+0.55, w-0.5, h-0.8, body, fs=12, c=BODY)
 
 
-def flow_chart(s, x, y, w, steps):
-    """Horizontal flow: [A] → [B] → [C] with centered text"""
-    n = len(steps)
-    bw = min(1.3, (w - (n-1)*0.15) / n)
-    total = n * bw + (n-1) * 0.35
-    sx = x + (w - total) / 2
-    for i, step in enumerate(steps):
-        bx = sx + i * (bw + 0.35)
-        # box
-        sh = s.shapes.add_shape(5, Inches(bx), Inches(y), Inches(bw), Inches(0.55))
-        sh.fill.solid(); sh.fill.fore_color.rgb = BLUE; sh.line.fill.background()
-        sh.adjustments[0] = 0.06
-        tbox = s.shapes.add_textbox(Inches(bx+0.02), Inches(y+0.03), Inches(bw-0.04), Inches(0.49))
-        tbox.text_frame.word_wrap = True
-        p = tbox.text_frame.paragraphs[0]
-        p.text = step; p.font.size = Pt(9); p.font.color.rgb = WHITE
-        p.font.name = "Microsoft YaHei"; p.alignment = PP_ALIGN.CENTER
-        p.font.bold = False
-        # arrow
-        if i < n - 1:
-            ax = bx + bw + 0.02
-            ay = y + 0.27
-            arr = s.shapes.add_shape(6, Inches(ax), Inches(ay-0.02), Inches(0.25), Inches(0.04))
-            arr.fill.solid(); arr.fill.fore_color.rgb = BLUE; arr.line.fill.background()
-
-
 # ── COVER ──
 def cover():
     s = prs.slides.add_slide(prs.slide_layouts[6])
@@ -176,26 +150,25 @@ card(s, 7.2, 1.5, 5.8, 5.2, "Agent Lite 的 6 个解法",
 scenarios = [
     ("场景一：代码重构",
      '"帮我把 app.js 里超过 200 行的函数拆小"',
-     ["定位函数", "读取分析", "生成 Diff", "审批写入", "测试验证"],
+     "search_files 正则定位所有函数定义和行号\nread_file 逐个读取长函数内容\npropose_edit 生成 diff → 你逐条审批\napply_edit 一键写入 + 自动备份原文件\nrun_command 跑 pytest 验证",
      "从提出需求到代码落盘，全程在浏览器内闭环。\n不像 Chat：复制一段 → 它输出修改 → 你粘贴回去 → 漏了换行还要排查。"),
     ("场景二：数据分析",
      '"分析 sales.xlsx 季度趋势，生成 Word 报告"',
-     ["读取 Excel", "数据透视", "生成报告", "保存预览"],
+     "openpyxl 读取所有 Sheet\npandas 做数据透视分析\npython-docx 生成图文报告\n保存到 output/，文件树直接预览",
      "Excel → 分析 → 报告，全程不离开 Agent Lite。\n不像 Chat：上传 → 输出表格 → 你手动排版。\n支持 docx / xlsx / pptx / pdf / csv。"),
     ("场景三：并行探索",
      '"同时检查 app.js、server.py、styles.css"',
-     ["拆分任务", "并行执行", "独立分析", "合并输出"],
+     "主 Agent 拆分为 3 个独立任务\n3 个子 Agent 同时运行，各自分析\n主 Agent 收集 3 份报告并去重合并\n每个子 Agent 独立上下文 + 用量跟踪",
      "3 个文件的审查同时完成，不是串行等。\n不像 Chat：问完一个再问下一个 → 等 3 轮 → 丢失上下文。"),
     ("场景四：方案对比",
      '"Flask 改 FastAPI 试试？不好再切回来"',
-     ["新建分支", "独立探索", "继续推进", "随时切回"],
+     "点击 Branches → 新建分支\n当前上下文自动复制到新分支\n新分支独立探索，原分支不受影响\n不满意点原节点秒切回",
      "分支独立保存，互不影响。支持 A→B→C 嵌套。\n不像 Chat：新建聊天 → 重新描述背景 → 还是丢了上下文。"),
 ]
-for title, scenario, flow_steps, diff in scenarios:
+for title, scenario, steps, diff in scenarios:
     s = content(title)
-    card(s, 0.8, 1.5, 5.8, 2.8, scenario, "", BLUE)
-    flow_chart(s, 1.0, 3.5, 5.3, flow_steps)
-    card(s, 7.2, 1.5, 5.8, 3.5, "差异", diff, GREEN)
+    card(s, 0.8, 1.5, 5.8, 4.5, scenario, steps, BLUE)
+    card(s, 7.2, 1.5, 5.8, 4.5, "差异", diff, GREEN)
 
 # ═══════════════════════════════════
 # 8. SKILLS + MEMORY

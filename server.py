@@ -1775,10 +1775,13 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
 
     def delete_session(self, session_id):
         path = session_path(session_id)
-        # Clean up parent's _branches reference before deleting
         if path.exists():
             session = read_json(path, {})
             parent_id = session.get("_parentId")
+            child_ids = session.get("_branches") or []
+            deleted_depth = session.get("_branchDepth", 0)
+
+            # 1. Remove from parent's _branches
             if parent_id:
                 parent_path = session_path(parent_id)
                 if parent_path.exists():
@@ -1786,8 +1789,27 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
                     branches = parent_data.get("_branches") or []
                     if session_id in branches:
                         branches.remove(session_id)
-                        parent_data["_branches"] = branches
-                        write_json(parent_path, parent_data)
+                    # 2. Re-parent children to grandparent
+                    for cid in child_ids:
+                        child_path = session_path(cid)
+                        if child_path.exists():
+                            child = read_json(child_path, {})
+                            child["_parentId"] = parent_id
+                            child["_branchDepth"] = deleted_depth
+                            write_json(child_path, child)
+                            branches.append(cid)
+                    parent_data["_branches"] = branches
+                    write_json(parent_path, parent_data)
+            else:
+                # Root session: children become new roots
+                for cid in child_ids:
+                    child_path = session_path(cid)
+                    if child_path.exists():
+                        child = read_json(child_path, {})
+                        child.pop("_parentId", None)
+                        child["_branchDepth"] = 0
+                        write_json(child_path, child)
+
             path.unlink()
         self.send_json({"ok": True})
 

@@ -146,6 +146,27 @@ class TestSessionBranching(unittest.TestCase):
         _req("DELETE", f"/api/sessions/{self._sub_branch_id}")
         status, data = _req("GET", f"/api/sessions/{self._branch_id}")
         self.assertNotIn(self._sub_branch_id, data.get("_branches", []))
+        TestSessionBranching._sub_branch_id = None  # cleared
+
+    def test_06b_delete_root_reparents_children(self):
+        """Deleting root session promotes children to root level."""
+        # Create parent A with child B
+        st1, d1 = _req("POST", "/api/sessions", json={"title": "Root A"})
+        self.assertEqual(st1, 201)
+        _req("PUT", f"/api/sessions/{d1['id']}", json={
+            "title": "Root A", "messages": [{"role": "user", "content": "msg"}],
+        })
+        st2, d2 = _req("POST", f"/api/sessions/{d1['id']}/branch", json={"title": "Child B"})
+        self.assertEqual(st2, 201)
+        # Verify child has _parentId
+        st3, d3 = _req("GET", f"/api/sessions/{d2['id']}")
+        self.assertEqual(d3.get("_parentId"), d1["id"])
+        # Delete root
+        _req("DELETE", f"/api/sessions/{d1['id']}")
+        # Child should now have no _parentId (promoted to root)
+        st4, d4 = _req("GET", f"/api/sessions/{d2['id']}")
+        self.assertIsNone(d4.get("_parentId"))
+        self.assertEqual(d4.get("_branchDepth"), 0)
 
     def test_07_branch_messages_independent(self):
         """Messages in branch are independent copies — parent changes don't affect branch."""

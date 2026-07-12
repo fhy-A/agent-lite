@@ -4975,6 +4975,7 @@ function showDeleteConfirm(sessionId, title) {
       updateSendButtonState();
     }
     await refreshSessions();
+    if (state.branchPanelOpen) renderBranchTree();
   };
   confirmBtn.addEventListener("click", handler);
   cancelBtn.addEventListener("click", cleanup);

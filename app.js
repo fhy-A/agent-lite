@@ -3236,12 +3236,14 @@ async function createBranch(title) {
       method: "POST", body: JSON.stringify({ title: title || "" }),
     });
     await refreshSessions();
+    state._keepBranchOpen = true;
     await loadSession(resp.id);
     if (state.branchPanelOpen) renderBranchTree();
   } catch (err) { showToast(t("branchFailed") + ": " + (err.message || err), "error"); }
 }
 
 async function switchToBranch(sessionId) {
+  state._keepBranchOpen = true;
   await loadSession(sessionId);
   if (state.branchPanelOpen) renderBranchTree();
 }
@@ -5299,6 +5301,14 @@ async function loadSession(sessionId) {
   const now = Date.now();
   if (state._lastSwitchTime && now - state._lastSwitchTime < 300) return;
   state._lastSwitchTime = now;
+
+  // Close branch panel on session switch (unless from branch tree itself)
+  if (state.branchPanelOpen && !state._keepBranchOpen) {
+    els.branchPanel.classList.remove("open");
+    els.toggleBranches.classList.remove("active");
+    state.branchPanelOpen = false;
+  }
+  state._keepBranchOpen = false;
 
   if (sessionId === state.sessionId) {
     syncActiveStreamingState();

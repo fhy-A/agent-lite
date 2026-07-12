@@ -12057,6 +12057,11 @@ document.addEventListener("click", (e) => {
     els.statsPanel?.classList.remove("open");
     els.usageStrip?.classList.remove("active");
   }
+  if (!e.target.closest("#branchPanel") && !e.target.closest("#toggleBranches")) {
+    els.branchPanel?.classList.remove("open");
+    els.toggleBranches?.classList.remove("active");
+    state.branchPanelOpen = false;
+  }
 
 });
 

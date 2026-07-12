@@ -1823,7 +1823,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         parent = read_json(parent_path, {})
         body = self.read_body_json()
         child_id = uuid.uuid4().hex[:16]
-        child_title = body.get("title") or f"分支 - {parent.get('title', '未命名')}"
+        child_title = body.get("title") or parent.get("title", "Untitled")
         child_depth = (parent.get("_branchDepth") or 0) + 1
         child = {
             "id": child_id,

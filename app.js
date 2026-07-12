@@ -1858,7 +1858,7 @@ const I18N = {
     branches: "分支", newBranch: "+ 新建分支", branchesBtn: "分支",
     branchesBtnTip: "查看和切换当前会话的分支，支持从当前消息创建新的对话分支",
     noBranches: "暂无分支，点击上方按钮基于当前消息创建", createSessionFirst: "请先创建会话",
-    stopBeforeBranch: "请先停止当前输出再创建分支", branchFailed: "创建分支失败", branchCreated: "分支已创建", branchedFromHere: "已从「{title}」创建分支", collapseDiff: "收起 Diff", expandDiff: "展开全部 {count} 行",
+    stopBeforeBranch: "请先停止当前输出再创建分支", branchFailed: "创建分支失败", branchCreated: "分支已创建", branchedFromHere: "已从「{title}」创建分支", branchTitleTemplate: "分支 - {title}", collapseDiff: "收起 Diff", expandDiff: "展开全部 {count} 行",
     editingMemory: "编辑中：{name}", accountUserId: "User ID", extractMemory: "提取 Memory",
     yesterday: "昨天", backgroundPending: "等待后台处理", backgroundRunning: "后台处理中", thoughtProcess: "思考过程",
     toolPresetDefault: "默认", toolPresetOff: "关闭", toolPresetFull: "完整",
@@ -2048,7 +2048,7 @@ const I18N = {
     branchesBtnTip: "View and switch between conversation branches, or create a new branch from the current messages",
     noBranches: "No branches yet. Click the button above to create one from the current messages.",
     createSessionFirst: "Create a session first", stopBeforeBranch: "Stop the current output before branching",
-    branchFailed: "Branch creation failed", branchCreated: "Branch created", branchedFromHere: "Branched from \"{title}\"", collapseDiff: "Collapse Diff", expandDiff: "Expand all {count} lines",
+    branchFailed: "Branch creation failed", branchCreated: "Branch created", branchedFromHere: "Branched from \"{title}\"", branchTitleTemplate: "Branch - {title}", collapseDiff: "Collapse Diff", expandDiff: "Expand all {count} lines",
     editingMemory: "Editing: {name}", accountUserId: "User ID", extractMemory: "Extract Memory",
     yesterday: "Yesterday", backgroundPending: "Waiting in background", backgroundRunning: "Processing in background", thoughtProcess: "Thinking",
     toolPresetDefault: "Default", toolPresetOff: "Off", toolPresetFull: "Full",
@@ -3234,9 +3234,13 @@ function renderBranchTree() {
 async function createBranch(title) {
   if (!state.sessionId) { showToast(t("createSessionFirst"), "warning"); return; }
   if (state.isStreaming) { showToast(t("stopBeforeBranch"), "warning"); return; }
+  if (!title) {
+    var cur = state.sessions.find(function(s) { return s.id === state.sessionId; });
+    title = t("branchTitleTemplate", { title: (cur && cur.title) || "" });
+  }
   try {
     var resp = await apiJson("/api/sessions/" + encodeURIComponent(state.sessionId) + "/branch", {
-      method: "POST", body: JSON.stringify({ title: title || "" }),
+      method: "POST", body: JSON.stringify({ title: title }),
     });
     await refreshSessions();
     state._keepBranchOpen = true;

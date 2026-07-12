@@ -3195,7 +3195,7 @@ function buildBranchTree(focusSessionId) {
     }
     return {
       id: session.id, title: session.title || t("untitledSession"),
-      depth: session._branchDepth || 0, messageCount: session.messageCount || 0,
+      depth: session._branchDepth || 0,
       isActive: session.id === state.sessionId, children: children,
     };
   }
@@ -3217,7 +3217,7 @@ function renderBranchTree() {
     var activeClass = node.isActive ? " active" : "";
     var html = '<div class="branch-node' + activeClass + '" data-session-id="' + escapeHtml(node.id) + '" style="padding-left:' + (indent + 12) + 'px">';
     html += '<span class="branch-title">' + escapeHtml(node.title) + '</span>';
-    html += '<span class="branch-msg-count">' + node.messageCount + '</span></div>';
+    html += '</div>';
     for (var i = 0; i < node.children.length; i++) { html += renderNode(node.children[i], depth + 1); }
     return html;
   }

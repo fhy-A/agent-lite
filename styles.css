@@ -811,13 +811,6 @@ input:focus, select:focus, textarea:focus {
 }
 
 .branch-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.branch-msg-count {
-  font-size: 10px; color: var(--muted);
-  background: var(--panel-2); padding: 1px 6px; border-radius: 10px;
-}
-.branch-node.active .branch-msg-count {
-  background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent);
-}
 .branch-empty { padding: 24px 12px; text-align: center; color: var(--muted); font-size: 12px; }
 
 /* Branch point indicator in messages */

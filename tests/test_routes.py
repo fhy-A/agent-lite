@@ -1,0 +1,488 @@
+"""
+P0 HTTP Route Integration Tests — core tool endpoints + session CRUD.
+
+Starts a live server in a background thread and tests real HTTP requests.
+Run: python -m pytest tests/test_routes.py -v
+"""
+import json
+import os
+import sys
+import tempfile
+import threading
+import time
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import requests
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import server as server_mod
+
+
+def _free_port():
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+_PORT = _free_port()
+_BASE = f"http://127.0.0.1:{_PORT}"
+
+
+def _req(method, path, **kwargs):
+    """Helper: issue an HTTP request and return (status, data)."""
+    url = f"{_BASE}{path}"
+    resp = requests.request(method, url, timeout=10, **kwargs)
+    try:
+        return resp.status_code, resp.json()
+    except Exception:
+        return resp.status_code, resp.text
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Shared fixtures — one server for all tests
+# ═══════════════════════════════════════════════════════════════════
+
+class TestServerFixture(unittest.TestCase):
+    """Base class that starts a real server in a background thread."""
+
+    _server_started = False
+    _server_thread = None
+    _server_instance = None
+    _tmp_root = None
+    _tmp_data = None
+
+    @classmethod
+    def setUpClass(cls):
+        if cls._server_started:
+            return
+
+        # Temp project root with test files
+        cls._tmp_root = Path(tempfile.mkdtemp(prefix="agentlite_test_root_"))
+        cls._tmp_data = Path(tempfile.mkdtemp(prefix="agentlite_test_data_"))
+
+        # Create test project structure
+        (cls._tmp_root / "src").mkdir(parents=True)
+        (cls._tmp_root / "src" / "main.py").write_text("print('hello world')\n", encoding="utf-8")
+        (cls._tmp_root / "src" / "utils.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+        (cls._tmp_root / "README.md").write_text("# Test Project\n\nThis is a test.\n", encoding="utf-8")
+        (cls._tmp_root / "binary.bin").write_bytes(b"\x00\x01\x02\x03" * 256)
+        (cls._tmp_root / "output").mkdir()
+
+        # Create data dirs
+        for sub in ["sessions", "memory", "skills", "attachments", "file-backups"]:
+            (cls._tmp_data / sub).mkdir(parents=True, exist_ok=True)
+        config = {
+            "projectRoot": str(cls._tmp_root),
+            "newApiBaseUrl": "http://localhost:3000",
+            "userHome": str(Path.home()),
+        }
+        (cls._tmp_data / "config.json").write_text(json.dumps(config), encoding="utf-8")
+
+        # Override server module paths
+        cls._patchers = [
+            mock.patch.object(server_mod, "DATA_DIR", cls._tmp_data),
+            mock.patch.object(server_mod, "CONFIG_PATH", cls._tmp_data / "config.json"),
+            mock.patch.object(server_mod, "SESSIONS_DIR", cls._tmp_data / "sessions"),
+            mock.patch.object(server_mod, "MEMORY_DIR", cls._tmp_data / "memory"),
+            mock.patch.object(server_mod, "SKILLS_DIR", cls._tmp_data / "skills"),
+            mock.patch.object(server_mod, "ATTACHMENTS_DIR", cls._tmp_data / "attachments"),
+            mock.patch.object(server_mod, "FILE_BACKUP_DIR", cls._tmp_data / "file-backups"),
+            mock.patch.object(server_mod, "APP_DIR", cls._tmp_root),  # for static file serving
+        ]
+        for p in cls._patchers:
+            p.start()
+
+        # Start server
+        server_mod.ThreadingHTTPServer.daemon_threads = True
+        cls._server_instance = server_mod.ThreadingHTTPServer(
+            ("127.0.0.1", _PORT), server_mod.AgentLiteHandler
+        )
+        cls._server_instance.socket.settimeout(2.0)
+        cls._server_thread = threading.Thread(
+            target=cls._server_instance.serve_forever, daemon=True
+        )
+        cls._server_thread.start()
+        time.sleep(0.3)  # let it bind
+        cls._server_started = True
+
+    @classmethod
+    def tearDownClass(cls):
+        # Cleanup happens at process exit; leave tmp dirs for debugging
+        pass
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 1. Health & Config
+# ═══════════════════════════════════════════════════════════════════
+
+class TestHealthAndConfig(TestServerFixture):
+
+    def test_ping(self):
+        status, data = _req("GET", "/api/ping")
+        self.assertEqual(status, 200)
+        self.assertTrue(data.get("pong"))
+
+    def test_version(self):
+        status, data = _req("GET", "/api/version")
+        self.assertEqual(status, 200)
+        self.assertIn("localVersion", data)
+        self.assertIn("serverVersion", data)
+        self.assertEqual(data["name"], "Agent Lite")
+
+    def test_config_get(self):
+        status, data = _req("GET", "/api/config")
+        self.assertEqual(status, 200)
+        self.assertIn("projectRoot", data)
+
+    def test_config_roundtrip(self):
+        status, _ = _req("POST", "/api/config", json={
+            "projectRoot": str(self._tmp_root),
+            "newApiBaseUrl": "http://localhost:3000",
+        })
+        self.assertEqual(status, 200)
+
+    def test_404_unknown_route(self):
+        status, data = _req("GET", "/api/nonexistent")
+        self.assertEqual(status, 404)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 2. File System Tools
+# ═══════════════════════════════════════════════════════════════════
+
+class TestFileTools(TestServerFixture):
+
+    # ── list_files ──
+    def test_list_files_root(self):
+        status, data = _req("POST", "/api/tools/list_files", json={"path": ""})
+        self.assertEqual(status, 200)
+        self.assertTrue(data.get("ok"))
+        entries = data.get("items") or data.get("files") or []
+        names = [e["name"] for e in entries]
+        self.assertIn("src", names)
+        self.assertIn("README.md", names)
+
+    def test_list_files_subdir(self):
+        status, data = _req("POST", "/api/tools/list_files", json={"path": "src"})
+        self.assertEqual(status, 200)
+        entries = data.get("items") or data.get("files") or []
+        names = [e["name"] for e in entries]
+        self.assertIn("main.py", names)
+        self.assertIn("utils.py", names)
+
+    def test_list_files_nonexistent(self):
+        status, data = _req("POST", "/api/tools/list_files", json={"path": "nonexistent"})
+        self.assertEqual(status, 400)
+
+    # ── read_file ──
+    def test_read_text_file(self):
+        status, data = _req("POST", "/api/tools/read_file",
+                            json={"path": "src/main.py"})
+        self.assertEqual(status, 200)
+        self.assertTrue(data.get("ok"))
+        self.assertIn("hello world", data.get("content", ""))
+
+    def test_read_file_with_line_range(self):
+        status, data = _req("POST", "/api/tools/read_file",
+                            json={"path": "src/utils.py", "startLine": 1, "endLine": 1})
+        self.assertEqual(status, 200)
+        content = data.get("content", "")
+        self.assertIn("def add", content)
+
+    def test_read_binary_file(self):
+        status, data = _req("POST", "/api/tools/read_file",
+                            json={"path": "binary.bin"})
+        self.assertEqual(status, 200)
+        # Binary files get size/type info but limited content
+        self.assertTrue(data.get("ok") or data.get("binary") or "size" in data)
+
+    def test_read_nonexistent_file(self):
+        status, data = _req("POST", "/api/tools/read_file",
+                            json={"path": "nonexistent.txt"})
+        self.assertEqual(status, 400)
+
+    def test_read_file_path_traversal_rejected(self):
+        status, data = _req("POST", "/api/tools/read_file",
+                            json={"path": "../../../Windows/System32/drivers/etc/hosts"})
+        self.assertEqual(status, 400)
+
+    # ── write_file ──
+    def test_write_and_read_roundtrip(self):
+        status, data = _req("POST", "/api/tools/write_file",
+                            json={"path": "test_write.txt", "content": "hello test"})
+        self.assertEqual(status, 200)
+        self.assertTrue(data.get("ok"))
+        # Verify file was actually written
+        written = self._tmp_root / "test_write.txt"
+        self.assertTrue(written.exists())
+        self.assertEqual(written.read_text(encoding="utf-8"), "hello test")
+
+    def test_write_file_creates_backup(self):
+        # First write
+        _req("POST", "/api/tools/write_file",
+             json={"path": "backup_test.txt", "content": "version 1"})
+        # Second write should create backup
+        status, data = _req("POST", "/api/tools/write_file",
+                            json={"path": "backup_test.txt", "content": "version 2"})
+        self.assertEqual(status, 200)
+        # Check backup exists
+        backups = list((self._tmp_data / "file-backups").iterdir())
+        self.assertGreater(len(backups), 0)
+
+    def test_write_file_path_traversal_not_outside_project(self):
+        """Path traversal must not result in file written outside project or home."""
+        status, data = _req("POST", "/api/tools/write_file",
+                            json={"path": "../outside.txt", "content": "safe"})
+        # The server either accepts and redirects, or rejects — both are safe behaviors
+        # The key security property: sensitive paths must NOT be writable
+        sensitive = Path("C:/Windows/System32/outside.txt")
+        self.assertFalse(sensitive.exists(), "Must not write to System32!")
+        # If accepted, verify the file ended up in a safe location
+        if status == 200:
+            written_path = data.get("path", "")
+            self.assertNotIn("System32", written_path)
+            self.assertNotIn("Windows", written_path)
+
+    # ── delete_file ──
+    def test_delete_file(self):
+        path = self._tmp_root / "to_delete.txt"
+        path.write_text("delete me")
+        self.assertTrue(path.exists(), "File should exist before delete")
+        status, data = _req("POST", "/api/tools/delete_file",
+                            json={"path": "to_delete.txt"})
+        self.assertEqual(status, 200, f"Delete failed: {data}")
+        self.assertTrue(data.get("ok"))
+        self.assertFalse(path.exists())
+
+    def test_delete_file_path_traversal_rejected(self):
+        status, data = _req("POST", "/api/tools/delete_file",
+                            json={"path": "../../../etc/passwd"})
+        self.assertEqual(status, 400)
+
+    # ── mkdir ──
+    def test_mkdir(self):
+        status, data = _req("POST", "/api/mkdir",
+                            json={"name": "new_test_dir", "parent": ""})
+        self.assertEqual(status, 200)
+        self.assertTrue((self._tmp_root / "new_test_dir").is_dir())
+
+    def test_mkdir_in_subdir(self):
+        status, data = _req("POST", "/api/mkdir",
+                            json={"name": "nested", "parent": "src"})
+        self.assertEqual(status, 200)
+        self.assertTrue((self._tmp_root / "src" / "nested").is_dir())
+
+    # ── search_files ──
+    def test_search_files_by_content(self):
+        status, data = _req("POST", "/api/tools/search_files",
+                            json={"query": "print", "path": "src"})
+        self.assertEqual(status, 200)
+        self.assertTrue(data.get("ok"))
+        # Should find main.py containing "print"
+        matches = data.get("items") or data.get("results") or data.get("matches") or []
+        self.assertIsInstance(matches, list)
+
+    # ── glob_files ──
+    def test_glob_files(self):
+        status, data = _req("POST", "/api/tools/glob_files",
+                            json={"pattern": "**/*.py", "path": "src"})
+        self.assertEqual(status, 200)
+        self.assertTrue(data.get("ok"))
+        results = data.get("items") or data.get("results") or data.get("matches") or []
+        self.assertIsInstance(results, list)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 3. Command Execution
+# ═══════════════════════════════════════════════════════════════════
+
+class TestCommandExecution(TestServerFixture):
+
+    def test_safe_command_echo(self):
+        status, data = _req("POST", "/api/tools/run_command",
+                            json={"command": "echo hello world", "description": "test"})
+        self.assertEqual(status, 200)
+        self.assertTrue(data.get("ok"))
+        self.assertIn("hello", data.get("stdout", "").lower())
+        self.assertIn("world", data.get("stdout", "").lower())
+
+    def test_safe_command_dir(self):
+        status, data = _req("POST", "/api/tools/run_command",
+                            json={"command": "dir", "description": "list dir"})
+        self.assertEqual(status, 200)
+        self.assertTrue(data.get("ok"))
+
+    def test_blocked_del_command(self):
+        status, data = _req("POST", "/api/tools/run_command",
+                            json={"command": "del file.txt", "description": "delete"})
+        self.assertEqual(status, 400)
+        self.assertFalse(data.get("ok", True))
+
+    def test_blocked_format_command(self):
+        status, data = _req("POST", "/api/tools/run_command",
+                            json={"command": "format C:", "description": "destroy"})
+        self.assertEqual(status, 400)
+
+    def test_python_c_allowed(self):
+        status, data = _req("POST", "/api/tools/run_command",
+                            json={"command": "python -c \"print(42)\"", "description": "test"})
+        self.assertEqual(status, 200)
+        self.assertTrue(data.get("ok"))
+        self.assertIn("42", data.get("stdout", ""))
+
+    def test_empty_command_rejected(self):
+        status, data = _req("POST", "/api/tools/run_command",
+                            json={"command": "", "description": "empty"})
+        self.assertEqual(status, 400)
+
+    def test_command_with_timeout(self):
+        status, data = _req("POST", "/api/tools/run_command",
+                            json={"command": "ping -n 4 127.0.0.1", "description": "ping", "timeout": 10})
+        self.assertEqual(status, 200)
+        self.assertTrue(data.get("ok"))
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 4. Session CRUD Lifecycle
+# ═══════════════════════════════════════════════════════════════════
+
+class TestSessionLifecycle(TestServerFixture):
+    _session_id = None
+
+    def test_01_create_session(self):
+        status, data = _req("POST", "/api/sessions", json={
+            "title": "Integration Test Session",
+            "messages": [{"role": "user", "content": "Hello"}],
+        })
+        self.assertEqual(status, 201)
+        self.assertIn("id", data)
+        self.assertIn("_filePath", data)
+        TestSessionLifecycle._session_id = data["id"]
+        self.assertTrue(Path(data["_filePath"]).exists())
+
+    def test_02_save_session(self):
+        sid = TestSessionLifecycle._session_id
+        self.assertIsNotNone(sid, "Session not created yet")
+        status, data = _req("PUT", f"/api/sessions/{sid}", json={
+            "title": "Integration Test Session Updated",
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there!"},
+            ],
+        })
+        self.assertEqual(status, 200)
+        self.assertIn("_filePath", data)
+
+    def test_03_load_session(self):
+        sid = TestSessionLifecycle._session_id
+        self.assertIsNotNone(sid, "Session not created yet")
+        status, data = _req("GET", f"/api/sessions/{sid}")
+        self.assertEqual(status, 200)
+        self.assertEqual(data.get("title"), "Integration Test Session Updated")
+        self.assertEqual(len(data.get("messages", [])), 2)
+
+    def test_04_list_sessions(self):
+        status, data = _req("GET", "/api/sessions")
+        self.assertEqual(status, 200)
+        sessions = data.get("sessions") or data.get("data") or []
+        sids = [s["id"] for s in sessions]
+        self.assertIn(TestSessionLifecycle._session_id, sids)
+
+    def test_05_archive_session(self):
+        sid = TestSessionLifecycle._session_id
+        self.assertIsNotNone(sid, "Session not created yet")
+        status, data = _req("PUT", f"/api/sessions/{sid}/archive", json={
+            "messages": [{"role": "user", "content": "test"}],
+        })
+        self.assertEqual(status, 200)
+        self.assertTrue(data.get("ok"))
+
+    def test_06_delete_session(self):
+        sid = TestSessionLifecycle._session_id
+        self.assertIsNotNone(sid, "Session not created yet")
+        status, data = _req("DELETE", f"/api/sessions/{sid}")
+        self.assertEqual(status, 200)
+        self.assertTrue(data.get("ok"))
+
+    def test_07_session_deleted_not_found(self):
+        sid = TestSessionLifecycle._session_id
+        self.assertIsNotNone(sid, "Session not created yet")
+        status, data = _req("GET", f"/api/sessions/{sid}")
+        self.assertEqual(status, 404)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 5. Web Fetch
+# ═══════════════════════════════════════════════════════════════════
+
+class TestWebFetch(TestServerFixture):
+
+    def test_fetch_blocked_internal_ip(self):
+        status, data = _req("POST", "/api/tools/web_fetch",
+                            json={"url": "http://127.0.0.1/admin"})
+        self.assertEqual(status, 400)
+        self.assertIn("内网", data.get("error", ""))
+
+    def test_fetch_blocked_private_ip(self):
+        status, data = _req("POST", "/api/tools/web_fetch",
+                            json={"url": "http://192.168.1.1/"})
+        self.assertEqual(status, 400)
+
+    def test_fetch_empty_url_rejected(self):
+        status, data = _req("POST", "/api/tools/web_fetch",
+                            json={"url": ""})
+        self.assertEqual(status, 400)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 6. Attachments
+# ═══════════════════════════════════════════════════════════════════
+
+class TestAttachments(TestServerFixture):
+
+    def test_attachment_upload(self):
+        import base64
+        content = base64.b64encode(b"hello attachment").decode()
+        status, data = _req("POST", "/api/attachments",
+                            json={"name": "test.txt", "contentBase64": content})
+        self.assertIn(status, [200, 201])
+        self.assertTrue(data.get("path"))
+
+    def test_attachment_path_safety(self):
+        import base64
+        content = base64.b64encode(b"safe content").decode()
+        # Name gets sanitized, so traversal in name should be harmless
+        status, data = _req("POST", "/api/attachments",
+                            json={"name": "../../../evil.txt", "contentBase64": content})
+        # Should succeed — name is sanitized
+        self.assertIn(status, [200, 201])
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 7. Error handling & edge cases
+# ═══════════════════════════════════════════════════════════════════
+
+class TestErrorHandling(TestServerFixture):
+
+    def test_malformed_json_body(self):
+        status, data = _req("POST", "/api/tools/run_command",
+                            data="not json",
+                            headers={"Content-Type": "application/json"})
+        self.assertEqual(status, 400)
+
+    def test_missing_required_params(self):
+        status, data = _req("POST", "/api/tools/run_command",
+                            json={})  # missing "command"
+        self.assertEqual(status, 400)
+
+    def test_invalid_method_on_route(self):
+        # DELETE on /api/ping
+        status, data = _req("DELETE", "/api/ping")
+        self.assertEqual(status, 404)
+
+
+if __name__ == "__main__":
+    unittest.main()

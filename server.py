@@ -1830,7 +1830,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             "messages": list(parent.get("messages", [])),
             "createdAt": now_iso(),
             "updatedAt": now_iso(),
-            "stats": {},
+            "stats": parent.get("stats") or {},
             "_parentId": parent_id,
             "_branchDepth": child_depth,
         }

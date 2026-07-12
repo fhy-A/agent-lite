@@ -2226,9 +2226,10 @@ function formatSize(num) {
 }
 
 function formatCompact(num) {
-  if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(num >= 10_000_000 ? 1 : 2)}M`;
-  if (num >= 1_000) return `${Math.round(num / 100) / 10}k`;
-  return String(num);
+  var n = num || 0;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 1 : 2)}M`;
+  if (n >= 1_000) return `${Math.round(n / 100) / 10}k`;
+  return String(n);
 }
 
 function formatNumber(num) {

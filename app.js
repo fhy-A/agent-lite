@@ -3241,8 +3241,8 @@ async function createBranch(title) {
   } catch (err) { showToast(t("branchFailed") + ": " + (err.message || err), "error"); }
 }
 
-function switchToBranch(sessionId) {
-  loadSession(sessionId);
+async function switchToBranch(sessionId) {
+  await loadSession(sessionId);
   if (state.branchPanelOpen) renderBranchTree();
 }
 

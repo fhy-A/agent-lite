@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(0, 4, 12, 0),
-    prodvers=(0, 4, 12, 0),
+    filevers=(0, 5, 2, 0),
+    prodvers=(0, 5, 2, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -15,12 +15,12 @@ VSVersionInfo(
         '040904B0',
         [StringStruct('CompanyName', 'Agent Lite'),
          StringStruct('FileDescription', 'Agent Lite - AI Coding Assistant'),
-         StringStruct('FileVersion', '0.4.12'),
+         StringStruct('FileVersion', '0.5.2'),
          StringStruct('InternalName', 'AgentLite'),
          StringStruct('LegalCopyright', ''),
-         StringStruct('OriginalFilename', 'AgentLite-v0.4.12.exe'),
+         StringStruct('OriginalFilename', 'AgentLite-v0.5.2.exe'),
          StringStruct('ProductName', 'Agent Lite'),
-         StringStruct('ProductVersion', '0.4.12')])
+         StringStruct('ProductVersion', '0.5.2')])
     ]),
     VarFileInfo([VarStruct('Translation', [0x0409, 1200])])
   ]

@@ -3824,7 +3824,7 @@ body.theme-dark .syn-fn { color: #61afef; }
 /* Skills inside settings page */
 .skills-layout-inner { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 0; height: 560px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .skills-sidebar-inner { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; }
-.skills-sidebar-inner > :first-child { flex: 1; overflow: auto; }
+.skills-sidebar-inner .skill-list-scroll { flex: 1; overflow: auto; }
 .skills-detail-inner { padding: 16px; overflow: auto; background: var(--panel-3); }
 
 /* Language options */

@@ -66,7 +66,27 @@ class TestSubAgentFrontend(unittest.TestCase):
     def test_subagent_suppresses_successful_duplicate_tools(self):
         self.assertIn('successfulToolSignatures: new Set()', self.source)
         self.assertIn('此前成功的工具调用', self.source)
-        self.assertIn('const maxRounds = ctx.isSubAgent ? 6 : MAX_TOOL_ROUNDS;', self.source)
+        self.assertIn('const maxRounds = MAX_TOOL_ROUNDS;', self.source)
+
+    def test_subagent_is_not_stopped_by_a_small_round_limit(self):
+        self.assertNotIn('ctx.isSubAgent ? 6 : MAX_TOOL_ROUNDS', self.source)
+        self.assertIn('Timeout, cancellation and duplicate-tool', self.source)
+
+    def test_parallel_subagent_usage_uses_private_ledgers(self):
+        self.assertIn('if (!ctx?.isSubAgent) setSessionStats(sessionId, stats);', self.source)
+        self.assertIn('mergeBackgroundUsage(sessionId, usage);', self.source)
+        self.assertNotIn('mergeBackgroundUsage(sessionId, subCtx.stats);', self.source)
+
+    def test_delegated_usage_merges_once_into_parent_task(self):
+        self.assertIn('function mergeDelegatedUsage(parentCtx, childUsage)', self.source)
+        self.assertEqual(
+            self.source.count('mergeDelegatedUsage(parentCtx, subCtx.taskUsage);'),
+            2,
+        )
+
+    def test_background_result_keeps_its_own_usage(self):
+        self.assertIn('_usage: sub.usage', self.source)
+        self.assertIn('_usageScope: "task"', self.source)
 
     def test_background_dispatch_uses_bounded_scheduler(self):
         self.assertIn('globalLimit: 3', self.source)
@@ -79,6 +99,27 @@ class TestSubAgentFrontend(unittest.TestCase):
         self.assertIn('updateBackgroundJob(job, "running")', self.source)
         self.assertIn('const BACKGROUND_JOB_TIMEOUT_MS = 10 * 60 * 1000;', self.source)
         self.assertIn('后台处理中', self.source)
+
+    def test_background_messages_are_detached_from_main_model_context(self):
+        self.assertIn('function isDetachedFromMainContext(msg)', self.source)
+        self.assertIn('msg.meta?.detachedFromMain', self.source)
+        self.assertIn(
+            '_streamMsgs.filter((msg) => !isDetachedFromMainContext(msg))',
+            self.source,
+        )
+        self.assertGreaterEqual(self.source.count('detachedFromMain: true'), 3)
+
+    def test_legacy_background_notifications_stay_out_of_model_context(self):
+        self.assertIn(
+            'msg.meta?.kind === "background-subagent-notify"',
+            self.source,
+        )
+
+    def test_subagent_edit_projection_is_detached_from_parent_context(self):
+        self.assertGreaterEqual(
+            self.source.count('meta.detachedFromMain = true;'),
+            2,
+        )
 
     def test_background_dispatch_owns_abort_controller(self):
         self.assertIn('abortController: new AbortController()', self.source)

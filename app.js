@@ -3933,6 +3933,14 @@ function isInternalMessage(msg) {
   return false;
 }
 
+function isDetachedFromMainContext(msg) {
+  if (!msg) return false;
+  if (msg.meta?.detachedFromMain) return true;
+  // Compatibility with sessions created before background dispatch used a
+  // display-only projection. These notices must never enter the model chain.
+  return msg.meta?.kind === "background-subagent-notify";
+}
+
 function renderCopyIconSvg() {
   return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
 }
@@ -6569,7 +6577,10 @@ function updateUsage(usage, sessionId = state.sessionId, ctx = null) {
 
   stats.cache += cache;
 
-  setSessionStats(sessionId, stats);
+  // Sub-agents own a private usage ledger while they run. Publishing their
+  // partial totals here would replace the parent session ledger and race with
+  // other parallel workers. Their totals are merged exactly once on completion.
+  if (!ctx?.isSubAgent) setSessionStats(sessionId, stats);
 
   const responseUsage = ctx?.responseUsage || state.responseUsage;
 
@@ -7088,6 +7099,9 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
   // Capture messages at stream start (closure survives session switches)
   let _streamMsgs = ctx?.messages || getSessionMessages(sessionId);
+  const _modelMsgs = ctx?.isSubAgent
+    ? _streamMsgs
+    : _streamMsgs.filter((msg) => !isDetachedFromMainContext(msg));
 
   const payload = {
 
@@ -7107,7 +7121,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
       ...(ctx?.isSubAgent ? [] : [{
         role: "system",
         content: getSystemPrompt({
-          messages: _streamMsgs,
+          messages: _modelMsgs,
           explicitSkill: ctx?.explicitSkill,
           toolPreset: ctx?.toolPreset,
           permissionProfile: ctx?.permissionProfile,
@@ -7121,7 +7135,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
         let lastAssistantToolCallIds = new Set();
 
-        for (const msg of _streamMsgs) {
+        for (const msg of _modelMsgs) {
 
           if (msg.streaming) continue;
 
@@ -8139,6 +8153,16 @@ function mergeBackgroundUsage(sessionId, childStats) {
   setSessionStats(sessionId, stats);
 }
 
+function mergeDelegatedUsage(parentCtx, childUsage) {
+  if (!parentCtx || !childUsage) return;
+  for (const key of ["input", "output", "cache"]) {
+    const amount = Number(childUsage[key] || 0);
+    parentCtx.stats[key] = Number(parentCtx.stats[key] || 0) + amount;
+    parentCtx.taskUsage[key] = Number(parentCtx.taskUsage[key] || 0) + amount;
+  }
+  if (!parentCtx.isSubAgent) setSessionStats(parentCtx.sessionId, parentCtx.stats);
+}
+
 async function runBackgroundSubAgentJob(job) {
   const { sessionId, userText, images, parentCtx } = job;
   const currentTask = parentCtx._taskPrompt || "";
@@ -8166,6 +8190,7 @@ async function runBackgroundSubAgentJob(job) {
   }
 
   let timedOut = false;
+  let runError = null;
   const timeoutId = setTimeout(() => {
     timedOut = true;
     subCtx.run.abortController.abort();
@@ -8173,12 +8198,25 @@ async function runBackgroundSubAgentJob(job) {
   try {
     await runAgentLoop(subCtx);
     if (timedOut) throw new Error("后台任务运行超时");
+  } catch (error) {
+    runError = error;
   } finally {
     clearTimeout(timeoutId);
   }
 
-  mergeBackgroundUsage(sessionId, subCtx.stats);
-  return subCtx.subResult || { ok: false, result: "后台子 Agent 未返回结果" };
+  const usage = cloneUsageStats(subCtx.taskUsage);
+  mergeBackgroundUsage(sessionId, usage);
+  if (runError) {
+    return {
+      ok: false,
+      result: runError?.name === "AbortError" ? "后台任务已取消或超时" : (runError.message || String(runError)),
+      usage,
+    };
+  }
+  return {
+    ...(subCtx.subResult || { ok: false, result: "后台子 Agent 未返回结果" }),
+    usage,
+  };
 }
 
 function pumpBackgroundDispatcher() {
@@ -8200,7 +8238,14 @@ function pumpBackgroundDispatcher() {
         const messages = appendSessionMessages(job.sessionId, {
           role: "assistant",
           content,
-          meta: { kind: "background-subagent", jobId: job.id, error: sub.ok === false },
+          meta: {
+            kind: "background-subagent",
+            jobId: job.id,
+            error: sub.ok === false,
+            detachedFromMain: true,
+            _usage: sub.usage,
+            _usageScope: "task",
+          },
           _model: job.parentCtx.model || getSelectedModel(),
           _time: new Date().toISOString(),
         });
@@ -8214,7 +8259,12 @@ function pumpBackgroundDispatcher() {
         const messages = appendSessionMessages(job.sessionId, {
           role: "assistant",
           content: `**后台处理失败**：${job.userText.slice(0, 80)}\n\n${message}`,
-          meta: { kind: "background-subagent", jobId: job.id, error: true },
+          meta: {
+            kind: "background-subagent",
+            jobId: job.id,
+            error: true,
+            detachedFromMain: true,
+          },
           _model: job.parentCtx.model || getSelectedModel(),
           _time: new Date().toISOString(),
         });
@@ -8244,7 +8294,10 @@ function dispatchBackgroundSubAgent(sessionId, userText, images = []) {
     role: "user",
     content: userText,
     _images: images.length ? images : undefined,
-    meta: { backgroundDispatch: { id, status: "pending" } },
+    meta: {
+      backgroundDispatch: { id, status: "pending" },
+      detachedFromMain: true,
+    },
     _model: parentCtx.model || getSelectedModel(),
     _time: new Date().toISOString(),
   };
@@ -8305,6 +8358,7 @@ async function executeToolWithDelegation(tool, parentCtx, options = {}) {
   const subCtx = createSubContext(parentCtx, taskPrompt);
   try {
     await runAgentLoop(subCtx);
+    mergeDelegatedUsage(parentCtx, subCtx.taskUsage);
     const sub = subCtx.subResult || { ok: false, result: "Sub-agent did not produce a result" };
     return {
       ok: sub.ok,
@@ -8316,6 +8370,7 @@ async function executeToolWithDelegation(tool, parentCtx, options = {}) {
       tool_calls: sub.tool_calls || 0,
     };
   } catch (err) {
+    mergeDelegatedUsage(parentCtx, subCtx.taskUsage);
     return {
       ok: false,
       action: "task",
@@ -8362,7 +8417,10 @@ async function runAgentLoop(ctx = null) {
     return;
   }
 
-  const maxRounds = ctx.isSubAgent ? 6 : MAX_TOOL_ROUNDS;
+  // Sub-agents should stop when the delegated objective is complete, not at an
+  // arbitrary small round count. Timeout, cancellation and duplicate-tool
+  // suppression remain the safety boundaries for background work.
+  const maxRounds = MAX_TOOL_ROUNDS;
 
   for (let round = 0; round < maxRounds; round += 1) {
 
@@ -8647,6 +8705,7 @@ async function runAgentLoop(ctx = null) {
         // Sub-agent edit proposals must be reviewable in the parent conversation.
         // Sharing the same meta object keeps approval state synchronized.
         if (ctx.isSubAgent && meta.pendingEditId && ctx.parent) {
+          meta.detachedFromMain = true;
           ctx.parent.messages = getSessionMessages(ctx.parent.sessionId);
           ctx.parent.messages.push({ ...resultMessage, meta });
           setSessionMessages(ctx.parent.sessionId, ctx.parent.messages);
@@ -8931,6 +8990,7 @@ async function runAgentLoop(ctx = null) {
     ctx.messages.push(resultMessage);
 
     if (ctx.isSubAgent && meta.pendingEditId && ctx.parent) {
+      meta.detachedFromMain = true;
       ctx.parent.messages = getSessionMessages(ctx.parent.sessionId);
       ctx.parent.messages.push({ ...resultMessage, meta });
       setSessionMessages(ctx.parent.sessionId, ctx.parent.messages);

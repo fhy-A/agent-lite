@@ -462,7 +462,7 @@ DENIED_COMMAND_PATTERN = re.compile(
     r"schtasks\s+/create|"
     # ── Code execution / obfuscation ──
     r"Invoke-Expression\b|iex\b|Invoke-Obfuscation|"
-    r"-EncodedCommand\b|-Enc\b|-e\s+\S+|"
+    r"-EncodedCommand\b|-Enc\b|(powershell|pwsh).*-e\s+\S+|"
     r"rundll32|mshta|"
     # ── Destructive Git ──
     r"git\s+push\s+--force|git\s+reset\s+--hard|git\s+clean\s+-fdx|"
@@ -1727,6 +1727,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             "updatedAt": now_iso(),
         }
         write_json(session_path(session_id), session)
+        session["_filePath"] = str(session_path(session_id).resolve())
         self.send_json(session, 201)
 
     def save_session(self, session_id):
@@ -1744,6 +1745,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         session["stats"] = body.get("stats") or session.get("stats") or {}
         session["updatedAt"] = now_iso()
         write_json(path, session)
+        session["_filePath"] = str(path.resolve())
         self.send_json(session)
 
     def archive_session(self, session_id):

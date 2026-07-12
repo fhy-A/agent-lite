@@ -821,16 +821,20 @@ input:focus, select:focus, textarea:focus {
 .branch-empty { padding: 24px 12px; text-align: center; color: var(--muted); font-size: 12px; }
 
 /* Branch point indicator in messages */
-.branch-indicator { width: min(760px, 90%); margin-bottom: 22px; }
+.branch-indicator { width: min(760px, 90%); margin: 22px 0; }
 .branch-indicator-bar {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 14px;
-  border: 1px dashed var(--line-strong);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 5%, transparent);
-  color: var(--muted); font-size: 12px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 0;
+  color: var(--faint); font-size: 12px;
 }
-.branch-indicator-icon { color: var(--accent); flex-shrink: 0; }
+.branch-indicator-bar::before,
+.branch-indicator-bar::after {
+  content: ""; flex: 1; height: 1px;
+  background: var(--line);
+}
+.branch-indicator-bar::before { margin-right: 6px; }
+.branch-indicator-bar::after { margin-left: 6px; }
+.branch-indicator-icon { color: var(--muted); flex-shrink: 0; }
 #createBranchBtn { font-size: 11px; }
 #createBranchBtn:disabled { opacity: 0.4; cursor: not-allowed; }
 

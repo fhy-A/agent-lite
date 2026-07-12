@@ -6546,6 +6546,7 @@ function setStreaming(active, sessionId = state.sessionId) {
   }
 
   els.stopBtn.disabled = !isSessionStreaming(state.sessionId);
+  if (els.createBranchBtn) els.createBranchBtn.disabled = state.isStreaming;
 
   updateSendButtonState();
 

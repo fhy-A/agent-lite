@@ -4614,7 +4614,7 @@ function renderMessages() {
       break;
     }
   }
-  if (branchMsgCount >= 0) {
+  if (typeof branchMsgCount === "number" && branchMsgCount >= 0) {
     // Find parent title and insert marker at branch point
     var parentSession = null;
     for (var p = 0; p < state.sessions.length; p++) {

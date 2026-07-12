@@ -819,6 +819,18 @@ input:focus, select:focus, textarea:focus {
   background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent);
 }
 .branch-empty { padding: 24px 12px; text-align: center; color: var(--muted); font-size: 12px; }
+
+/* Branch point indicator in messages */
+.branch-indicator { width: min(760px, 90%); margin-bottom: 22px; }
+.branch-indicator-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  color: var(--muted); font-size: 12px;
+}
+.branch-indicator-icon { color: var(--accent); flex-shrink: 0; }
 #createBranchBtn { font-size: 11px; }
 
 .sys-col h3 {

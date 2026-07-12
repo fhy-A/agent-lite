@@ -1858,7 +1858,7 @@ const I18N = {
     branches: "分支", newBranch: "+ 新建分支", branchesBtn: "分支",
     branchesBtnTip: "查看和切换当前会话的分支，支持从当前消息创建新的对话分支",
     noBranches: "暂无分支，点击上方按钮基于当前消息创建", createSessionFirst: "请先创建会话",
-    stopBeforeBranch: "请先停止当前输出再创建分支", branchFailed: "创建分支失败", branchCreated: "分支已创建", collapseDiff: "收起 Diff", expandDiff: "展开全部 {count} 行",
+    stopBeforeBranch: "请先停止当前输出再创建分支", branchFailed: "创建分支失败", branchCreated: "分支已创建", branchedFromHere: "已从「{title}」创建分支", collapseDiff: "收起 Diff", expandDiff: "展开全部 {count} 行",
     editingMemory: "编辑中：{name}", accountUserId: "User ID", extractMemory: "提取 Memory",
     yesterday: "昨天", backgroundPending: "等待后台处理", backgroundRunning: "后台处理中", thoughtProcess: "思考过程",
     toolPresetDefault: "默认", toolPresetOff: "关闭", toolPresetFull: "完整",
@@ -2048,7 +2048,7 @@ const I18N = {
     branchesBtnTip: "View and switch between conversation branches, or create a new branch from the current messages",
     noBranches: "No branches yet. Click the button above to create one from the current messages.",
     createSessionFirst: "Create a session first", stopBeforeBranch: "Stop the current output before branching",
-    branchFailed: "Branch creation failed", branchCreated: "Branch created", collapseDiff: "Collapse Diff", expandDiff: "Expand all {count} lines",
+    branchFailed: "Branch creation failed", branchCreated: "Branch created", branchedFromHere: "Branched from \"{title}\"", collapseDiff: "Collapse Diff", expandDiff: "Expand all {count} lines",
     editingMemory: "Editing: {name}", accountUserId: "User ID", extractMemory: "Extract Memory",
     yesterday: "Yesterday", backgroundPending: "Waiting in background", backgroundRunning: "Processing in background", thoughtProcess: "Thinking",
     toolPresetDefault: "Default", toolPresetOff: "Off", toolPresetFull: "Full",
@@ -4591,6 +4591,13 @@ function renderMessages() {
     // Deliberately omit tool-call/tool-result details from the conversation.
   }
   flushThoughts();
+
+  // Branch indicator: show in child sessions to mark the branch point
+  var parentInfo = state.sessions.find(function(s) { return s.id === state.sessionId; });
+  if (parentInfo && parentInfo._parentId) {
+    var parentTitle = (state.sessions.find(function(s) { return s.id === parentInfo._parentId; }) || {}).title || "";
+    rows.push('<article class="msg branch-indicator"><div class="branch-indicator-bar"><span class="branch-indicator-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span><span>' + t("branchedFromHere", { title: escapeHtml(parentTitle) }) + '</span></div></article>');
+  }
 
   // Render queued messages (sent while agent is busy)
   const run = ensureSessionRun(state.sessionId);

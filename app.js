@@ -5275,7 +5275,7 @@ async function createSession(title = t("sessionTitleDefault")) {
 
   state.pendingEdits = {};
 
-  state.stats = { input: 0, output: 0, cache: 0 };
+  state.stats = session.stats || { input: 0, output: 0, cache: 0 };
   setSessionStats(session.id, state.stats);
   resetRenderCache();
 
@@ -6899,11 +6899,11 @@ function updateUsage(usage, sessionId = state.sessionId, ctx = null) {
 
   const stats = ctx?.stats || getSessionStats(sessionId);
 
-  stats.input += input;
+  stats.input = (stats.input || 0) + input;
 
-  stats.output += output;
+  stats.output = (stats.output || 0) + output;
 
-  stats.cache += cache;
+  stats.cache = (stats.cache || 0) + cache;
 
   // Sub-agents own a private usage ledger while they run. Publishing their
   // partial totals here would replace the parent session ledger and race with

@@ -4592,11 +4592,39 @@ function renderMessages() {
   }
   flushThoughts();
 
-  // Branch indicator: show in child sessions to mark the branch point
-  var parentInfo = state.sessions.find(function(s) { return s.id === state.sessionId; });
-  if (parentInfo && parentInfo._parentId) {
-    var parentTitle = (state.sessions.find(function(s) { return s.id === parentInfo._parentId; }) || {}).title || "";
-    rows.splice(0, 0, '<article class="msg branch-indicator"><div class="branch-indicator-bar"><span class="branch-indicator-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span><span>' + t("branchedFromHere", { title: escapeHtml(parentTitle) }) + '</span></div></article>');
+  // Branch indicator: show in child sessions at the branch point
+  var branchMsgCount = -1;
+  for (var k = 0; k < state.sessions.length; k++) {
+    if (state.sessions[k].id === state.sessionId) {
+      branchMsgCount = state.sessions[k]._branchMsgCount;
+      break;
+    }
+  }
+  if (branchMsgCount >= 0) {
+    // Find parent title and insert marker at branch point
+    var parentSession = null;
+    for (var p = 0; p < state.sessions.length; p++) {
+      if (state.sessions[p]._branches && state.sessions[p]._branches.indexOf(state.sessionId) >= 0) {
+        parentSession = state.sessions[p]; break;
+      }
+    }
+    // Also try finding by _parentId
+    if (!parentSession) {
+      for (var q = 0; q < state.sessions.length; q++) {
+        if (state.sessions[q].id === state.sessionId) {
+          var pid = state.sessions[q]._parentId;
+          if (pid) {
+            for (var r = 0; r < state.sessions.length; r++) {
+              if (state.sessions[r].id === pid) { parentSession = state.sessions[r]; break; }
+            }
+          }
+          break;
+        }
+      }
+    }
+    var parentTitle = (parentSession && parentSession.title) || "";
+    var insertAt = Math.min(branchMsgCount, rows.length);
+    rows.splice(insertAt, 0, '<article class="msg branch-indicator"><div class="branch-indicator-bar"><span class="branch-indicator-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span><span>' + t("branchedFromHere", { title: escapeHtml(parentTitle) }) + '</span></div></article>');
   }
 
   // Render queued messages (sent while agent is busy)

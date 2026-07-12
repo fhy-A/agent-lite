@@ -1833,6 +1833,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             "stats": parent.get("stats") or {},
             "_parentId": parent_id,
             "_branchDepth": child_depth,
+            "_branchMsgCount": len(parent.get("messages", [])),
         }
         write_json(session_path(child_id), child)
         # Update parent's _branches

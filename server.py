@@ -882,6 +882,9 @@ def session_summary(session):
         "updatedAt": session.get("updatedAt"),
         "lastMessageTime": last_time,
         "messageCount": len(messages),
+        "_parentId": session.get("_parentId"),
+        "_branchDepth": session.get("_branchDepth", 0),
+        "_branches": session.get("_branches", []),
     }
 
 
@@ -1536,6 +1539,9 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             if self.path == "/api/tools/use_skill":
                 self.tool_use_skill()
                 return
+            if self.path.startswith("/api/sessions/") and self.path.endswith("/branch"):
+                self.branch_session(self.path.rsplit("/", 2)[-2])
+                return
             if self.path == "/api/sessions":
                 self.create_session()
                 return
@@ -1722,10 +1728,15 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         session = {
             "id": session_id,
             "title": body.get("title") or "新会话",
-            "messages": [],
+            "messages": body.get("messages") or [],
             "createdAt": now_iso(),
             "updatedAt": now_iso(),
+            "stats": body.get("stats") or {},
         }
+        parent_id = body.get("_parentId")
+        if parent_id:
+            session["_parentId"] = parent_id
+            session["_branchDepth"] = body.get("_branchDepth", 1)
         write_json(session_path(session_id), session)
         session["_filePath"] = str(session_path(session_id).resolve())
         self.send_json(session, 201)
@@ -1764,9 +1775,51 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
 
     def delete_session(self, session_id):
         path = session_path(session_id)
+        # Clean up parent's _branches reference before deleting
         if path.exists():
+            session = read_json(path, {})
+            parent_id = session.get("_parentId")
+            if parent_id:
+                parent_path = session_path(parent_id)
+                if parent_path.exists():
+                    parent_data = read_json(parent_path, {})
+                    branches = parent_data.get("_branches") or []
+                    if session_id in branches:
+                        branches.remove(session_id)
+                        parent_data["_branches"] = branches
+                        write_json(parent_path, parent_data)
             path.unlink()
         self.send_json({"ok": True})
+
+    def branch_session(self, parent_id):
+        safe_session_id(parent_id)
+        parent_path = session_path(parent_id)
+        if not parent_path.exists():
+            self.send_json({"error": "parent session not found"}, 404)
+            return
+        parent = read_json(parent_path, {})
+        body = self.read_body_json()
+        child_id = uuid.uuid4().hex[:16]
+        child_title = body.get("title") or f"分支 - {parent.get('title', '未命名')}"
+        child_depth = (parent.get("_branchDepth") or 0) + 1
+        child = {
+            "id": child_id,
+            "title": child_title,
+            "messages": list(parent.get("messages", [])),
+            "createdAt": now_iso(),
+            "updatedAt": now_iso(),
+            "stats": {},
+            "_parentId": parent_id,
+            "_branchDepth": child_depth,
+        }
+        write_json(session_path(child_id), child)
+        # Update parent's _branches
+        branches = parent.get("_branches") or []
+        branches.append(child_id)
+        parent["_branches"] = branches
+        write_json(parent_path, parent)
+        child["_filePath"] = str(session_path(child_id).resolve())
+        self.send_json(child, 201)
 
     def save_memory(self):
         body = self.read_body_json()

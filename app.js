@@ -99,7 +99,8 @@ const state = {
 
   isStreaming: false,
   streamingSessionId: null,
-  _subAgentDepth: 0,  // >0 means a sub-agent is running; skip UI/persistence mutations
+  _subAgentDepth: 0,
+  branchPanelOpen: false,     // Whether branch panel is visible  // >0 means a sub-agent is running; skip UI/persistence mutations
 
   // Per-session message cache for session switching
   _sessionMsgs: {},
@@ -239,6 +240,8 @@ function renderSessionMessages(sessionId) {
     const s = state.sessions.find(function(s){ return s.id === sessionId; });
     if (s) s._seenCount = getSessionMessages(sessionId).length;
     renderMessages();
+  // Refresh branch panel if open
+  if (state.branchPanelOpen && typeof renderBranchTree === "function") renderBranchTree();
   } else {
     markSessionUnread(sessionId);
     renderSessions();
@@ -401,6 +404,10 @@ const els = {
   sidebarPeekZone: document.getElementById("sidebarPeekZone"),
 
   togglePreview: document.getElementById("togglePreview"),
+  toggleBranches: document.getElementById("toggleBranches"),
+  branchPanel: document.getElementById("branchPanel"),
+  branchTree: document.getElementById("branchTree"),
+  createBranchBtn: document.getElementById("createBranchBtn"),
 
   themeToggle: document.getElementById("themeToggle"),
 
@@ -1847,7 +1854,10 @@ const I18N = {
     pasteKeysHint: "复制后粘贴到上方 API Key 输入框", unnamed: "未命名",
     syncing: "同步中...", noPlatformKeys: "平台中没有可用的 API Key", alreadyAdded: "已添加",
     accountLoggedIn: "已登录中转站", logout: "退出登录",
-    autoUpdated: "已自动更新", collapse: "收起", writing: "写入中...", collapseDiff: "收起 Diff", expandDiff: "展开全部 {count} 行",
+    autoUpdated: "已自动更新", collapse: "收起", writing: "写入中...",
+    branches: "分支", newBranch: "+ 新建分支", branchesBtn: "分支",
+    noBranches: "暂无分支，点击上方按钮基于当前消息创建", createSessionFirst: "请先创建会话",
+    stopBeforeBranch: "请先停止当前输出再创建分支", branchFailed: "创建分支失败", collapseDiff: "收起 Diff", expandDiff: "展开全部 {count} 行",
     editingMemory: "编辑中：{name}", accountUserId: "User ID", extractMemory: "提取 Memory",
     yesterday: "昨天", backgroundPending: "等待后台处理", backgroundRunning: "后台处理中", thoughtProcess: "思考过程",
     toolPresetDefault: "默认", toolPresetOff: "关闭", toolPresetFull: "完整",
@@ -2032,7 +2042,11 @@ const I18N = {
     pasteKeysHint: "Copy and paste them into the API Key field above", unnamed: "Unnamed",
     syncing: "Syncing...", noPlatformKeys: "No API Keys found on the platform", alreadyAdded: "Added",
     accountLoggedIn: "Signed in to the gateway", logout: "Sign out",
-    autoUpdated: "Auto-updated", collapse: "Collapse", writing: "Writing...", collapseDiff: "Collapse Diff", expandDiff: "Expand all {count} lines",
+    autoUpdated: "Auto-updated", collapse: "Collapse", writing: "Writing...",
+    branches: "Branches", newBranch: "+ New Branch", branchesBtn: "Branches",
+    noBranches: "No branches yet. Click the button above to create one from the current messages.",
+    createSessionFirst: "Create a session first", stopBeforeBranch: "Stop the current output before branching",
+    branchFailed: "Branch creation failed", collapseDiff: "Collapse Diff", expandDiff: "Expand all {count} lines",
     editingMemory: "Editing: {name}", accountUserId: "User ID", extractMemory: "Extract Memory",
     yesterday: "Yesterday", backgroundPending: "Waiting in background", backgroundRunning: "Processing in background", thoughtProcess: "Thinking",
     toolPresetDefault: "Default", toolPresetOff: "Off", toolPresetFull: "Full",

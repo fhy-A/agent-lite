@@ -1857,7 +1857,7 @@ const I18N = {
     autoUpdated: "已自动更新", collapse: "收起", writing: "写入中...",
     branches: "分支", newBranch: "+ 新建分支", branchesBtn: "分支",
     noBranches: "暂无分支，点击上方按钮基于当前消息创建", createSessionFirst: "请先创建会话",
-    stopBeforeBranch: "请先停止当前输出再创建分支", branchFailed: "创建分支失败", collapseDiff: "收起 Diff", expandDiff: "展开全部 {count} 行",
+    stopBeforeBranch: "请先停止当前输出再创建分支", branchFailed: "创建分支失败", branchCreated: "分支已创建", collapseDiff: "收起 Diff", expandDiff: "展开全部 {count} 行",
     editingMemory: "编辑中：{name}", accountUserId: "User ID", extractMemory: "提取 Memory",
     yesterday: "昨天", backgroundPending: "等待后台处理", backgroundRunning: "后台处理中", thoughtProcess: "思考过程",
     toolPresetDefault: "默认", toolPresetOff: "关闭", toolPresetFull: "完整",
@@ -2046,7 +2046,7 @@ const I18N = {
     branches: "Branches", newBranch: "+ New Branch", branchesBtn: "Branches",
     noBranches: "No branches yet. Click the button above to create one from the current messages.",
     createSessionFirst: "Create a session first", stopBeforeBranch: "Stop the current output before branching",
-    branchFailed: "Branch creation failed", collapseDiff: "Collapse Diff", expandDiff: "Expand all {count} lines",
+    branchFailed: "Branch creation failed", branchCreated: "Branch created", collapseDiff: "Collapse Diff", expandDiff: "Expand all {count} lines",
     editingMemory: "Editing: {name}", accountUserId: "User ID", extractMemory: "Extract Memory",
     yesterday: "Yesterday", backgroundPending: "Waiting in background", backgroundRunning: "Processing in background", thoughtProcess: "Thinking",
     toolPresetDefault: "Default", toolPresetOff: "Off", toolPresetFull: "Full",
@@ -3148,12 +3148,103 @@ function closeTopPanels() {
 
   els.toolLogPanel.classList.remove("open");
 
+  els.branchPanel.classList.remove("open");
+
   els.usageStrip.classList.remove("active");
 
   els.toolLogToggle.classList.remove("active");
 
+  els.toggleBranches.classList.remove("active");
+
+  state.branchPanelOpen = false;
+
 }
 
+
+
+function buildBranchTree(focusSessionId) {
+  if (!focusSessionId || !state.sessions.length) return null;
+  var sessions = state.sessions;
+  var current = null;
+  for (var i = 0; i < sessions.length; i++) {
+    if (sessions[i].id === focusSessionId) { current = sessions[i]; break; }
+  }
+  if (!current) return null;
+  while (current._parentId) {
+    var parent = null;
+    for (var j = 0; j < sessions.length; j++) {
+      if (sessions[j].id === current._parentId) { parent = sessions[j]; break; }
+    }
+    if (!parent) break;
+    current = parent;
+  }
+  var rootId = current.id;
+
+  function makeNode(session) {
+    var children = [];
+    var branchIds = session._branches || [];
+    for (var k = 0; k < branchIds.length; k++) {
+      var child = null;
+      for (var m = 0; m < sessions.length; m++) {
+        if (sessions[m].id === branchIds[k]) { child = sessions[m]; break; }
+      }
+      if (child) children.push(makeNode(child));
+    }
+    return {
+      id: session.id, title: session.title || t("untitledSession"),
+      depth: session._branchDepth || 0, messageCount: session.messageCount || 0,
+      isActive: session.id === state.sessionId, children: children,
+    };
+  }
+  for (var n = 0; n < sessions.length; n++) {
+    if (sessions[n].id === rootId) return makeNode(sessions[n]);
+  }
+  return null;
+}
+
+function renderBranchTree() {
+  if (!els.branchTree) return;
+  var root = buildBranchTree(state.sessionId);
+  if (!root) {
+    els.branchTree.innerHTML = '<div class="branch-empty">' + t("noBranches") + '</div>';
+    return;
+  }
+  function renderNode(node, depth) {
+    var indent = depth * 20;
+    var activeClass = node.isActive ? " active" : "";
+    var html = '<div class="branch-node' + activeClass + '" data-session-id="' + escapeHtml(node.id) + '" style="padding-left:' + (indent + 12) + 'px">';
+    html += '<span class="branch-title">' + escapeHtml(node.title) + '</span>';
+    html += '<span class="branch-msg-count">' + node.messageCount + '</span></div>';
+    for (var i = 0; i < node.children.length; i++) { html += renderNode(node.children[i], depth + 1); }
+    return html;
+  }
+  els.branchTree.innerHTML = renderNode(root, 0);
+  var nodes = els.branchTree.querySelectorAll(".branch-node");
+  for (var i = 0; i < nodes.length; i++) {
+    nodes[i].addEventListener("click", function () {
+      var sid = this.getAttribute("data-session-id");
+      if (sid && sid !== state.sessionId) switchToBranch(sid);
+    });
+  }
+}
+
+async function createBranch(title) {
+  if (!state.sessionId) { showToast(t("createSessionFirst"), "warning"); return; }
+  if (state.isStreaming) { showToast(t("stopBeforeBranch"), "warning"); return; }
+  try {
+    var resp = await apiJson("/api/sessions/" + encodeURIComponent(state.sessionId) + "/branch", {
+      method: "POST", body: JSON.stringify({ title: title || "" }),
+    });
+    await refreshSessions();
+    await loadSession(resp.id);
+    if (state.branchPanelOpen) renderBranchTree();
+  } catch (err) { showToast(t("branchFailed") + ": " + (err.message || err), "error"); }
+}
+
+function switchToBranch(sessionId) {
+  loadSession(sessionId);
+  if (state.branchPanelOpen) renderBranchTree();
+}
 
 
 async function apiJson(url, options = {}) {
@@ -10925,6 +11016,28 @@ window.addEventListener("resize", () => {
   applySidebarSessionHeight(state.sidebarSessionHeight);
 
   applySidebarWidth(state.sidebarWidth);
+
+});
+
+els.toggleBranches.addEventListener("click", () => {
+
+  const open = !els.branchPanel.classList.contains("open");
+
+  closeTopPanels();
+
+  els.branchPanel.classList.toggle("open", open);
+
+  els.toggleBranches.classList.toggle("active", open);
+
+  state.branchPanelOpen = open;
+
+  if (open) renderBranchTree();
+
+});
+
+els.createBranchBtn.addEventListener("click", () => {
+
+  createBranch();
 
 });
 

@@ -11511,7 +11511,7 @@ function renderSkillsInSettings(container) {
 
       <div class="skills-sidebar-inner">
 
-        <button id="settingsSkillAddBtn" style="display:flex;align-items:center;gap:4px;width:100%;padding:6px 12px;border:1px solid #dfe3e8;border-radius:6px;background:#fff;color:#286fe8;font-size:12px;font-weight:600;cursor:pointer;flex-shrink:0;margin-bottom:4px" data-i18n="newSkill">+ 新建 Skill</button>
+        <button id="settingsSkillAddBtn" style="display:flex;align-items:center;gap:4px;width:100%;padding:5px 12px;border:0;border-left:3px solid transparent;border-radius:0;background:transparent;color:var(--accent);font-size:13px;font-weight:600;cursor:pointer;flex-shrink:0" data-i18n="newSkill">+ 新建 Skill</button>
 
         <div id="settingsSkillsSidebar" style="flex:1;overflow:auto;padding:4px 0"></div>
 

@@ -885,6 +885,7 @@ def session_summary(session):
         "_parentId": session.get("_parentId"),
         "_branchDepth": session.get("_branchDepth", 0),
         "_branches": session.get("_branches", []),
+        "_branchMsgCount": session.get("_branchMsgCount"),
     }
 
 

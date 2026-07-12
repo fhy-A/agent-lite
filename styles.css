@@ -4010,14 +4010,1097 @@ body.theme-dark .syn-fn { color: #61afef; }
 .account-id { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
 /* ── File tree extension colors ── */
-.ext-js .file-name, .ext-ts .file-name { color: #c5862b; }
-.ext-py .file-name { color: #3572A5; }
-.ext-css .file-name { color: #563d7c; }
-.ext-html .file-name { color: #e34c26; }
-.ext-json .file-name { color: #6e6e6e; }
-.ext-md .file-name { color: #083fa1; }
-.ext-svg .file-name, .ext-png .file-name, .ext-jpg .file-name, .ext-gif .file-name, .ext-ico .file-name, .ext-jpeg .file-name, .ext-webp .file-name { color: #cb4081; }
-.ext-pdf .file-name { color: #b30b00; }
-.ext-yml .file-name, .ext-yaml .file-name { color: #8f4a8b; }
-.ext-ps1 .file-name { color: #0174c2; }
-.ext-bat .file-name, .ext-sh .file-name, .ext-cmd .file-name { color: #4a8c2a; }
+.ext-js .file-name, .ext-ts .file-name { color: var(--file-js); }
+.ext-py .file-name { color: var(--file-py); }
+.ext-css .file-name { color: var(--file-css); }
+.ext-html .file-name { color: var(--file-html); }
+.ext-json .file-name { color: var(--file-json); }
+.ext-md .file-name { color: var(--file-md); }
+.ext-svg .file-name, .ext-png .file-name, .ext-jpg .file-name, .ext-gif .file-name, .ext-ico .file-name, .ext-jpeg .file-name, .ext-webp .file-name { color: var(--file-image); }
+.ext-pdf .file-name { color: var(--file-pdf); }
+.ext-yml .file-name, .ext-yaml .file-name { color: var(--file-yaml); }
+.ext-ps1 .file-name { color: var(--file-powershell); }
+.ext-bat .file-name, .ext-sh .file-name, .ext-cmd .file-name { color: var(--file-shell); }
+
+/* --------------------------------------------------------------------------
+   Workspace visual refinement
+   Presentation-only overrides: keep existing markup and interaction logic.
+   -------------------------------------------------------------------------- */
+
+:root {
+  --bg: #f8f9fb;
+  --panel: #f1f3f6;
+  --panel-2: #e8ebef;
+  --panel-3: #ffffff;
+  --line: #dfe3e8;
+  --line-strong: #c5cbd4;
+  --text: #1d232c;
+  --muted: #6f7988;
+  --faint: #98a1af;
+  --accent: #286fe8;
+  --accent-bg: #e9f1ff;
+  --code-bg: #f1f3f6;
+  --shadow: 0 14px 34px rgba(31, 40, 55, .10);
+  --file-js: #8a5a00;
+  --file-py: #0969da;
+  --file-css: #6639ba;
+  --file-html: #cf222e;
+  --file-json: #735c0f;
+  --file-md: #0550ae;
+  --file-image: #bf3989;
+  --file-pdf: #a40e26;
+  --file-yaml: #8250df;
+  --file-powershell: #006f9c;
+  --file-shell: #1a7f37;
+  --sidebar-scroll-thumb: rgba(92, 105, 124, .20);
+  --sidebar-scroll-thumb-hover: rgba(72, 86, 108, .38);
+}
+
+body.theme-dark {
+  --bg: #181818;
+  --panel: #202020;
+  --panel-2: #292929;
+  --panel-3: #1c1c1c;
+  --line: #343434;
+  --line-strong: #4b4b4b;
+  --text: #f2f3f5;
+  --muted: #a1a8b3;
+  --faint: #747d89;
+  --accent: #74a9ff;
+  --file-js: #e5c07b;
+  --file-py: #61afef;
+  --file-css: #c678dd;
+  --file-html: #ff7b72;
+  --file-json: #d7ba7d;
+  --file-md: #79b8ff;
+  --file-image: #e77dbb;
+  --file-pdf: #ff9492;
+  --file-yaml: #d2a8ff;
+  --file-powershell: #56d4dd;
+  --file-shell: #7ee787;
+  --sidebar-scroll-thumb: rgba(230, 235, 244, .14);
+  --sidebar-scroll-thumb-hover: rgba(230, 235, 244, .30);
+  --accent-bg: #1c3556;
+  --code-bg: #111111;
+  --shadow: 0 18px 42px rgba(0, 0, 0, .28);
+}
+
+body {
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+  letter-spacing: 0;
+}
+
+button:focus-visible,
+.session-main:focus-visible,
+.file-item:focus-visible,
+.tool-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: -2px;
+}
+
+/* Sidebar: a quieter navigation rail with clearer grouping. */
+.pi-sidebar {
+  background: var(--panel);
+  box-shadow: 1px 0 0 color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.side-header {
+  min-height: 52px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--panel-3) 42%, var(--panel));
+}
+
+.side-title {
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.new-session-bar {
+  min-height: 36px;
+  margin: 10px 10px 7px;
+  padding: 0 12px;
+  justify-content: center;
+  border-style: solid;
+  border-color: var(--line);
+  border-radius: 7px;
+  background: var(--panel-3);
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 1px 2px rgba(20, 28, 40, .04);
+}
+
+.new-session-bar:hover {
+  border-color: color-mix(in srgb, var(--accent) 54%, var(--line));
+  background: var(--accent-bg);
+}
+
+.cwd-inline {
+  padding: 3px 10px 7px;
+}
+
+.cwd-name {
+  height: 32px;
+  border-color: transparent;
+  background: color-mix(in srgb, var(--panel-2) 72%, transparent);
+}
+
+.cwd-name:hover {
+  border-color: var(--line-strong);
+}
+
+.sessions {
+  padding: 3px 6px 8px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sidebar-scroll-thumb) transparent;
+}
+
+.session-row,
+.session-item {
+  margin: 1px 0;
+  border-left: 0;
+  border-radius: 6px;
+  overflow: visible;
+}
+
+.session-row::before,
+.session-item::before {
+  content: "";
+  position: absolute;
+  inset: 5px auto 5px 0;
+  width: 2px;
+  border-radius: 2px;
+  background: transparent;
+}
+
+.session-item {
+  position: relative;
+  padding: 9px 10px;
+}
+
+.session-row.active,
+.session-item.active {
+  border-left-color: transparent;
+  background: color-mix(in srgb, var(--accent) 11%, var(--panel));
+}
+
+.session-row.active::before,
+.session-item.active::before {
+  background: var(--accent);
+}
+
+.session-row:hover:not(.active),
+.session-item:hover:not(.active) {
+  background: color-mix(in srgb, var(--panel-2) 74%, transparent);
+}
+
+.session-main {
+  min-height: 34px;
+  padding: 7px 10px;
+  border-radius: 6px;
+}
+
+.session-main span,
+.session-item span {
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.session-more-wrap {
+  right: 5px;
+}
+
+.session-more-btn {
+  background: color-mix(in srgb, var(--panel-3) 86%, transparent);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.sidebar-splitter {
+  flex-basis: 5px;
+  border-top-color: transparent;
+  border-bottom-color: transparent;
+  background: var(--line);
+}
+
+.section-head {
+  height: 38px;
+  padding: 0 10px;
+  border-top: 0;
+  background: color-mix(in srgb, var(--panel-3) 34%, var(--panel));
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+
+.path-line {
+  margin-bottom: 5px;
+  padding: 7px 9px;
+  background: color-mix(in srgb, var(--panel-2) 76%, transparent);
+}
+
+.file-search-row {
+  margin-top: 7px;
+}
+
+.file-search,
+.file-sort-btn {
+  height: 28px;
+  border-radius: 6px;
+}
+
+.file-tree {
+  padding: 2px 7px 10px;
+}
+
+.file-item-row {
+  min-height: 27px;
+  border-radius: 5px;
+}
+
+.file-item {
+  height: 27px;
+  padding: 0 7px;
+}
+
+.side-footer {
+  padding: 8px 10px 10px;
+  background: color-mix(in srgb, var(--panel-3) 32%, var(--panel));
+}
+
+.side-footer button,
+.side-footer .settings-dropdown > button {
+  height: 32px;
+  border-color: transparent;
+  background: transparent;
+}
+
+/* Top toolbar: stronger anchoring without turning it into a decorative header. */
+.pi-stage {
+  grid-template-rows: 44px minmax(0, 1fr);
+  background: var(--bg);
+}
+
+.toolbar {
+  min-height: 44px;
+  padding-right: 4px;
+  background: color-mix(in srgb, var(--panel-3) 92%, var(--bg));
+  box-shadow: 0 1px 0 var(--line);
+}
+
+.tool-btn {
+  position: relative;
+  height: 44px;
+  min-width: 42px;
+  padding: 0 12px;
+  border-right: 0;
+  border-radius: 0;
+  font-size: 12.5px;
+}
+
+.tool-btn:hover {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.tool-btn.active {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.tool-btn.active::after,
+.usage-strip.active::after {
+  content: "";
+  position: absolute;
+  right: 9px;
+  bottom: 0;
+  left: 9px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+}
+
+.text-tool {
+  min-width: 78px;
+}
+
+.usage-strip {
+  position: relative;
+  height: 44px;
+  gap: 12px;
+  padding: 0 13px;
+  border-left-color: var(--line);
+}
+
+.top-panel {
+  top: 52px;
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+/* Main canvas and conversation typography. */
+.workbench {
+  background: var(--bg);
+}
+
+.chat-pane {
+  background: var(--bg);
+}
+
+.messages {
+  inset: 0 0 120px 0;
+  padding: 32px clamp(20px, 4vw, 52px) 42px;
+}
+
+.chat-pane.empty-chat {
+  gap: 16px;
+  padding-bottom: 3vh;
+}
+
+.chat-pane.empty-chat .messages {
+  padding: 0 24px;
+}
+
+.welcome-screen {
+  gap: 9px;
+}
+
+.welcome-header {
+  gap: 10px;
+}
+
+.welcome-brand {
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.welcome-title {
+  font-size: 30px;
+  line-height: 1.15;
+  font-weight: 760;
+}
+
+.welcome-desc {
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.msg {
+  width: min(760px, 90%);
+  margin-bottom: 26px;
+}
+
+.msg.tool-msg {
+  width: min(860px, 92%);
+}
+
+.role {
+  margin-bottom: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.bubble {
+  font-size: 14.5px;
+  line-height: 1.72;
+}
+
+.bubble h1,
+.bubble h2,
+.bubble h3 {
+  margin-top: 1.1em;
+  margin-bottom: .55em;
+  line-height: 1.35;
+}
+
+.bubble pre,
+.code-block {
+  border-color: color-mix(in srgb, var(--line-strong) 70%, var(--line));
+}
+
+.user .bubble {
+  max-width: min(660px, 92%);
+  padding: 11px 15px;
+  border: 1px solid color-mix(in srgb, var(--accent) 15%, transparent);
+  border-radius: 8px;
+}
+
+.thought,
+.assistant-fold,
+.tool-card,
+.process-group {
+  border-radius: 7px;
+}
+
+/* Composer: wider code-friendly input with a consistent control row. */
+.composer,
+.chat-pane.empty-chat .composer {
+  width: min(760px, 90%);
+  max-width: min(760px, 90%);
+  border-color: color-mix(in srgb, var(--line-strong) 76%, var(--line));
+  border-radius: 12px;
+  background: var(--panel-3);
+  box-shadow: 0 10px 28px rgba(31, 40, 55, .10);
+}
+
+body.theme-dark .composer,
+body.theme-dark .chat-pane.empty-chat .composer {
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .30);
+}
+
+.composer {
+  bottom: 22px;
+}
+
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 11%, transparent),
+              0 12px 30px rgba(31, 40, 55, .10);
+}
+
+.composer textarea {
+  min-height: 64px;
+  padding: 15px 17px 13px;
+  font-size: 14.5px;
+  line-height: 1.65;
+}
+
+.composer-bar {
+  min-height: 42px;
+  height: 42px;
+  padding: 0 11px;
+  gap: 4px;
+  background: color-mix(in srgb, var(--panel) 42%, transparent);
+  border-radius: 0 0 11px 11px;
+}
+
+.bar-left,
+.bar-right {
+  gap: 4px;
+}
+
+.bar-btn,
+.bar-icon-btn,
+.model-pill-btn {
+  height: 30px;
+  border-radius: 6px;
+}
+
+.bar-btn,
+.bar-icon-btn {
+  color: var(--muted);
+}
+
+.model-pill-btn {
+  max-width: 280px;
+  padding: 0 9px;
+  background: transparent;
+}
+
+.model-pill-btn:hover,
+.bar-btn:hover,
+.bar-icon-btn:hover {
+  background: var(--panel-2);
+}
+
+.model-pill-dropdown,
+.slash-suggest {
+  padding: 5px;
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.model-pill-option,
+.slash-item {
+  border-radius: 5px;
+}
+
+.send-btn {
+  width: 30px;
+  height: 30px;
+}
+
+.send-btn.ready {
+  background: var(--accent);
+  color: #fff;
+}
+
+.send-btn.ready:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, #000);
+  color: #fff;
+}
+
+/* Preview pane reads as a real secondary workspace, not a floating afterthought. */
+.preview-pane {
+  background: var(--panel-3);
+  box-shadow: -1px 0 0 var(--line);
+}
+
+.preview-head {
+  min-height: 48px;
+  border-bottom-color: var(--line);
+  background: color-mix(in srgb, var(--panel-3) 88%, var(--panel));
+}
+
+/* Sidebar scrollbars stay discoverable without competing with content. */
+.sessions,
+.file-tree {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sidebar-scroll-thumb) transparent;
+}
+
+.sessions::-webkit-scrollbar,
+.file-tree::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.sessions::-webkit-scrollbar-thumb,
+.file-tree::-webkit-scrollbar-thumb {
+  min-height: 28px;
+  border-radius: 999px;
+  background: var(--sidebar-scroll-thumb);
+}
+
+.sessions::-webkit-scrollbar-thumb:hover,
+.file-tree::-webkit-scrollbar-thumb:hover {
+  background: var(--sidebar-scroll-thumb-hover);
+}
+
+.sessions::-webkit-scrollbar-track,
+.file-tree::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.model-pill-dropdown::-webkit-scrollbar {
+  width: 6px;
+}
+
+.model-pill-dropdown::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 34%, transparent);
+}
+
+@media (max-width: 900px) {
+  .messages {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .msg,
+  .msg.tool-msg,
+  .composer,
+  .chat-pane.empty-chat .composer {
+    width: min(94%, 760px);
+    max-width: min(94%, 760px);
+  }
+
+  .welcome-desc {
+    max-width: 440px;
+    white-space: normal;
+  }
+
+  .usage-strip {
+    gap: 8px;
+    padding: 0 9px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Welcome, conversation, diff and Markdown presentation refinement
+   -------------------------------------------------------------------------- */
+
+.chat-pane {
+  --conversation-content-width: min(760px, 90%);
+}
+
+.messages {
+  scrollbar-gutter: stable both-edges;
+}
+
+.msg,
+.msg.tool-msg,
+.composer,
+.chat-pane.empty-chat .composer {
+  width: var(--conversation-content-width);
+  max-width: none;
+}
+
+/* Empty state: a compact local-workspace identity rather than a plain heading. */
+.welcome-screen {
+  position: relative;
+  gap: 14px;
+  min-width: min(560px, 86vw);
+  padding: 26px 22px 20px;
+  isolation: isolate;
+}
+
+.welcome-screen::before,
+.welcome-screen::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.welcome-screen::before {
+  inset: 0 10% auto;
+  height: 1px;
+  background: color-mix(in srgb, var(--line-strong) 60%, transparent);
+}
+
+.welcome-screen::after {
+  top: -5px;
+  left: 50%;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--bg);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+  transform: translateX(-50%);
+}
+
+.welcome-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+}
+
+.welcome-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 12%, transparent);
+}
+
+.welcome-header {
+  flex-direction: column;
+  gap: 13px;
+}
+
+.welcome-mark {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 68px;
+  height: 54px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--line));
+  border-radius: 8px;
+  background: var(--panel-3);
+  box-shadow: 7px 7px 0 color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.welcome-mark::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: color-mix(in srgb, var(--accent) 32%, var(--line));
+}
+
+.welcome-mark span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.welcome-mark span:last-child {
+  background: var(--accent);
+  color: #fff;
+}
+
+.welcome-brand {
+  gap: 6px;
+}
+
+.welcome-title {
+  font-size: 34px;
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+
+.welcome-desc {
+  max-width: 460px;
+  color: color-mix(in srgb, var(--muted) 90%, var(--text));
+  font-size: 14px;
+  white-space: normal;
+}
+
+.welcome-rail {
+  display: grid;
+  grid-template-columns: 56px 5px 56px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.welcome-rail span {
+  height: 1px;
+  background: var(--line-strong);
+}
+
+.welcome-rail i {
+  width: 5px;
+  height: 5px;
+  border: 1px solid var(--accent);
+  transform: rotate(45deg);
+}
+
+/* Preserve model-authored thought paragraphs and make their boundaries readable. */
+.thinking-process {
+  margin-bottom: 28px;
+}
+
+.thinking-process .role {
+  margin-bottom: 9px;
+  color: color-mix(in srgb, var(--muted) 86%, var(--text));
+  font-size: 11px;
+  letter-spacing: .3px;
+}
+
+.thinking-process .bubble {
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.72;
+}
+
+.thinking-process .bubble p {
+  margin: 0 0 .9em;
+}
+
+.thinking-process .bubble p:last-child {
+  margin-bottom: 0;
+}
+
+/* Diff suggestions: one structural surface instead of nested outlined cards. */
+.edit-suggestion {
+  margin-top: 8px;
+  margin-bottom: 30px;
+}
+
+.tool-edit-card {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.tool-edit-head {
+  min-height: 40px;
+  padding: 0 2px 9px;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+}
+
+.tool-edit-target {
+  font-size: 13.5px;
+}
+
+.tool-edit-title {
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.tool-edit-status {
+  border-radius: 5px;
+}
+
+.tool-edit-diff {
+  padding: 10px 0 0;
+}
+
+.tool-edit-diff .diff-block {
+  border: 1px solid color-mix(in srgb, var(--line-strong) 74%, var(--line));
+  border-radius: 8px;
+  background: var(--code-bg);
+  box-shadow: 0 1px 2px rgba(20, 28, 40, .04);
+}
+
+.tool-edit-card > .apply-edit-bar {
+  justify-content: flex-start;
+  gap: 8px;
+  margin-top: 9px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.diff-line {
+  min-height: 22px;
+  padding-right: 10px;
+  padding-left: 5px;
+  line-height: 1.7;
+}
+
+.diff-add,
+.diff-remove,
+.diff-context {
+  border-left-width: 2px;
+}
+
+.diff-header {
+  background: color-mix(in srgb, var(--accent) 7%, var(--code-bg));
+}
+
+.diff-hunk {
+  border-top: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  background: color-mix(in srgb, var(--panel) 60%, var(--code-bg));
+}
+
+.diff-num {
+  border-right-color: color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+/* Rich Markdown typography for assistant output and previewed prose. */
+.bubble,
+.assistant-inline-text,
+.tool-edit-markdown {
+  color: var(--text);
+  font-size: 14.5px;
+  line-height: 1.76;
+}
+
+.bubble > :first-child,
+.assistant-inline-text > :first-child,
+.tool-edit-markdown > :first-child {
+  margin-top: 0;
+}
+
+.bubble > :last-child,
+.assistant-inline-text > :last-child,
+.tool-edit-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.bubble p,
+.assistant-inline-text p,
+.tool-edit-markdown p {
+  margin: 0 0 .78em;
+}
+
+.bubble h1,
+.bubble h2,
+.bubble h3,
+.bubble h4,
+.assistant-inline-text h1,
+.assistant-inline-text h2,
+.assistant-inline-text h3,
+.tool-edit-markdown h1,
+.tool-edit-markdown h2,
+.tool-edit-markdown h3 {
+  color: var(--text);
+  line-height: 1.32;
+  letter-spacing: 0;
+}
+
+.bubble h1,
+.assistant-inline-text h1,
+.tool-edit-markdown h1 {
+  margin: 1.4em 0 .65em;
+  font-size: 1.48em;
+  font-weight: 760;
+}
+
+.bubble h2,
+.assistant-inline-text h2,
+.tool-edit-markdown h2 {
+  margin: 1.3em 0 .58em;
+  font-size: 1.25em;
+  font-weight: 740;
+}
+
+.bubble h3,
+.assistant-inline-text h3,
+.tool-edit-markdown h3 {
+  margin: 1.15em 0 .48em;
+  font-size: 1.08em;
+  font-weight: 720;
+}
+
+.bubble strong,
+.assistant-inline-text strong,
+.tool-edit-markdown strong {
+  color: color-mix(in srgb, var(--text) 94%, var(--accent));
+  font-weight: 720;
+}
+
+.bubble a,
+.assistant-inline-text a,
+.tool-edit-markdown a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 34%, transparent);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+.bubble a:hover,
+.assistant-inline-text a:hover,
+.tool-edit-markdown a:hover {
+  text-decoration-color: var(--accent);
+}
+
+.bubble ul,
+.bubble ol,
+.assistant-inline-text ul,
+.assistant-inline-text ol,
+.tool-edit-markdown ul,
+.tool-edit-markdown ol {
+  margin: .55em 0 .9em;
+  padding-left: 1.55em;
+}
+
+.bubble li,
+.assistant-inline-text li,
+.tool-edit-markdown li {
+  margin: .28em 0;
+  padding-left: .12em;
+}
+
+.bubble li::marker,
+.assistant-inline-text li::marker,
+.tool-edit-markdown li::marker {
+  color: color-mix(in srgb, var(--accent) 74%, var(--muted));
+}
+
+.bubble blockquote,
+.assistant-inline-text blockquote,
+.tool-edit-markdown blockquote {
+  margin: 1em 0;
+  padding: 9px 13px;
+  border-left: 3px solid color-mix(in srgb, var(--accent) 64%, var(--line));
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
+  color: var(--muted);
+}
+
+.bubble hr,
+.assistant-inline-text hr,
+.tool-edit-markdown hr,
+.md-hr {
+  height: 1px;
+  margin: 1.35em 0;
+  border: 0;
+  background: var(--line);
+}
+
+.bubble code:not(.line-code),
+.assistant-inline-text code:not(.line-code),
+.tool-edit-markdown code:not(.line-code) {
+  padding: .14em .38em;
+  border: 1px solid color-mix(in srgb, var(--line) 76%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--code-bg) 86%, var(--panel));
+  color: color-mix(in srgb, var(--text) 86%, var(--accent));
+  font-size: .9em;
+}
+
+.bubble .code-block,
+.assistant-inline-text .code-block,
+.tool-edit-markdown .code-block {
+  margin: 1em 0 1.15em;
+  border-color: color-mix(in srgb, var(--line-strong) 72%, var(--line));
+  border-radius: 8px;
+}
+
+.bubble .code-head,
+.assistant-inline-text .code-head,
+.tool-edit-markdown .code-head {
+  min-height: 34px;
+  padding: 0 11px;
+  background: color-mix(in srgb, var(--panel) 64%, var(--code-bg));
+}
+
+.bubble table,
+.assistant-inline-text table,
+.tool-inline-body table,
+.tool-edit-markdown table,
+.md-table {
+  margin: 1em 0 1.2em;
+  border-color: var(--line);
+  font-size: 13px;
+}
+
+.bubble th,
+.assistant-inline-text th,
+.tool-inline-body th,
+.tool-edit-markdown th,
+.md-table th {
+  padding: 9px 12px;
+  border-bottom-width: 1px;
+  background: color-mix(in srgb, var(--panel-2) 76%, var(--panel-3));
+  font-size: 12px;
+  letter-spacing: .15px;
+}
+
+.bubble td,
+.assistant-inline-text td,
+.tool-inline-body td,
+.tool-edit-markdown td,
+.md-table td {
+  padding: 8px 12px;
+  line-height: 1.55;
+}
+
+.bubble tbody tr:nth-child(even),
+.assistant-inline-text tbody tr:nth-child(even),
+.tool-inline-body tbody tr:nth-child(even),
+.tool-edit-markdown tbody tr:nth-child(even),
+.md-table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--panel) 52%, transparent);
+}
+
+.msg-inline-img {
+  margin: 14px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(20, 28, 40, .08);
+}
+
+@media (max-width: 900px) {
+  .chat-pane {
+    --conversation-content-width: min(94%, 760px);
+  }
+
+  .welcome-screen {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .welcome-title {
+    font-size: 30px;
+  }
+}

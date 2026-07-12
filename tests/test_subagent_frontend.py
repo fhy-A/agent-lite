@@ -27,6 +27,14 @@ class TestSubAgentFrontend(unittest.TestCase):
         )
         self.assertIn('禁止再次委派子 Agent', self.source)
 
+    def test_main_agent_receives_explicit_delegation_rules(self):
+        self.assertIn('const SUBAGENT_DELEGATION_RULES = `## 子 Agent 委派规则', self.source)
+        self.assertIn('if (allowedToolNames.has("task"))', self.source)
+        self.assertIn('parts.push(SUBAGENT_DELEGATION_RULES);', self.source)
+        self.assertIn('存在两个及以上互不依赖的工作流', self.source)
+        self.assertIn('不要把整个原始任务不加拆分地转交给单个子 Agent', self.source)
+        self.assertIn('仅在并行收益明显高于额外成本时委派', self.source)
+
     def test_task_batches_use_bounded_concurrency(self):
         self.assertIn('async function mapWithConcurrency', self.source)
         self.assertIn('normalizedCalls.every((tool) => tool.action === "task")', self.source)
@@ -40,7 +48,7 @@ class TestSubAgentFrontend(unittest.TestCase):
         self.assertIn('async function executeToolCall(tool, options = {})', self.source)
         self.assertIn('requestAuthorization(tool, options.context || null)', self.source)
         self.assertIn('context: parentCtx || null', self.source)
-        self.assertIn('label: `子 Agent · ${ctx.authorizationLabel || "子任务"}`', self.source)
+        self.assertIn('label: `${t("subAgentLabel")} · ${ctx.authorizationLabel || t("subTaskLabel")}`', self.source)
 
     def test_plan_mode_can_delegate_without_mutation_tools(self):
         self.assertIn('plan: new Set(["list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "task", "use_skill"])', self.source)
@@ -57,7 +65,7 @@ class TestSubAgentFrontend(unittest.TestCase):
         self.assertIn('authorizationDecision: authorizationDecisions.has(callIndex)', self.source)
 
     def test_authorization_panel_groups_main_and_subagents(self):
-        self.assertIn('return { key: "main", label: "主 Agent" };', self.source)
+        self.assertIn('return { key: "main", label: t("mainAgentLabel") };', self.source)
         self.assertIn('function groupAuthorizations(items)', self.source)
         self.assertIn('data-auth-group=', self.source)
         self.assertIn('data-auth-action="approve"', self.source)

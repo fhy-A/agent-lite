@@ -1,3 +1,72 @@
+const UI_ICON_PATHS = {
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  up: '<path d="m5 11 7-7 7 7M12 4v16"/>',
+  folder: '<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h5l2 2H20a1 1 0 0 1 1 1v10.5A1.5 1.5 0 0 1 19.5 20h-15A1.5 1.5 0 0 1 3 18.5v-12Z"/>',
+  folderOpen: '<path d="M3 7V6.5A1.5 1.5 0 0 1 4.5 5h5l2 2H20a1 1 0 0 1 1 1v2"/><path d="M3.5 10h17a1 1 0 0 1 .94 1.34l-2.7 7.5A1.75 1.75 0 0 1 17.1 20H5.2a1.75 1.75 0 0 1-1.68-1.27L2.54 12A1.75 1.75 0 0 1 3.5 10Z"/>',
+  folderPlus: '<path d="M3 7V6.5A1.5 1.5 0 0 1 4.5 5h5l2 2H20a1 1 0 0 1 1 1v10.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5V7Z"/><path d="M12 11v6M9 14h6"/>',
+  refresh: '<path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M18.7 9A7 7 0 0 0 6.2 6.2L4 9M5.3 15A7 7 0 0 0 17.8 17.8L20 15"/>',
+  home: '<path d="m3 11 9-7 9 7"/><path d="M5.5 9.5V20h13V9.5M9.5 20v-6h5v6"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.13.37.35.7.65.96.3.26.68.4 1.08.4H21v4h-.1A1.7 1.7 0 0 0 19.4 15Z"/>',
+  panel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 4v16"/>',
+  download: '<path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/>',
+  tools: '<path d="M14.7 6.3a4 4 0 0 0-5-5L12 3.6 9.6 6 7.3 3.7a4 4 0 0 0 5 5L5 16l-1 4 4-1 7.3-7.3a4 4 0 0 0 5-5L18 9l-2.4-2.4 2.3-2.3a4 4 0 0 0-3.2 2Z"/>',
+  preview: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h7"/><path d="M14 3v5h5"/><circle cx="16" cy="15" r="3"/><path d="m18.2 17.2 2.3 2.3"/>',
+  paperclip: '<path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.5-9.5a4 4 0 0 1 5.7 5.7l-9.5 9.5a2 2 0 1 1-2.8-2.8l8.8-8.8"/>',
+  copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  close: '<path d="M18 6 6 18M6 6l12 12"/>',
+  more: '<circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/>',
+  pin: '<path d="m12 17-5 4 1.5-7L4 9.5l6.2-.7L12 3l1.8 5.8 6.2.7-4.5 4.5L17 21l-5-4Z"/>',
+  pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4L16.5 3.5Z"/>',
+  trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6M14 11v6"/>',
+  check: '<path d="m5 12 4 4L19 6"/>',
+  eye: '<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff: '<path d="m3 3 18 18M10.6 6.2A11.8 11.8 0 0 1 12 6c6.5 0 10 6 10 6a17.2 17.2 0 0 1-2.1 2.8M6.6 6.6C3.6 8.5 2 12 2 12s3.5 6 10 6a10 10 0 0 0 4-.8M9.9 9.9a3 3 0 0 0 4.2 4.2"/>'
+};
+
+function uiIcon(name, size = 16, className = "") {
+  const paths = UI_ICON_PATHS[name] || UI_ICON_PATHS.plus;
+  return `<svg class="ui-icon${className ? ` ${className}` : ""}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+}
+
+function upgradeStaticIcons() {
+  const iconOnly = (id, name) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = uiIcon(name);
+    if (!el.getAttribute("aria-label")) el.setAttribute("aria-label", el.title || name);
+  };
+  const iconLabel = (id, name, trimPrefix = false) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    let label = (el.innerText || el.textContent || "").trim();
+    if (trimPrefix) label = label.replace(/^[+＋]\s*/, "");
+    el.innerHTML = `${uiIcon(name)}<span>${escapeHtml(label)}</span>`;
+  };
+
+  iconLabel("newChat", "plus", true);
+  iconOnly("goUp", "up");
+  iconOnly("newFolderBtn", "folderPlus");
+  iconOnly("refreshFiles", "refresh");
+  iconLabel("settingsMenuBtn", "settings");
+  iconOnly("toggleSidebar", "panel");
+  iconLabel("exportChat", "download");
+  iconLabel("toolLogToggle", "tools");
+  iconLabel("togglePreview", "preview");
+  iconOnly("attachFile", "plus");
+  iconOnly("refreshPreview", "refresh");
+  iconOnly("copyPreview", "copy");
+  iconLabel("refreshModelsBtn", "refresh");
+
+  const cwdIcon = document.querySelector(".cwd-icon");
+  if (cwdIcon) cwdIcon.innerHTML = uiIcon("folderOpen");
+  const explorerArrow = document.querySelector(".explorer-arrow");
+  if (explorerArrow) explorerArrow.innerHTML = '<svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 10 4 4 4-4"/></svg>';
+  document.querySelectorAll(".icon-btn, .onboarding-close").forEach((el) => {
+    el.innerHTML = uiIcon("close");
+    if (!el.getAttribute("aria-label")) el.setAttribute("aria-label", el.title || "关闭");
+  });
+}
+
 const state = {
 
   sessionId: null,
@@ -973,6 +1042,28 @@ const nativeTools = [
 
 
 
+const SUBAGENT_DELEGATION_RULES = `## 子 Agent 委派规则
+
+以下情况优先调用 task：
+- 存在两个及以上互不依赖的工作流，可以并行完成
+- 需要分别检查多个大型文件、模块或测试领域
+- 需要将实现、测试、独立复核分开执行
+- 单个方向预计需要多轮搜索、读取或验证
+
+以下情况不要调用 task：
+- 简单问答或一次工具调用即可完成
+- 后续步骤依赖前一步结果，无法真正并行
+- 多个任务会同时修改同一文件或相邻代码
+- 委派和汇总成本明显高于主 Agent 直接处理
+
+委派要求：
+- 主 Agent 负责拆分任务、明确边界、整合结果和最终回答
+- 每个子任务必须写清目标、范围、限制、预期输出和验证方式
+- 优先按模块或文件所有权拆分，避免并发编辑冲突
+- 可以并行时，在同一轮一次调用多个 task；当前最多同时执行 3 个
+- 不要把整个原始任务不加拆分地转交给单个子 Agent
+- 子 Agent 会建立独立上下文并增加 token 成本；仅在并行收益明显高于额外成本时委派`;
+
 const defaultSystemPrompt = `
 ## 何时使用工具
 
@@ -1098,7 +1189,7 @@ function parseKeyLines(raw) {
     result.push({ name, key, enabled: existing ? existing.enabled !== false : true });
 
   }
-  if (duplicates.length > 0) showToast(`已忽略 ${duplicates.length} 个重复的 Key`, "warning");
+  if (duplicates.length > 0) showToast(t("ignoredDuplicateKeys", { count: duplicates.length }), "warning");
   if (result.length === 0) return [{ name: "", key: "", enabled: true }];
   return result;
 
@@ -1549,7 +1640,7 @@ const LANG = {
 
   zh: {
 
-    settings: "设置", models: "模型", memory: "记忆", skills: "技能", system: "系统提示词", theme: "主题", language: "语言", update: "更新", account: "账户",
+    settings: "设置", models: "模型", memory: "记忆", skills: "Skills", system: "System Prompt", theme: "主题", language: "语言", update: "更新", account: "账户",
 
     baseUrl: "Base URL", apiKeys: "API Keys", refreshModels: "刷新", availableModels: "可用模型",
 
@@ -1603,7 +1694,7 @@ const I18N = {
     allowLabel: "允许", rejectLabel: "拒绝",
     copyBtn: "copy", copiedBtn: "copied", failedBtn: "failed",
     appliedLabel: "已应用", rejectedLabel: "已拒绝",
-    sessionInfo: "会话信息", messages: "消息", tokens: "Tokens",
+    sessionInfo: "会话信息", messages: "消息", tokens: "Token",
     sessionName: "名称", created: "创建", active: "活跃", file: "文件",
     totalLabel: "合计", userLabel: "用户", agentLabel: "Agent",
     inputLabel: "输入", outputLabel: "输出", cacheLabel: "缓存", contextLabel: "上下文",
@@ -1645,10 +1736,10 @@ const I18N = {
     selectModel: "选择模型", reasoningEffort: "推理强度", pauseBtn: "暂停", sendTip: "发送消息", emptyTip: "请输入内容",
     addKey: "+ 添加 Key", edit: "编辑", editing: "编辑中", models: "模型", baseUrl: "Base URL", apiKeys: "API Keys",
     temperature: "Temperature", maxTokens: "Max Tokens", memory: "记忆", newMemory: "新建记忆",
-    cancel: "取消", save: "保存", skills: "技能", system: "系统提示词", deleteSkill: "删除 Skill",
+    cancel: "取消", save: "保存", skills: "Skills", system: "System Prompt", deleteSkill: "删除 Skill",
     keyBulkPlaceholder: "每行一个 Key，格式：名称 Key值（空格或者冒号分隔）。可以粘贴多个；空行自动跳过。",
     selectSkillHint: "选择 Skill 查看详情",
-    statInputTitle: "输入 token", statOutputTitle: "输出 token", statCacheTitle: "缓存 token",
+    statInputTitle: "输入 Token", statOutputTitle: "输出 Token", statCacheTitle: "缓存 Token",
     statContextTitle: "上下文占比 · 超95%自动压缩", viewSessionInfo: "查看 Session Info",
     usageStripTitle: "上下文 {current} / {limit} tokens",
     deleteConfirmMsg: "确定删除「{name}」？",
@@ -1661,7 +1752,7 @@ const I18N = {
     light: "浅色", dark: "深色", followSystem: "跟随系统",
     newFolder: "新建文件夹", refreshFiles: "刷新文件",
     availableModels: "可用模型", refreshModels: "刷新模型",
-    systemPromptHint: "这里作为 Agent 的系统提示词", resetDefault: "恢复默认",
+    systemPromptHint: "这里作为 Agent 的 System Prompt", resetDefault: "恢复默认",
     language: "语言", theme: "主题", settings: "设置",
     dragSort: "拖拽排序", keyNamePlaceholder: "名称（可选）",
     collapseExpand: "点击收起/展开", fileAtTitle: "引用到输入框",
@@ -1722,7 +1813,59 @@ const I18N = {
     oboStep4Item1: "只能读取和搜索，不能修改",
     oboStep4Item2: "修改操作需要你确认（推荐新手使用）",
     oboStep4Item3: "所有操作自动执行（谨慎使用）",
-    oboStep4Tip: "Agent 改代码会先生成 diff 让你审查，确认后才写入。修改前自动备份到 data/file-backups/",
+    oboStep4Tip: "Agent 改代码会先生成 Diff 供你审查，确认后才写入。修改前自动备份到 data/file-backups/",
+    appTitle: "Agent Lite",
+    apiKeysMultiline: "API Key（一行一个，支持多个）", rememberCredentials: "本机记住 API Key 和 Base URL",
+    create: "创建", createInCurrentDir: "在当前目录下创建", folderNamePlaceholder: "文件夹名称",
+    confirmCompact: "确认压缩", confirmDeleteTitle: "确认删除", confirmDeleteAction: "确认删除",
+    systemPromptDesc: "这里会作为每次对话的 System Prompt，决定 Agent 的工作边界与编程风格。",
+    modePromptPreview: "Mode Prompt 预览", newSkillTitle: "新建 Skill",
+    skillNameLabel: "名称（英文标识）", skillNamePlaceholder: "例如 code-review",
+    skillDescPlaceholder: "用于自动匹配的简短描述", skillKeywordsLabel: "关键词（逗号分隔）",
+    skillKeywordsPlaceholder: "例如 review, 审查, bug", skillToolsLabel: "工具（逗号分隔）",
+    skillToolsPlaceholder: "例如 read_file, search_files", skillBodyLabel: "正文（Markdown）",
+    skillBodyPlaceholder: "Skill 的具体规范、流程和输出格式...",
+    confirmApplyTitle: "确认应用修改", confirmApplyDesc: "Agent 已生成修改方案。确认后会写入下面这个项目文件，并自动保留备份。",
+    confirmApplyNote: "建议先快速检查 Diff 内容；不确定时可以取消，文件不会被改动。",
+    fileSortTip: "左键切换升序降序，右键切换排序规则", sortDefault: "默认", sortType: "类型", sortTime: "时间",
+    ignoredDuplicateKeys: "已忽略 {count} 个重复的 API Key", nameConflict: "名称“{name}”已存在，请使用其他名称",
+    projectContextLabel: "项目上下文", projectContextScoped: "仅当前项目生效，切换项目目录后自动更换",
+    longTermMemory: "长期记忆", memoryContextCount: "{count} 条 · 跨会话和项目保留，通过 Memory 面板管理",
+    explicitSkillTitle: "仅支持显式调用 /{name}", copy: "复制", copied: "已复制", copyFailed: "复制失败",
+    openInPreview: "在预览区打开", unnamedFile: "未命名文件", editProposal: "编辑建议", fileWriteProposal: "文件写入建议",
+    proposalOnly: "仅方案", waitingApproval: "等待批准", pendingConfirmation: "待确认",
+    modelRunning: "模型执行中", unreadMessage: "有新消息", more: "更多", sessionNameAria: "会话名称",
+    chooseFileFailed: "选择文件失败", openDefaultApp: "用默认程序打开", copyPath: "复制路径",
+    revealInFolder: "在文件夹中显示", openExplorer: "用文件资源管理器打开", openTerminal: "在此打开终端",
+    openFailed: "打开失败", pathCopied: "路径已复制", noMatchingFiles: "无匹配文件", emptyDirectory: "该目录为空",
+    writeFailed: "写入失败", compactFailed: "压缩失败", readMemoryFailed: "读取 Memory 失败",
+    notEnoughToExtract: "没有足够的对话内容可提取 Memory", loginFirst: "请先登录",
+    platformAccount: "平台账户", loggedOut: "已退出登录", notLoggedIn: "未登录中转站", loginPlatform: "登录平台账号",
+    loggedInAs: "已登录：{name}", loginExpired: "登录已过期，请重新登录", syncFailed: "同步失败：{message}",
+    syncGatewayKeys: "同步中转站 API Key", syncKeysTitle: "同步中转站 API Key", keyCount: "共 {count} 个 API Key",
+    newKeyCount: "{count} 个未添加", copyAll: "复制全部", allKeysAdded: "所有 API Key 已添加",
+    pasteKeysHint: "复制后粘贴到上方 API Key 输入框", unnamed: "未命名",
+    syncing: "同步中...", noPlatformKeys: "平台中没有可用的 API Key", alreadyAdded: "已添加",
+    accountLoggedIn: "已登录中转站", logout: "退出登录",
+    autoUpdated: "已自动更新", collapse: "收起", writing: "写入中...", collapseDiff: "收起 Diff", expandDiff: "展开全部 {count} 行",
+    editingMemory: "编辑中：{name}", accountUserId: "User ID", extractMemory: "提取 Memory",
+    yesterday: "昨天", backgroundPending: "等待后台处理", backgroundRunning: "后台处理中", thoughtProcess: "思考过程",
+    toolPresetDefault: "默认", toolPresetOff: "关闭", toolPresetFull: "完整",
+    roundLimitTitle: "工具调用轮次已达到上限", roundLimitDesc: "任务可能还没完成，可以让 Agent 继续处理后续步骤。", continueTask: "继续处理",
+    loadFailed: "加载失败", imageReadFailed: "无法读取图片文件", binaryFile: "二进制文件",
+    previewUnsupported: "无法预览图片、数据库、压缩包或可执行文件", emptyFile: "空文件", noTextContent: "暂无文本内容",
+    errorPrefix: "错误", compactIntro: "将把较早的 {compress} 条消息压缩为一段摘要，保留最近的 {keep} 条。",
+    toCompact: "待压缩", keepRecent: "保留", estimatedSavings: "预计节省", messageUnit: "条",
+    compactNote: "压缩后的摘要会保留关键信息（需求、操作、文件修改、未完成事项），但原始对话细节无法恢复。",
+    compactButton: "压缩", noDescription: "无描述", availableSkills: "可用 Skills：", executeSkillTask: "执行 {name} 任务",
+    fileLabel: "文件", searchLabel: "搜索", subAgentLabel: "子 Agent", subTaskLabel: "子任务", mainAgentLabel: "主 Agent",
+    actionEdit: "修改", actionWrite: "写入", actionDelete: "删除", actionRun: "运行", actionGeneric: "操作", commandLabel: "命令",
+    fileOpsCount: "{count} 个文件操作", commandsCount: "{count} 条命令", awaitingApproval: "等待批准 · {count} 项操作",
+    confirmationRequired: "需要确认 · {count} 项操作", itemCount: "{count} 项", view: "查看", rejectAll: "全部拒绝",
+    approveSelected: "批准所选", progressRead: "正在读取 {target}…", progressWrite: "正在写入 {target}…",
+    progressSearch: "正在搜索 {target}…", progressList: "正在列出 {target}…", progressRun: "正在执行 {target}…",
+    progressGlob: "正在匹配 {target}…", progressEdit: "正在编辑 {target}…", progressDelete: "正在删除 {target}…",
+    progressFetch: "正在获取 {target}…", progressTask: "正在执行子任务：{target}…",
   },
   en: {
     toolListFiles: "List Files", toolReadFile: "Read File", toolSearchFiles: "Search Files",
@@ -1856,14 +1999,67 @@ const I18N = {
     oboStep4Item2: "Edits require your confirmation (recommended)",
     oboStep4Item3: "All operations run automatically (use with caution)",
     oboStep4Tip: "Agent generates a diff for review before writing. All changes are backed up to data/file-backups/",
+    appTitle: "Agent Lite",
+    apiKeysMultiline: "API Keys (one per line)", rememberCredentials: "Remember API Keys and Base URL on this device",
+    create: "Create", createInCurrentDir: "Create in the current directory", folderNamePlaceholder: "Folder name",
+    confirmCompact: "Compact", confirmDeleteTitle: "Confirm Delete", confirmDeleteAction: "Delete",
+    systemPromptDesc: "Used as the System Prompt for every conversation, defining the Agent's boundaries and coding style.",
+    modePromptPreview: "Mode Prompt Preview", newSkillTitle: "New Skill",
+    skillNameLabel: "Name (English identifier)", skillNamePlaceholder: "e.g. code-review",
+    skillDescPlaceholder: "Short description used for automatic matching", skillKeywordsLabel: "Keywords (comma separated)",
+    skillKeywordsPlaceholder: "e.g. review, audit, bug", skillToolsLabel: "Tools (comma separated)",
+    skillToolsPlaceholder: "e.g. read_file, search_files", skillBodyLabel: "Body (Markdown)",
+    skillBodyPlaceholder: "Skill guidelines, workflow, and output format...",
+    confirmApplyTitle: "Confirm Edit", confirmApplyDesc: "The Agent generated an edit proposal. Confirm to write it to the project file and create a backup.",
+    confirmApplyNote: "Review the diff first. Cancel if unsure; the file will remain unchanged.",
+    fileSortTip: "Left-click to reverse order; right-click to change sorting", sortDefault: "Default", sortType: "Type", sortTime: "Time",
+    ignoredDuplicateKeys: "Ignored {count} duplicate API Keys", nameConflict: "Name “{name}” already exists. Choose another name.",
+    projectContextLabel: "Project Context", projectContextScoped: "Applies only to this project and changes with the project directory",
+    longTermMemory: "Long-term Memory", memoryContextCount: "{count} items · retained across sessions and projects; manage in Memory",
+    explicitSkillTitle: "Explicit invocation only: /{name}", copy: "Copy", copied: "Copied", copyFailed: "Copy failed",
+    openInPreview: "Open in preview", unnamedFile: "Untitled file", editProposal: "Edit proposal", fileWriteProposal: "File write proposal",
+    proposalOnly: "Proposal only", waitingApproval: "Awaiting approval", pendingConfirmation: "Confirmation required",
+    modelRunning: "Model running", unreadMessage: "New message", more: "More", sessionNameAria: "Session name",
+    chooseFileFailed: "File selection failed", openDefaultApp: "Open with default app", copyPath: "Copy path",
+    revealInFolder: "Show in folder", openExplorer: "Open in File Explorer", openTerminal: "Open terminal here",
+    openFailed: "Open failed", pathCopied: "Path copied", noMatchingFiles: "No matching files", emptyDirectory: "Directory is empty",
+    writeFailed: "Write failed", compactFailed: "Compaction failed", readMemoryFailed: "Failed to load Memory",
+    notEnoughToExtract: "Not enough conversation content to extract Memory", loginFirst: "Please sign in first",
+    platformAccount: "Platform Account", loggedOut: "Signed out", notLoggedIn: "Not signed in to the gateway", loginPlatform: "Sign in to platform",
+    loggedInAs: "Signed in as {name}", loginExpired: "Session expired. Please sign in again.", syncFailed: "Sync failed: {message}",
+    syncGatewayKeys: "Sync Gateway API Keys", syncKeysTitle: "Sync Gateway API Keys", keyCount: "{count} API Keys",
+    newKeyCount: "{count} not added", copyAll: "Copy all", allKeysAdded: "All API Keys have been added",
+    pasteKeysHint: "Copy and paste them into the API Key field above", unnamed: "Unnamed",
+    syncing: "Syncing...", noPlatformKeys: "No API Keys found on the platform", alreadyAdded: "Added",
+    accountLoggedIn: "Signed in to the gateway", logout: "Sign out",
+    autoUpdated: "Auto-updated", collapse: "Collapse", writing: "Writing...", collapseDiff: "Collapse Diff", expandDiff: "Expand all {count} lines",
+    editingMemory: "Editing: {name}", accountUserId: "User ID", extractMemory: "Extract Memory",
+    yesterday: "Yesterday", backgroundPending: "Waiting in background", backgroundRunning: "Processing in background", thoughtProcess: "Thinking",
+    toolPresetDefault: "Default", toolPresetOff: "Off", toolPresetFull: "Full",
+    roundLimitTitle: "Tool-call round limit reached", roundLimitDesc: "The task may be incomplete. Ask the Agent to continue with the remaining steps.", continueTask: "Continue",
+    loadFailed: "Load failed", imageReadFailed: "Unable to read image", binaryFile: "Binary file",
+    previewUnsupported: "Preview is unavailable for images, databases, archives, and executables", emptyFile: "Empty file", noTextContent: "No text content",
+    errorPrefix: "Error", compactIntro: "Compress {compress} earlier messages into a summary and keep the latest {keep} messages.",
+    toCompact: "To compact", keepRecent: "Keep", estimatedSavings: "Estimated savings", messageUnit: "messages",
+    compactNote: "The summary retains requirements, actions, file changes, and pending work, but original conversation details cannot be restored.",
+    compactButton: "Compact", noDescription: "No description", availableSkills: "Available Skills:", executeSkillTask: "Run {name} task",
+    fileLabel: "File", searchLabel: "Search", subAgentLabel: "Sub-agent", subTaskLabel: "Sub-task", mainAgentLabel: "Main Agent",
+    actionEdit: "Edit", actionWrite: "Write", actionDelete: "Delete", actionRun: "Run", actionGeneric: "Operation", commandLabel: "Command",
+    fileOpsCount: "{count} file operations", commandsCount: "{count} commands", awaitingApproval: "Awaiting approval · {count} operations",
+    confirmationRequired: "Confirmation required · {count} operations", itemCount: "{count} items", view: "View", rejectAll: "Reject all",
+    approveSelected: "Approve selected", progressRead: "Reading {target}…", progressWrite: "Writing {target}…",
+    progressSearch: "Searching {target}…", progressList: "Listing {target}…", progressRun: "Running {target}…",
+    progressGlob: "Matching {target}…", progressEdit: "Editing {target}…", progressDelete: "Deleting {target}…",
+    progressFetch: "Fetching {target}…", progressTask: "Running sub-task: {target}…",
   },
 };
 
-function t(key) {
+function t(key, params = {}) {
 
   const lang = (state.lang || "zh") === "zh" ? "zh" : "en";
 
-  return I18N[lang]?.[key] || LANG[lang]?.[key] || LANG.zh?.[key] || I18N.zh?.[key] || key;
+  const template = I18N[lang]?.[key] || LANG[lang]?.[key] || LANG.zh?.[key] || I18N.zh?.[key] || key;
+  return String(template).replace(/\{(\w+)\}/g, (_, name) => params[name] ?? `{${name}}`);
 
 }
 
@@ -1883,10 +2079,19 @@ function setLang(lang) {
 
   if (!state.sessionId) els.sessionTitle.value = t("sessionTitleDefault");
 
+  if (typeof renderSessions === "function") renderSessions();
+  if (typeof renderMessages === "function") renderMessages();
+  if (typeof renderToolLog === "function") renderToolLog();
+  if (typeof updateProjectContextIndicator === "function") updateProjectContextIndicator();
+  if (typeof updateMemoryContextIndicator === "function") updateMemoryContextIndicator();
+  if (typeof updateSendButtonState === "function") updateSendButtonState();
+
 }
 
 
 function applyI18n() {
+  document.documentElement.lang = state.lang === "en" ? "en" : "zh-CN";
+  document.title = t("appTitle");
   const _managed = new Set(["modelPillLabel", "thinkingPillLabel", "permPillLabel", "sessionTitle"]);
   document.querySelectorAll("[data-i18n]").forEach(el => {
     if (_managed.has(el.id)) return;
@@ -1920,6 +2125,8 @@ function applyI18n() {
   if (w) w.textContent = t("welcome");
   const ta = document.getElementById("prompt");
   if (ta) ta.placeholder = t("inputPlaceholder");
+  const sortLabel = document.getElementById("fileSortLabel");
+  if (sortLabel) sortLabel.textContent = t({ default: "sortDefault", type: "sortType", time: "sortTime" }[state._fileSortMode || "default"] || "sortDefault");
 }
 
 
@@ -2192,6 +2399,10 @@ function getSystemPrompt(options = {}) {
   const timeStr = now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
   const parts = [SYSTEM_SECURITY_LAYER, customPrompt, `当前时间：${dateStr} ${timeStr}（北京时间）`, `项目根目录：${els.projectRoot?.value || "未设置"}`, `提示：项目目录外的文件（如 Desktop、Documents）也可以直接尝试读取，系统会自动处理路径权限。`, `提示：用户消息中的 @图片路径 可能没有直接附带视觉内容。如果需要查看图片，请用 read_file 读取该路径；系统会自动把工具读取到的图片转换成视觉输入。`, `提示：你可以在回复中用 ![描述](图片路径) 的 Markdown 语法嵌入已有的本地图片文件（如生成的图表、截图等），系统会直接把图片渲染到消息中给用户看到。支持 png/jpg/gif/webp/svg 格式，支持相对路径和绝对路径（如 C:/Users/Admin/Desktop/output/chart.png）。`, `Agent Lite 版本：${state.appVersion || "unknown"}`];
 
+  if (allowedToolNames.has("task")) {
+    parts.push(SUBAGENT_DELEGATION_RULES);
+  }
+
   // Language detection: instruct the model to match the user's language
   if (userLang !== "Chinese") {
     parts.push(`## Response Language\nThe user is writing in ${userLang}. Reply in ${userLang} unless the user explicitly asks for another language.`);
@@ -2279,7 +2490,7 @@ function updateProjectContextIndicator() {
 
   if (state.projectContext?.found) {
 
-    panel.innerHTML = `<span class="ctx-badge ctx-project">📄 项目上下文</span><span class="ctx-hint">${escapeHtml(state.projectContext.name)} · 仅当前项目生效，切换项目目录后自动更换</span>`;
+    panel.innerHTML = `<span class="ctx-badge ctx-project">📄 ${t("projectContextLabel")}</span><span class="ctx-hint">${escapeHtml(state.projectContext.name)} · ${t("projectContextScoped")}</span>`;
 
     panel.style.display = "flex";
 
@@ -2419,7 +2630,7 @@ function renderSkillsList() {
 
           <span>${escapeHtml(s.name)}</span>
 
-          ${explicitOnly ? `<span class="skill-explicit-badge" title="仅支持显式调用 /${escapeHtml(s.name)}">/</span>` : ""}
+          ${explicitOnly ? `<span class="skill-explicit-badge" title="${escapeHtml(t("explicitSkillTitle", { name: s.name }))}">/</span>` : ""}
 
         </div>
 
@@ -2566,7 +2777,7 @@ async function saveSkillEdit() {
 
   const conflict = state.skills.find((s) => s.name === name && s.name !== _editingSkillName);
 
-  if (conflict) { showToast(`名称 "${name}" 已存在，请使用其他名称`, "error"); return; }
+  if (conflict) { showToast(t("nameConflict", { name }), "error"); return; }
 
 
 
@@ -2606,7 +2817,7 @@ async function saveSkillEdit() {
 
   } catch (err) {
 
-    showToast(`保存失败：${err.message}`, "error");
+    showToast(`${t("saveFailed")}：${err.message}`, "error");
 
   }
 
@@ -2682,7 +2893,7 @@ async function deleteSkillConfirm(name, btnId = "skillDeleteBtn") {
 
     } catch (err) {
 
-      showToast(`删除失败：${err.message}`, "error");
+      showToast(`${t("deleteFailed")}：${err.message}`, "error");
 
     }
 
@@ -2847,7 +3058,7 @@ function updateMemoryContextIndicator() {
 
   if (state.memoryContext?.found && count > 0) {
 
-    panel.innerHTML = `<span class="ctx-badge ctx-memory">🧠 长期记忆</span><span class="ctx-hint">${count} 条 · 跨会话/跨项目保留，通过 Memory 面板管理</span>`;
+    panel.innerHTML = `<span class="ctx-badge ctx-memory">🧠 ${t("longTermMemory")}</span><span class="ctx-hint">${t("memoryContextCount", { count })}</span>`;
 
     panel.style.display = "flex";
 
@@ -3620,8 +3831,8 @@ function bindCopyButtons() {
       block.classList.toggle("is-collapsed", !expanded);
       btn.setAttribute("aria-expanded", String(expanded));
       btn.textContent = expanded
-        ? "收起 Diff"
-        : `展开全部 ${block.querySelectorAll(".diff-line").length} 行`;
+        ? t("collapseDiff")
+        : t("expandDiff", { count: block.querySelectorAll(".diff-line").length });
     });
   });
 
@@ -3991,7 +4202,7 @@ function formatMsgTime(isoString) {
   const msgDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const diffDays = Math.round((today - msgDay) / 86400000);
   if (diffDays === 0) return `${hh}:${mm}`;
-  if (diffDays === 1) return `昨天 ${hh}:${mm}`;
+  if (diffDays === 1) return `${t("yesterday")} ${hh}:${mm}`;
   const MM = String(d.getMonth() + 1).padStart(2, "0");
   const DD = String(d.getDate()).padStart(2, "0");
   const sameYear = d.getFullYear() === now.getFullYear();
@@ -4009,24 +4220,24 @@ async function copyMessageText(btn) {
     await navigator.clipboard.writeText(text);
     btn.innerHTML = COPY_DONE;
     btn.classList.add("copied");
-    btn.title = "已复制";
-    btn.setAttribute("aria-label", "已复制");
+    btn.title = t("copied");
+    btn.setAttribute("aria-label", t("copied"));
   } catch (_) {
     btn.classList.add("failed");
-    btn.title = "复制失败";
-    btn.setAttribute("aria-label", "复制失败");
+    btn.title = t("copyFailed");
+    btn.setAttribute("aria-label", t("copyFailed"));
   }
   setTimeout(() => {
     btn.innerHTML = original;
     btn.classList.remove("copied", "failed");
-    btn.title = "复制";
-    btn.setAttribute("aria-label", "复制");
+    btn.title = t("copy");
+    btn.setAttribute("aria-label", t("copy"));
   }, 1500);
 }
 
 function renderCopyBtn(text) {
   if (!text || !text.trim()) return "";
-  return `<button class="msg-copy-btn" type="button" title="复制" aria-label="复制" data-copy-text="${escapeHtml(text)}" onclick="copyMessageText(this)">${COPY_SVG}</button>`;
+  return `<button class="msg-copy-btn" type="button" title="${t("copy")}" aria-label="${t("copy")}" data-copy-text="${escapeHtml(text)}" onclick="copyMessageText(this)">${COPY_SVG}</button>`;
 }
 
 function renderUserProjection(msg, index) {
@@ -4038,9 +4249,9 @@ function renderUserProjection(msg, index) {
   const dispatchId = msg.meta?.backgroundDispatch?.id;
   const dispatchJob = dispatchId ? getBackgroundJob(dispatchId) : null;
   const dispatchStatus = dispatchJob?.status === "pending"
-    ? '<span class="background-dispatch-status pending"><span class="background-dispatch-dot"></span>等待后台处理</span>'
+    ? `<span class="background-dispatch-status pending"><span class="background-dispatch-dot"></span>${t("backgroundPending")}</span>`
     : dispatchJob?.status === "running"
-      ? '<span class="background-dispatch-status running"><span class="background-dispatch-dot"></span>后台处理中</span>'
+      ? `<span class="background-dispatch-status running"><span class="background-dispatch-dot"></span>${t("backgroundRunning")}</span>`
       : "";
   // Each image as separate message, clickable to open full-size overlay
   const imageArticles = images.map((img, i) => {
@@ -4075,13 +4286,14 @@ function showImageOverlay(src) {
 function renderThinkingProjection(items, serial) {
   if (!items.length) return "";
   const text = items
-    .map((item) => (item.text || "").replace(/\s+/g, " ").trim())
+    .map((item) => String(item.text || "").replace(/\r\n?/g, "\n").trim())
     .filter(Boolean)
-    .join(" ");
+    .join("\n\n")
+    .replace(/\n{3,}/g, "\n\n");
   if (!text) return "";
   return `
     <article class="msg assistant thinking-process" data-thinking-block="${serial}">
-      <div class="role">思考过程</div>
+      <div class="role">${t("thoughtProcess")}</div>
       ${renderAssistantContent(text)}
     </article>
   `;
@@ -4113,7 +4325,7 @@ function renderEditSuggestionProjection(msg, index) {
   const body = isDiff ? renderDiff(diffText) : `<div class="tool-edit-markdown">${renderMarkdownLite(content)}</div>`;
   const stats = isDiff ? getDiffStats(diffText) : { additions: 0, removals: 0 };
   const canReject = getPermissionProfile() !== "bypass";
-  const status = applied ? t("appliedLabel") : (rejected ? t("rejectedLabel") : (proposalOnly ? "仅方案" : (queued ? "等待批准" : "待确认")));
+  const status = applied ? t("appliedLabel") : (rejected ? t("rejectedLabel") : (proposalOnly ? t("proposalOnly") : (queued ? t("waitingApproval") : t("pendingConfirmation"))));
   const statusClass = applied ? "is-applied" : (rejected ? "is-rejected" : "is-review");
 
   let actions = "";
@@ -4131,8 +4343,8 @@ function renderEditSuggestionProjection(msg, index) {
       <div class="tool-edit-card">
         <div class="tool-edit-head">
           <div class="tool-edit-heading">
-            ${target ? `<button class="tool-edit-target clickable-path" type="button" data-path="${escapeHtml(target)}" title="在预览区打开">${escapeHtml(target)}</button>` : `<span class="tool-edit-target">未命名文件</span>`}
-            <span class="tool-edit-title">${action === "write_file" ? "文件写入建议" : "编辑建议"}</span>
+            ${target ? `<button class="tool-edit-target clickable-path" type="button" data-path="${escapeHtml(target)}" title="${t("openInPreview")}">${escapeHtml(target)}</button>` : `<span class="tool-edit-target">${t("unnamedFile")}</span>`}
+            <span class="tool-edit-title">${action === "write_file" ? t("fileWriteProposal") : t("editProposal")}</span>
           </div>
           <div class="tool-edit-summary">
             ${isDiff ? `<span class="diff-stat diff-stat-add">+${stats.additions}</span><span class="diff-stat diff-stat-remove">−${stats.removals}</span>` : ""}
@@ -4192,16 +4404,15 @@ function renderMessages() {
 
     els.messages.innerHTML = `
       <div class="welcome-screen">
+        <div class="welcome-kicker"><span class="welcome-status-dot"></span>LOCAL WORKSPACE</div>
         <div class="welcome-header">
-          <svg class="welcome-logo" viewBox="0 0 24 24" width="28" height="28" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 2L2 22H7L12 12L17 22H22L12 2Z" fill="var(--accent)" />
-            <path d="M12 12L7 22H17L12 12Z" fill="var(--accent-bg)" />
-          </svg>
+          <div class="welcome-mark" aria-hidden="true"><span>A</span><span>L</span></div>
           <div class="welcome-brand">
             <h1 class="welcome-title">Agent Lite</h1>
             <p class="welcome-desc" data-i18n="welcomeTagline">开始对话，用自然语言驱动代码。</p>
           </div>
         </div>
+        <div class="welcome-rail" aria-hidden="true"><span></span><i></i><span></span></div>
       </div>
     `;
 
@@ -4495,13 +4706,13 @@ function renderRoundLimitMessage() {
 
         <div>
 
-          <strong>工具调用轮次已达到上限</strong>
+          <strong>${t("roundLimitTitle")}</strong>
 
-          <p>任务可能还没完成，可以让 Agent 继续处理后续步骤。</p>
+          <p>${t("roundLimitDesc")}</p>
 
         </div>
 
-        <button class="continue-agent-btn" type="button">继续处理</button>
+        <button class="continue-agent-btn" type="button">${t("continueTask")}</button>
 
       </div>
 
@@ -4723,7 +4934,7 @@ function renderSessions() {
 
       const isFirstUnpinned = idx === pinnedSessions.length && unpinnedSessions.length > 0;
 
-      const title = session.title || "未命名会话";
+      const title = session.title || t("untitledSession");
 
       const labelHtml = isFirstPinned ? `<div class="session-group-label">${t("pinnedLabel")}</div>`
 
@@ -4737,7 +4948,7 @@ function renderSessions() {
 
           <div class="session-row active" data-session-id="${escapeHtml(session.id)}">
 
-            <input class="session-rename-inline" value="${escapeHtml(title)}" data-session-id="${escapeHtml(session.id)}" data-original="${escapeHtml(title)}" aria-label="会话名称" />
+            <input class="session-rename-inline" value="${escapeHtml(title)}" data-session-id="${escapeHtml(session.id)}" data-original="${escapeHtml(title)}" aria-label="${t("sessionNameAria")}" />
 
           </div>
 
@@ -4757,9 +4968,9 @@ function renderSessions() {
 
             ${session.id !== state.sessionId ? (
               isSessionStreaming(session.id)
-                ? '<span class="session-dot streaming" title="模型执行中"></span>'
+                ? `<span class="session-dot streaming" title="${t("modelRunning")}"></span>`
                 : session._unread
-                  ? '<span class="session-dot unread" title="有新消息"></span>'
+                  ? `<span class="session-dot unread" title="${t("unreadMessage")}"></span>`
                   : ''
             ) : ''}
 
@@ -4767,7 +4978,7 @@ function renderSessions() {
 
           <div class="session-more-wrap">
 
-            <button class="session-more-btn" type="button" title="更多" data-session-id="${escapeHtml(session.id)}">&#8942;</button>
+            <button class="session-more-btn" type="button" title="${t("more")}" data-session-id="${escapeHtml(session.id)}">&#8942;</button>
 
           </div>
 
@@ -4929,7 +5140,7 @@ async function refreshSessions() {
 
 
 
-async function createSession(title = "新会话") {
+async function createSession(title = t("sessionTitleDefault")) {
 
   cacheActiveSessionState();
   const loadSeq = (state._sessionLoadSeq || 0) + 1;
@@ -4959,7 +5170,7 @@ async function createSession(title = "新会话") {
   setSessionStats(session.id, state.stats);
   resetRenderCache();
 
-  els.sessionTitle.value = session.title || "新会话";
+  els.sessionTitle.value = session.title || t("sessionTitleDefault");
 
   localStorage.setItem("agent-lite-last-session", session.id);
 
@@ -5056,7 +5267,7 @@ async function loadSession(sessionId) {
   setSessionStats(session.id, state.stats);
   resetRenderCache();
 
-  els.sessionTitle.value = session.title || "未命名会话";
+  els.sessionTitle.value = session.title || t("untitledSession");
 
   localStorage.setItem("agent-lite-last-session", session.id);
 
@@ -5128,7 +5339,7 @@ async function saveCurrentSession() {
 
     body: JSON.stringify({
 
-      title: els.sessionTitle.value.trim() || "未命名会话",
+      title: els.sessionTitle.value.trim() || t("untitledSession"),
 
       messages: state.messages.map((msg) => ({
 
@@ -5182,7 +5393,7 @@ async function loadConfig() {
 
   els.cwdPathText.textContent = config.projectRoot ? shortPath(config.projectRoot) : "~";
 
-  els.projectRootShort.title = config.projectRoot || "点击管理项目目录";
+  els.projectRootShort.title = config.projectRoot || t("manageProjectDir");
 
   // Set home button label to show actual path
   const homeBtn = document.getElementById("cwdHomeBtn");
@@ -5215,7 +5426,7 @@ async function saveProjectRoot(newPath) {
 
   els.cwdPathText.textContent = config.projectRoot ? shortPath(config.projectRoot) : "~";
 
-  els.projectRootShort.title = config.projectRoot || "点击管理项目目录";
+  els.projectRootShort.title = config.projectRoot || t("manageProjectDir");
 
   addRecentFolder(config.projectRoot);
 
@@ -5316,7 +5527,7 @@ function makeSessionTitle(text = "") {
     .replace(/\s+/g, " ")
     .replace(/[。！？!?]$/, "")
     .trim();
-  if (!cleaned) return "新会话";
+  if (!cleaned) return t("sessionTitleDefault");
   return cleaned.length > 22 ? `${cleaned.slice(0, 22)}...` : cleaned;
 }
 
@@ -5387,7 +5598,7 @@ async function generateSessionTitle(userText) {
 
 function isAutoSessionTitle(title = "") {
 
-  return ["", "新会话", "未命名会话"].includes(title.trim());
+  return ["", "新会话", "未命名会话", "New Session", "Untitled"].includes(title.trim());
 
 }
 
@@ -5680,7 +5891,7 @@ async function resolvePickedFile(file) {
 
   } catch (err) {
 
-    const message = err.message || "选择文件失败";
+    const message = err.message || t("chooseFileFailed");
 
     showToast(message, "error");
 
@@ -5706,30 +5917,30 @@ function showFileContextMenu(x, y, path, type) {
   const fname = (path || "").split("/").pop() || "";
   if (type === "file") {
     menu.innerHTML = `<div class="file-ctx-name">${escapeHtml(fname)}</div>
-      <button data-action="open">用默认程序打开</button>
-      <button data-action="copy-path">复制路径</button>
-      <button data-action="reveal">在文件夹中显示</button>`;
+      <button data-action="open">${t("openDefaultApp")}</button>
+      <button data-action="copy-path">${t("copyPath")}</button>
+      <button data-action="reveal">${t("revealInFolder")}</button>`;
   } else {
     menu.innerHTML = `<div class="file-ctx-name">${escapeHtml(fname)}</div>
-      <button data-action="explore">用资源管理器打开</button>
-      <button data-action="copy-path">复制路径</button>
-      <button data-action="terminal">在此打开终端</button>`;
+      <button data-action="explore">${t("openExplorer")}</button>
+      <button data-action="copy-path">${t("copyPath")}</button>
+      <button data-action="terminal">${t("openTerminal")}</button>`;
   }
   menu.querySelectorAll("button").forEach(btn => {
     btn.addEventListener("click", () => {
       const action = btn.dataset.action;
       if (action === "open") {
-        fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) }).catch(() => showToast("打开失败", "error"));
+        fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) }).catch(() => showToast(t("openFailed"), "error"));
       } else if (action === "copy-path") {
         const root = (els.projectRoot?.value || "").replace(/[\\/]+$/, "");
         const fullPath = root ? `${root}/${path}`.replace(/\\/g, "/") : path;
-        navigator.clipboard.writeText(fullPath).then(() => showToast("已复制路径", "warning")).catch(() => showToast("复制失败", "error"));
+        navigator.clipboard.writeText(fullPath).then(() => showToast(t("pathCopied"), "warning")).catch(() => showToast(t("copyFailed"), "error"));
       } else if (action === "reveal") {
-        fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, reveal: true }) }).catch(() => showToast("打开失败", "error"));
+        fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, reveal: true }) }).catch(() => showToast(t("openFailed"), "error"));
       } else if (action === "explore") {
-        fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) }).catch(() => showToast("打开失败", "error"));
+        fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) }).catch(() => showToast(t("openFailed"), "error"));
       } else if (action === "terminal") {
-        fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, terminal: true }) }).catch(() => showToast("打开失败", "error"));
+        fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, terminal: true }) }).catch(() => showToast(t("openFailed"), "error"));
       }
       menu.remove();
     });
@@ -5772,8 +5983,8 @@ function renderFileTree() {
   const sortMode = state._fileSortMode || "default";
   const asc = state._fileSortAsc !== false;
   if (els.fileSortBtn) {
-    const labels = { default: "默认", type: "类型", time: "时间" };
-    document.getElementById("fileSortLabel").textContent = labels[sortMode] || "类型";
+    const labels = { default: t("sortDefault"), type: t("sortType"), time: t("sortTime") };
+    document.getElementById("fileSortLabel").textContent = labels[sortMode] || t("sortType");
     document.getElementById("fileSortArrow").textContent = asc ? "↑" : "↓";
   }
   const sorted = [...filtered];
@@ -5803,7 +6014,7 @@ function renderFileTree() {
           <button class="file-at-btn" type="button" data-path="${escapeHtml(item.path)}" title="${t("fileAtTitle")}">@</button>
         </div>`;
       }).join("")
-    : `<div class="muted-line" style="padding:8px;">${query ? "无匹配文件" : "该目录为空"}</div>`;
+    : `<div class="muted-line" style="padding:8px;">${query ? t("noMatchingFiles") : t("emptyDirectory")}</div>`;
   els.fileTree.innerHTML = htmlParts;
 
 
@@ -5884,7 +6095,7 @@ async function loadFile(path, mtime) {
 
   els.previewTitle.textContent = data.name || "File";
 
-  els.previewMeta.textContent = `${data.path} 路 ${formatSize(data.size || 0)}${data.truncated ? " 路 truncated" : ""}`;
+  els.previewMeta.textContent = `${data.path} · ${formatSize(data.size || 0)}${data.truncated ? " · truncated" : ""}`;
 
   els.previewLanguage.textContent = language;
 
@@ -5906,7 +6117,7 @@ async function loadFile(path, mtime) {
 
     } catch (_) {
 
-      renderPreviewNotice("加载失败", "无法读取图片文件");
+      renderPreviewNotice(t("loadFailed"), t("imageReadFailed"));
 
     }
 
@@ -5920,7 +6131,7 @@ async function loadFile(path, mtime) {
 
     state.previewContent = "";
 
-    renderPreviewNotice("二进制文件", "无法预览。图片/数据库/压缩包/可执行文件");
+    renderPreviewNotice(t("binaryFile"), t("previewUnsupported"));
 
     els.copyPreview.disabled = true;
 
@@ -5936,7 +6147,7 @@ async function loadFile(path, mtime) {
 
   } else {
 
-    renderPreviewNotice("空文件", "暂无文本内容");
+    renderPreviewNotice(t("emptyFile"), t("noTextContent"));
 
   }
 
@@ -5972,7 +6183,7 @@ function startPreviewAutoRefresh() {
 
           state._previewMtime = data.updatedAt;
 
-          els.previewMeta.textContent = `${data.path} · ${formatSize(data.size || 0)} (已自动更新)`;
+          els.previewMeta.textContent = `${data.path} · ${formatSize(data.size || 0)} (${t("autoUpdated")})`;
 
           renderCodePreview(state.previewContent);
 
@@ -6183,7 +6394,7 @@ async function refreshModels() {
 
 function appendSystemError(message) {
 
-  state.messages.push({ role: "assistant", content: `错误：${message}` });
+  state.messages.push({ role: "assistant", content: `${t("errorPrefix")}：${message}` });
 
   renderMessages();
 
@@ -6674,9 +6885,9 @@ function describeToolForConfirm(tool) {
 
   if (tool.action === "run_command") return `${t("fmtCommand")}：${tool.command || ""}`;
 
-  if (tool.path) return `文件：${tool.path}`;
+  if (tool.path) return `${t("fileLabel")}：${tool.path}`;
 
-  if (tool.query) return `搜索：${tool.query}`;
+  if (tool.query) return `${t("searchLabel")}：${tool.query}`;
 
   return JSON.stringify(tool, null, 2);
 
@@ -6688,24 +6899,24 @@ function authorizationSource(ctx) {
   if (ctx?.isSubAgent) {
     return {
       key: `sub:${ctx.authorizationId || "unknown"}`,
-      label: `子 Agent · ${ctx.authorizationLabel || "子任务"}`,
+      label: `${t("subAgentLabel")} · ${ctx.authorizationLabel || t("subTaskLabel")}`,
     };
   }
-  return { key: "main", label: "主 Agent" };
+  return { key: "main", label: t("mainAgentLabel") };
 }
 
 function authorizationActionLabel(action) {
   const labels = {
-    propose_edit: "修改",
-    write_file: "写入",
-    delete_file: "删除",
-    run_command: "运行",
+    propose_edit: t("actionEdit"),
+    write_file: t("actionWrite"),
+    delete_file: t("actionDelete"),
+    run_command: t("actionRun"),
   };
-  return labels[action] || action || "操作";
+  return labels[action] || action || t("actionGeneric");
 }
 
 function authorizationTarget(tool) {
-  if (tool.action === "run_command") return tool.command || "命令";
+  if (tool.action === "run_command") return tool.command || t("commandLabel");
   return tool.path || tool.query || describeToolForConfirm(tool);
 }
 
@@ -6741,19 +6952,19 @@ function renderAuthorizationPanel() {
   const selectedCount = items.filter((item) => item.selected).length;
   const editCount = items.filter((item) => ["propose_edit", "write_file", "delete_file"].includes(item.tool.action)).length;
   const commandCount = items.filter((item) => item.tool.action === "run_command").length;
-  const summary = [editCount ? `${editCount} 个文件操作` : "", commandCount ? `${commandCount} 条命令` : ""].filter(Boolean).join(" · ");
+  const summary = [editCount ? t("fileOpsCount", { count: editCount }) : "", commandCount ? t("commandsCount", { count: commandCount }) : ""].filter(Boolean).join(" · ");
   const groups = groupAuthorizations(items);
 
   panel.classList.toggle("is-collapsed", state.authorizationPanelCollapsed);
   panel.classList.remove("hidden");
   panel.innerHTML = `
     <button class="authorization-collapsed-bar" type="button" data-auth-action="toggle">
-      <span>等待批准 · ${items.length} 项操作</span><span aria-hidden="true">›</span>
+      <span>${t("awaitingApproval", { count: items.length })}</span><span aria-hidden="true">›</span>
     </button>
     <div class="authorization-card">
       <div class="authorization-head">
-        <div><strong>需要确认 · ${items.length} 项操作</strong><span>${escapeHtml(summary)}</span></div>
-        <button class="authorization-collapse" type="button" data-auth-action="toggle" title="收起">⌄</button>
+        <div><strong>${t("confirmationRequired", { count: items.length })}</strong><span>${escapeHtml(summary)}</span></div>
+        <button class="authorization-collapse" type="button" data-auth-action="toggle" title="${t("collapse")}">⌄</button>
       </div>
       <div class="authorization-groups">
         ${groups.map((group) => {
@@ -6762,7 +6973,7 @@ function renderAuthorizationPanel() {
             <section class="authorization-group">
               <label class="authorization-group-head">
                 <input type="checkbox" data-auth-group="${escapeHtml(group.key)}" ${groupSelected ? "checked" : ""} />
-                <strong>${escapeHtml(group.label)}</strong><span>${group.items.length} 项</span>
+                <strong>${escapeHtml(group.label)}</strong><span>${t("itemCount", { count: group.items.length })}</span>
               </label>
               ${group.items.map((item) => `
                 <div class="authorization-row" data-auth-id="${escapeHtml(item.id)}">
@@ -6770,14 +6981,14 @@ function renderAuthorizationPanel() {
                   <span class="authorization-kind">${escapeHtml(authorizationActionLabel(item.tool.action))}</span>
                   <span class="authorization-target" title="${escapeHtml(authorizationTarget(item.tool))}">${escapeHtml(authorizationTarget(item.tool))}</span>
                   ${item.stats ? `<span class="authorization-stats"><b>+${item.stats.additions || 0}</b><i>−${item.stats.removals || 0}</i></span>` : ""}
-                  ${item.editId ? `<button class="authorization-view" type="button" data-auth-view="${escapeHtml(item.editId)}">查看</button>` : ""}
+                  ${item.editId ? `<button class="authorization-view" type="button" data-auth-view="${escapeHtml(item.editId)}">${t("view")}</button>` : ""}
                 </div>`).join("")}
             </section>`;
         }).join("")}
       </div>
       <div class="authorization-actions">
-        <button type="button" class="authorization-reject-all" data-auth-action="reject-all">全部拒绝</button>
-        <button type="button" class="authorization-approve" data-auth-action="approve" ${selectedCount ? "" : "disabled"}>批准所选${selectedCount ? ` (${selectedCount})` : ""}</button>
+        <button type="button" class="authorization-reject-all" data-auth-action="reject-all">${t("rejectAll")}</button>
+        <button type="button" class="authorization-approve" data-auth-action="approve" ${selectedCount ? "" : "disabled"}>${t("approveSelected")}${selectedCount ? ` (${selectedCount})` : ""}</button>
       </div>
     </div>`;
 }
@@ -6981,16 +7192,16 @@ function toolProgressSummary(toolCalls) {
     const fn = (tc.function && tc.function.name) || "";
     const args = _safeParseJSON((tc.function && tc.function.arguments) || "{}");
     switch (fn) {
-      case "read_file":    return `正在读取 ${args.path || "文件"}…`;
-      case "write_file":   return `正在写入 ${args.path || "文件"}…`;
-      case "search_files": return `正在搜索 ${args.query || ""}…`;
-      case "list_files":   return `正在列出 ${args.path || "目录"}…`;
-      case "run_command":  return `正在执行 ${(args.command || "").slice(0, 40)}…`;
-      case "glob_files":   return `正在匹配 ${args.pattern || ""}…`;
-      case "propose_edit": return `正在编辑 ${args.path || "文件"}…`;
-      case "delete_file":  return `正在删除 ${args.path || "文件"}…`;
-      case "web_fetch":    return `正在获取 ${args.url || "网页"}…`;
-      case "task":         return `正在执行子任务: ${(args.description || args.prompt || "").slice(0, 30)}…`;
+      case "read_file":    return t("progressRead", { target: args.path || t("fileLabel") });
+      case "write_file":   return t("progressWrite", { target: args.path || t("fileLabel") });
+      case "search_files": return t("progressSearch", { target: args.query || "" });
+      case "list_files":   return t("progressList", { target: args.path || t("fmtDir") });
+      case "run_command":  return t("progressRun", { target: (args.command || "").slice(0, 40) });
+      case "glob_files":   return t("progressGlob", { target: args.pattern || "" });
+      case "propose_edit": return t("progressEdit", { target: args.path || t("fileLabel") });
+      case "delete_file":  return t("progressDelete", { target: args.path || t("fileLabel") });
+      case "web_fetch":    return t("progressFetch", { target: args.url || "Web" });
+      case "task":         return t("progressTask", { target: (args.description || args.prompt || "").slice(0, 30) });
       default:             return fn ? `→ ${fn}` : "";
     }
   }).filter(Boolean);
@@ -7986,7 +8197,7 @@ function hideApplyConfirm() {
 
   els.confirmApplyEdit.disabled = false;
 
-  els.confirmApplyEdit.textContent = "确认写入";
+  els.confirmApplyEdit.textContent = t("confirmWrite");
 
 }
 
@@ -8010,7 +8221,7 @@ async function commitPendingEdit() {
 
   els.confirmApplyEdit.disabled = true;
 
-  els.confirmApplyEdit.textContent = "写入中...";
+  els.confirmApplyEdit.textContent = t("writing");
 
 
 
@@ -8038,9 +8249,9 @@ async function commitPendingEdit() {
 
     els.confirmApplyEdit.disabled = false;
 
-    els.confirmApplyEdit.textContent = "确认写入";
+    els.confirmApplyEdit.textContent = t("confirmWrite");
 
-    showToast(`写入失败：${err.message}`, "error");
+    showToast(`${t("writeFailed")}：${err.message}`, "error");
 
     return;
 
@@ -9137,19 +9348,19 @@ async function compactConversation() {
 
   document.getElementById("compactConfirmBody").innerHTML = `
 
-    <p>将把较早的 <strong>${compressCount} 条消息</strong> 压缩为一段摘要，保留最近的 <strong>${keepCount} 条</strong>。</p>
+    <p>${t("compactIntro", { compress: compressCount, keep: keepCount })}</p>
 
     <div class="compact-stats">
 
-      <div><span>待压缩</span><b>${compressCount} 条</b></div>
+      <div><span>${t("toCompact")}</span><b>${compressCount} ${t("messageUnit")}</b></div>
 
-      <div><span>保留</span><b>${keepCount} 条</b></div>
+      <div><span>${t("keepRecent")}</span><b>${keepCount} ${t("messageUnit")}</b></div>
 
-      <div><span>预计节省</span><b>~${formatCompact(estimatedSaved)} tokens</b></div>
+      <div><span>${t("estimatedSavings")}</span><b>~${formatCompact(estimatedSaved)} Token</b></div>
 
     </div>
 
-    <p class="confirm-note">压缩后的摘要会保留关键信息（需求、操作、文件修改、未完成事项），但原始对话细节无法恢复。</p>
+    <p class="confirm-note">${t("compactNote")}</p>
 
   `;
 
@@ -9165,7 +9376,7 @@ async function compactConversation() {
 
     els.compactBtn.disabled = true;
 
-    els.compactBtn.textContent = "压缩中...";
+    els.compactBtn.textContent = t("compacting");
 
     try {
 
@@ -9193,7 +9404,7 @@ async function compactConversation() {
 
 
 
-      if (!result.ok) throw new Error(result.error || "压缩失败");
+      if (!result.ok) throw new Error(result.error || t("compactFailed"));
 
 
 
@@ -9231,13 +9442,13 @@ async function compactConversation() {
 
     } catch (err) {
 
-      showToast(`压缩失败：${err.message}`, "error");
+      showToast(`${t("compactFailed")}：${err.message}`, "error");
 
     } finally {
 
       els.compactBtn.disabled = false;
 
-      els.compactBtn.textContent = "压缩";
+      els.compactBtn.textContent = t("compactButton");
 
     }
 
@@ -9355,11 +9566,11 @@ async function sendMessage(userText) {
 
       const active = state.skills.filter((s) => !state.disabledSkills.has(s.name));
 
-      const list = active.map((s) => `- /${s.name}: ${s.description || "无描述"}`).join("\n");
+      const list = active.map((s) => `- /${s.name}: ${s.description || t("noDescription")}`).join("\n");
 
       ctx.messages.push({ role: "user", content: "/help", _time: new Date().toISOString() });
 
-      ctx.messages.push({ role: "assistant", content: `**可用 Skills：**\n\n${list || "暂无 Skill"}` });
+      ctx.messages.push({ role: "assistant", content: `**${t("availableSkills")}**\n\n${list || t("noSkills")}` });
 
       setSessionMessages(sessionId, ctx.messages);
       renderSessionMessages(sessionId);
@@ -9381,7 +9592,7 @@ async function sendMessage(userText) {
 
       ctx.explicitSkill = skill.name;
 
-      userText = rest || `执行 ${skill.name} 任务`;
+      userText = rest || t("executeSkillTask", { name: skill.name });
 
     }
 
@@ -9747,7 +9958,7 @@ async function renderMemoryList() {
 
     if (memories.length === 0) {
 
-      els.memoryList.innerHTML = `<div class="muted-line" style="padding:12px;">加载失败：${escapeHtml(err.message)}</div>`;
+      els.memoryList.innerHTML = `<div class="muted-line" style="padding:12px;">${t("loadFailed")}：${escapeHtml(err.message)}</div>`;
 
       return;
 
@@ -9799,7 +10010,7 @@ async function renderMemoryList() {
 
   } catch (err) {
 
-    els.memoryList.innerHTML = `<div class="muted-line" style="padding:12px;">加载失败：${escapeHtml(err.message)}</div>`;
+    els.memoryList.innerHTML = `<div class="muted-line" style="padding:12px;">${t("loadFailed")}：${escapeHtml(err.message)}</div>`;
 
   }
 
@@ -9821,7 +10032,7 @@ async function editMemory(name) {
 
   } catch (err) {
 
-    showToast(`读取记忆失败：${err.message}`, "error");
+    showToast(`${t("readMemoryFailed")}：${err.message}`, "error");
 
   }
 
@@ -9843,7 +10054,7 @@ async function deleteMemory(name) {
 
   } catch (err) {
 
-    showToast(`删除失败：${err.message}`, "error");
+    showToast(`${t("deleteFailed")}：${err.message}`, "error");
 
   }
 
@@ -9895,7 +10106,7 @@ async function saveMemorySubmit() {
 
   } catch (err) {
 
-    showToast(`保存失败：${err.message}`, "error");
+    showToast(`${t("saveFailed")}：${err.message}`, "error");
 
   }
 
@@ -10541,16 +10752,6 @@ els.copyPreview.addEventListener("click", async (event) => {
   showIconCopyFeedback(els.copyPreview, ok);
 }, true);
 
-els.copyPreview.addEventListener("click", async () => {
-
-  const ok = await copyText(state.previewContent || "");
-
-  els.copyPreview.textContent = ok ? "已复制" : "复制失败";
-
-  setTimeout(() => { els.copyPreview.textContent = "复制"; }, 1200);
-
-});
-
 els.copySessionPath.addEventListener("click", async () => {
   const ok = await copyText(sessionFilePath());
   els.copySessionPath.textContent = ok ? t("copiedBtn") : t("failedBtn");
@@ -10839,7 +11040,7 @@ function renderModelsPanel(container) {
 
       </div>
 
-      <button id="settingsConnectPlatform" class="key-connect-btn" type="button">同步中转站 API Key</button>
+      <button id="settingsConnectPlatform" class="key-connect-btn" type="button">${t("syncGatewayKeys")}</button>
 
     </label>
 
@@ -10862,7 +11063,7 @@ function renderModelsPanel(container) {
   if (connectBtn) {
     connectBtn.addEventListener("click", () => {
       if (!getPlatformAuth()) {
-        showToast("请先登录", "warning");
+        showToast(t("loginFirst"), "warning");
         return;
       }
       syncKeysFromPlatform();
@@ -10897,7 +11098,7 @@ function renderModelsPanel(container) {
 
     });
 
-    document.getElementById("settingsKeyToggle").textContent = keyVisible ? "隐藏" : "显示";
+    document.getElementById("settingsKeyToggle").textContent = keyVisible ? t("hide") : t("show");
 
   });
 
@@ -10907,7 +11108,7 @@ function renderModelsPanel(container) {
 
     keyList.querySelectorAll(".key-value-input").forEach((inp) => { inp.type = "text"; });
 
-    document.getElementById("settingsKeyToggle").textContent = "隐藏";
+    document.getElementById("settingsKeyToggle").textContent = t("hide");
 
   });
 
@@ -11035,7 +11236,7 @@ async function refreshSettingsMemoryList() {
 
         </div>
 
-      </div>`).join("") : `<div class="muted-line" style="padding:12px">暂无记忆</div>`;
+      </div>`).join("") : `<div class="muted-line" style="padding:12px">${t("noMemory")}</div>`;
 
     list.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", async () => {
 
@@ -11051,7 +11252,7 @@ async function refreshSettingsMemoryList() {
 
       document.getElementById("settingsMemBody").value = mem.body || "";
 
-      document.getElementById("memFormLabel").textContent = `编辑中：${mem.name}`;
+      document.getElementById("memFormLabel").textContent = t("editingMemory", { name: mem.name });
 
       document.getElementById("memCancelBtn").style.visibility = "";
 
@@ -11160,7 +11361,7 @@ function renderSettingsSkillsSidebar() {
 
     </div>`;
 
-  }).join("") : `<div class="muted-line" style="padding:12px;font-size:12px">暂无 Skill</div>`;
+  }).join("") : `<div class="muted-line" style="padding:12px;font-size:12px">${t("noSkills")}</div>`;
 
   sidebar.querySelectorAll(".skill-list-item").forEach((item) => {
 
@@ -11201,7 +11402,7 @@ function showSkillDetailInSettings(skill) {
   if (!skill) {
     const hasSkills = state.skills.length > 0;
     panel.innerHTML = hasSkills
-      ? '<div class="skills-detail-empty">选择 Skill 查看详情</div>'
+      ? `<div class="skills-detail-empty">${t("selectSkillHint")}</div>`
       : `<div class="skills-detail-empty">
         <strong>${t("newSkill")}</strong>
         <span style="margin-top:6px">${t("skillEmptyHint")}</span>
@@ -11320,27 +11521,27 @@ function renderThemePanel(container) {
 function renderAccountPanel(container) {
   const auth = getPlatformAuth();
   if (auth) {
-    container.innerHTML = `<h3 style="margin:0 0 14px">平台账户</h3>
+    container.innerHTML = `<h3 style="margin:0 0 14px">${t("platformAccount")}</h3>
       <div class="account-card">
         <div class="account-avatar">${escapeHtml((auth.username || "U")[0].toUpperCase())}</div>
         <div class="account-info">
           <div class="account-name">${escapeHtml(auth.username || "Unknown")}</div>
-          <div class="account-id">User ID: ${escapeHtml(auth.userId || "")}</div>
+          <div class="account-id">${t("accountUserId")}: ${escapeHtml(auth.userId || "")}</div>
         </div>
       </div>
       <div style="margin-top:16px">
-        <button id="accountLogout" class="mini-btn" type="button">退出登录</button>
+        <button id="accountLogout" class="mini-btn" type="button">${t("logout")}</button>
       </div>`;
     document.getElementById("accountLogout").addEventListener("click", () => {
       clearPlatformAuth();
-      showToast("已退出登录", "warning");
+      showToast(t("loggedOut"), "warning");
       renderAccountPanel(container);
     });
   } else {
-    container.innerHTML = `<h3 style="margin:0 0 14px">平台账户</h3>
+    container.innerHTML = `<h3 style="margin:0 0 14px">${t("platformAccount")}</h3>
       <div class="muted-line" style="padding:16px;text-align:center">
-        <p>未登录中转站</p>
-        <button id="accountLoginNow" class="mini-btn primary" type="button" style="margin-top:8px">登录平台账号</button>
+        <p>${t("notLoggedIn")}</p>
+        <button id="accountLoginNow" class="mini-btn primary" type="button" style="margin-top:8px">${t("loginPlatform")}</button>
       </div>`;
     document.getElementById("accountLoginNow").addEventListener("click", () => {
       const platformUrl = "http://localhost:3001";
@@ -12002,16 +12203,16 @@ async function checkAgentLiteCallback() {
   if (!token || !userId) return;
   history.replaceState(null, "", "/");
   savePlatformAuth({ token, userId, username: decodeURIComponent(username || "") });
-  showToast(`已登录: ${decodeURIComponent(username || "")}`, "warning");
+  showToast(t("loggedInAs", { name: decodeURIComponent(username || "") }), "warning");
   const detail = document.getElementById("settingsDetail");
   if (detail && detail.children.length > 0) renderModelsPanel(detail);
 }
 
 async function syncKeysFromPlatform() {
   const auth = getPlatformAuth();
-  if (!auth) { showToast("Please login to platform first"); return; }
+  if (!auth) { showToast(t("loginFirst")); return; }
   const connectBtn = document.getElementById("settingsConnectPlatform");
-  if (connectBtn) { connectBtn.disabled = true; connectBtn.textContent = "Loading..."; }
+  if (connectBtn) { connectBtn.disabled = true; connectBtn.textContent = t("syncing"); }
   try {
     const resp = await fetch("/api/agent-lite/sync-keys", {
       method: "POST",
@@ -12023,24 +12224,24 @@ async function syncKeysFromPlatform() {
     if (data.error) throw new Error(data.error);
     const tokens = data.tokens || [];
     const fullKeys = data.keys || {};
-    if (tokens.length === 0) { showToast("No API keys found on platform"); return; }
+    if (tokens.length === 0) { showToast(t("noPlatformKeys")); return; }
     showKeySyncModal(tokens, fullKeys);
   } catch (e) {
     console.error("syncKeysFromPlatform:", e);
     const msg = e.message || String(e);
     if (msg.includes("401") || msg.includes("Unauthorized") || msg.includes("502")) {
       clearPlatformAuth();
-      showToast("登录已过期，请重新登录", "error");
+      showToast(t("loginExpired"), "error");
       // Re-open connect page after a short delay
       setTimeout(() => {
         const platformUrl = "http://localhost:3001";
         window.open(`${platformUrl}/agent-lite/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
       }, 1000);
     } else {
-      showToast(`同步失败: ${msg}`, "error");
+      showToast(t("syncFailed", { message: msg }), "error");
     }
   } finally {
-    if (connectBtn) { connectBtn.disabled = false; connectBtn.textContent = "同步中转站 API Key"; }
+    if (connectBtn) { connectBtn.disabled = false; connectBtn.textContent = t("syncGatewayKeys"); }
   }
 }
 
@@ -12049,18 +12250,18 @@ function showKeySyncModal(tokens, fullKeys) {
   if (old) old.remove();
   const existingKeys = new Set(parseKeyLines(els.apiKey.value).map(e => e.key.trim()).filter(Boolean));
   let allText = "", newCount = 0;
-  const rows = tokens.map(t => {
-    const key = fullKeys[String(t.id)] || t.key || "";
+  const rows = tokens.map(tokenEntry => {
+    const key = fullKeys[String(tokenEntry.id)] || tokenEntry.key || "";
     const exists = existingKeys.has(key);
     if (!exists) {
-      const line = `${t.name || "Unnamed"} ${key}`;
+      const line = `${tokenEntry.name || t("unnamed")} ${key}`;
       allText += line + "\n";
       newCount++;
     }
     return `<div class="key-sync-row${exists ? " key-sync-exists" : ""}">
-      <span class="key-sync-name">${escapeHtml(t.name || "Unnamed")}</span>
+      <span class="key-sync-name">${escapeHtml(tokenEntry.name || t("unnamed"))}</span>
       <span class="key-sync-key">${escapeHtml(key.slice(0,12)+"…"+key.slice(-4))}</span>
-      ${exists ? '<span class="key-sync-badge">已添加</span>' : `<button class="mini-btn key-copy-one" data-line="${escapeHtml(`${t.name || "Unnamed"} ${key}`)}" type="button">复制</button>`}
+      ${exists ? `<span class="key-sync-badge">${t("alreadyAdded")}</span>` : `<button class="mini-btn key-copy-one" data-line="${escapeHtml(`${tokenEntry.name || t("unnamed")} ${key}`)}" type="button">${t("copy")}</button>`}
     </div>`;
   }).join("");
 
@@ -12068,11 +12269,11 @@ function showKeySyncModal(tokens, fullKeys) {
   overlay.id = "keySyncOverlay";
   overlay.className = "modal-overlay";
   overlay.innerHTML = `<div class="modal-card" style="width:540px;max-height:70vh;display:flex;flex-direction:column">
-    <header><h3>同步中转站 API Key</h3><button class="icon-btn key-sync-close" type="button">&times;</button></header>
-    <div class="key-sync-summary"><span>共 ${tokens.length} 个密钥${newCount > 0 && newCount < tokens.length ? `，${newCount} 个未添加` : ""}</span>${newCount > 0 ? `<button id="keySyncCopyAll" class="mini-btn primary" type="button">复制全部</button>` : ""}</div>
+    <header><h3>${t("syncKeysTitle")}</h3><button class="icon-btn key-sync-close" type="button">&times;</button></header>
+    <div class="key-sync-summary"><span>${t("keyCount", { count: tokens.length })}${newCount > 0 && newCount < tokens.length ? `，${t("newKeyCount", { count: newCount })}` : ""}</span>${newCount > 0 ? `<button id="keySyncCopyAll" class="mini-btn primary" type="button">${t("copyAll")}</button>` : ""}</div>
     <div class="key-sync-list">${rows}</div>
     <div class="panel-actions" style="margin-top:12px">
-      ${tokens.length > 0 && newCount === 0 ? '<span style="font-size:12px;color:var(--muted)">所有 Key 已添加</span>' : '<span style="font-size:12px;color:var(--muted)">复制后粘贴到上方 Key 输入框</span>'}
+      ${tokens.length > 0 && newCount === 0 ? `<span style="font-size:12px;color:var(--muted)">${t("allKeysAdded")}</span>` : `<span style="font-size:12px;color:var(--muted)">${t("pasteKeysHint")}</span>`}
     </div>
   </div>`;
   document.body.appendChild(overlay);
@@ -12082,12 +12283,12 @@ function showKeySyncModal(tokens, fullKeys) {
   const copyAllBtn = overlay.querySelector("#keySyncCopyAll");
   if (copyAllBtn) {
     copyAllBtn.addEventListener("click", () => {
-      navigator.clipboard.writeText(allText.trim()).then(() => { copyAllBtn.textContent = "已复制"; setTimeout(() => { copyAllBtn.textContent = "复制全部"; }, 1500); }).catch(() => showToast("Copy failed"));
+      navigator.clipboard.writeText(allText.trim()).then(() => { copyAllBtn.textContent = t("copied"); setTimeout(() => { copyAllBtn.textContent = t("copyAll"); }, 1500); }).catch(() => showToast(t("copyFailed")));
     });
   }
   overlay.querySelectorAll(".key-copy-one").forEach(btn => {
     btn.addEventListener("click", () => {
-      navigator.clipboard.writeText(btn.dataset.line).then(() => { btn.textContent = "已复制"; setTimeout(() => { btn.textContent = "复制"; }, 1500); }).catch(() => showToast("Copy failed"));
+      navigator.clipboard.writeText(btn.dataset.line).then(() => { btn.textContent = t("copied"); setTimeout(() => { btn.textContent = t("copy"); }, 1500); }).catch(() => showToast(t("copyFailed")));
     });
   });
 }

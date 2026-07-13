@@ -1725,6 +1725,7 @@ const I18N = {
     memBodyPlaceholder: "记忆内容...",
     saveFailed: "保存失败", deleteFailed: "删除失败",
     enterApiKey: "请先输入 API Key", noModelsFound: "未找到可用模型",
+    imageDroppedHint: "图片已发送，但当前模型不支持图片输入，已自动转为纯文本对话",
     toolLogEmpty: "暂无工具动作", toolLogHint: "工具调用、搜索、读文件、修改确认和命令执行会显示在这里。",
     toolActions: "条工具动作", toolCalls: "次调用", toolResults: "条结果", toolFailures: "条失败",
     compactContext: "压缩上下文", compacting: "压缩中",
@@ -1859,7 +1860,7 @@ const I18N = {
     branches: "分支", newBranch: "+ 新建分支", branchesBtn: "分支",
     branchesBtnTip: "查看和切换当前会话的分支，支持从当前消息创建新的对话分支",
     noBranches: "暂无分支，点击上方按钮基于当前消息创建", createSessionFirst: "请先创建会话",
-    stopBeforeBranch: "请先停止当前输出再创建分支", branchFailed: "创建分支失败", branchCreated: "分支已创建", branchedFromHere: "已从「{title}」创建分支", branchTitleTemplate: "分支 - {title}", collapseDiff: "收起 Diff", expandDiff: "展开全部 {count} 行",
+    stopBeforeBranch: "请先停止当前输出再创建分支", branchFailed: "创建分支失败", branchCreated: "分支已创建", branchedFromHere: "已从「{title}」创建分支", branchTitleTemplate: "分支 - {title}", compactMarker: "上下文已压缩", compactMarkerMessages: "{count} 条消息", compactMarkerSaved: "预计节省 ~{tokens} tokens", compactMarkerWithDetails: "上下文已压缩 · {details}", collapseDiff: "收起 Diff", expandDiff: "展开全部 {count} 行",
     editingMemory: "编辑中：{name}", accountUserId: "User ID", extractMemory: "提取 Memory",
     yesterday: "昨天", backgroundPending: "等待后台处理", backgroundRunning: "后台处理中", thoughtProcess: "思考过程",
     toolPresetDefault: "默认", toolPresetOff: "关闭", toolPresetFull: "完整",
@@ -1915,6 +1916,7 @@ const I18N = {
     memBodyPlaceholder: "Memory content...",
     saveFailed: "Save failed", deleteFailed: "Delete failed",
     enterApiKey: "Please enter API Key first", noModelsFound: "No models found",
+    imageDroppedHint: "Image sent, but the current model does not support image input — automatically switched to text-only.",
     toolLogEmpty: "No tool actions", toolLogHint: "Tool calls, searches, reads, edits, and commands appear here.",
     toolActions: "tool actions", toolCalls: "calls", toolResults: "results", toolFailures: "failed",
     compactContext: "Compact context", compacting: "Compacting",
@@ -2049,7 +2051,7 @@ const I18N = {
     branchesBtnTip: "View and switch between conversation branches, or create a new branch from the current messages",
     noBranches: "No branches yet. Click the button above to create one from the current messages.",
     createSessionFirst: "Create a session first", stopBeforeBranch: "Stop the current output before branching",
-    branchFailed: "Branch creation failed", branchCreated: "Branch created", branchedFromHere: "Branched from \"{title}\"", branchTitleTemplate: "Branch - {title}", collapseDiff: "Collapse Diff", expandDiff: "Expand all {count} lines",
+    branchFailed: "Branch creation failed", branchCreated: "Branch created", branchedFromHere: "Branched from \"{title}\"", branchTitleTemplate: "Branch - {title}", compactMarker: "Context compacted", compactMarkerMessages: "{count} messages", compactMarkerSaved: "about {tokens} tokens saved", compactMarkerWithDetails: "Context compacted · {details}", collapseDiff: "Collapse Diff", expandDiff: "Expand all {count} lines",
     editingMemory: "Editing: {name}", accountUserId: "User ID", extractMemory: "Extract Memory",
     yesterday: "Yesterday", backgroundPending: "Waiting in background", backgroundRunning: "Processing in background", thoughtProcess: "Thinking",
     toolPresetDefault: "Default", toolPresetOff: "Off", toolPresetFull: "Full",
@@ -3482,9 +3484,6 @@ function splitThoughtContent(text = "") {
   const thought = match[1].trim();
   const rest = text.replace(thinkRegex, "").trim();
 
-  // If everything was inside <think> tags with nothing outside, show it all as content
-  if (!rest) return { thought: "", content: thought };
-
   return { thought, content: rest };
 
 }
@@ -4494,25 +4493,124 @@ function renderAssistantResponseInfo(msg) {
 
 function renderFinalAssistantProjection(msg, index) {
   const model = msg._model || msg.meta?._model || getSelectedModel() || "Agent";
+  const thought = String(msg.thought || "").trim();
+  const content = (getMsgText(msg) || "").trim();
   if (msg.streaming) {
     return `
-      <article class="msg assistant" data-msg-index="${index}">
+      <article class="msg assistant is-streaming" data-msg-index="${index}" data-streaming-message="true">
         <div class="role">${escapeHtml(model)} ${renderThinkingBadge(state.sessionId)}</div>
+        <div class="streaming-thought-output${thought ? "" : " is-empty"}" data-stream-part="thought">${thought ? renderMarkdownLite(thought) : ""}</div>
+        <div class="bubble streaming-answer-output${content && !isToolPlanningPlaceholder(content) ? "" : " is-empty"}" data-stream-part="answer">${content && !isToolPlanningPlaceholder(content) ? renderMarkdownLite(content) : ""}</div>
       </article>
     `;
   }
-  const content = (getMsgText(msg) || "").trim();
-  if (!content || isToolPlanningPlaceholder(content)) return "";
+  if ((!content || isToolPlanningPlaceholder(content)) && !thought) return "";
   const responseInfo = renderAssistantResponseInfo(msg);
-  const copyBtn = renderCopyBtn(content);
+  const copyBtn = content && !isToolPlanningPlaceholder(content) ? renderCopyBtn(content) : "";
   const timeStr = formatMsgTime(msg._time);
   return `
     <article class="msg assistant" data-msg-index="${index}">
+      ${thought ? `<div class="completed-thought-output"><div class="role">${t("thoughtProcess")}</div>${renderAssistantContent(thought)}</div>` : ""}
       <div class="role">${escapeHtml(model)}</div>
-      ${renderAssistantContent(content)}
+      ${content && !isToolPlanningPlaceholder(content) ? renderAssistantContent(content) : ""}
       <div class="msg-footer">${responseInfo}<span class="msg-footer-hover">${copyBtn}${timeStr ? `<span class="msg-time">${timeStr}</span>` : ""}</span></div>
     </article>
   `;
+}
+
+function createCompactSummaryMessage(result) {
+  const compressed = Math.max(0, Number(result?.compressed) || 0);
+  const estimatedSaved = Math.max(0, Math.ceil(compressed * 3000 * 0.7));
+  const summary = String(result?.summary || "").trim();
+  return {
+    role: "assistant",
+    content: `上下文压缩摘要（${compressed} 条消息）\n\n${summary}`,
+    meta: {
+      kind: "compact-summary",
+      compressed,
+      estimatedSaved,
+    },
+  };
+}
+
+function getCompactSummaryStats(msg) {
+  const meta = msg?.meta || {};
+  let compressed = Math.max(0, Number(meta.compressed) || 0);
+  let estimatedSaved = Math.max(0, Number(meta.estimatedSaved) || 0);
+  const text = getMsgText(msg) || "";
+  if (!compressed) {
+    const countMatch = text.match(/(?:压缩摘要|自动压缩)[^\d]*(\d+)\s*条/);
+    if (countMatch) compressed = Number(countMatch[1]) || 0;
+  }
+  if (!estimatedSaved) {
+    const savedMatch = text.match(/(?:节省|saved)[^\d~]*~?\s*([\d.]+)\s*([kKmM]?)/i);
+    if (savedMatch) {
+      const base = Number(savedMatch[1]) || 0;
+      const unit = String(savedMatch[2] || "").toLowerCase();
+      estimatedSaved = Math.round(base * (unit === "m" ? 1000000 : unit === "k" ? 1000 : 1));
+    }
+  }
+  return { compressed, estimatedSaved };
+}
+
+function renderCompactSummaryProjection(msg, index) {
+  const { compressed, estimatedSaved } = getCompactSummaryStats(msg);
+  const details = [];
+  if (compressed) details.push(t("compactMarkerMessages", { count: compressed }));
+  if (estimatedSaved) details.push(t("compactMarkerSaved", { tokens: formatCompact(estimatedSaved) }));
+  const label = details.length
+    ? t("compactMarkerWithDetails", { details: details.join(" · ") })
+    : t("compactMarker");
+  return `<article class="msg branch-indicator compact-indicator" data-msg-index="${index}"><div class="branch-indicator-bar"><span class="branch-indicator-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M7 12h10M9 17h6"/><path d="M3 3h18v18H3z"/></svg></span><span>${escapeHtml(label)}</span></div></article>`;
+}
+
+const streamingRenderQueue = new Map();
+let streamingRenderFrame = 0;
+
+function patchStreamingAssistantMessage(sessionId, index) {
+  if (sessionId !== state.sessionId) return;
+  const msg = getSessionMessages(sessionId)?.[index];
+  if (!msg?.streaming) return;
+
+  let article = els.messages.querySelector(`.msg.assistant[data-msg-index="${index}"][data-streaming-message="true"]`);
+  if (!article) {
+    resetRenderCache();
+    renderMessages();
+    article = els.messages.querySelector(`.msg.assistant[data-msg-index="${index}"][data-streaming-message="true"]`);
+  }
+  if (!article) return;
+
+  const thought = String(msg.thought || "").trim();
+  const content = (getMsgText(msg) || "").trim();
+  const visibleContent = content && !isToolPlanningPlaceholder(content) ? content : "";
+  const thoughtNode = article.querySelector('[data-stream-part="thought"]');
+  const answerNode = article.querySelector('[data-stream-part="answer"]');
+
+  if (thoughtNode) {
+    const nextThoughtHtml = thought ? renderMarkdownLite(thought) : "";
+    if (thoughtNode.innerHTML !== nextThoughtHtml) thoughtNode.innerHTML = nextThoughtHtml;
+    thoughtNode.classList.toggle("is-empty", !thought);
+  }
+  if (answerNode) {
+    const nextAnswerHtml = visibleContent ? renderMarkdownLite(visibleContent) : "";
+    if (answerNode.innerHTML !== nextAnswerHtml) answerNode.innerHTML = nextAnswerHtml;
+    answerNode.classList.toggle("is-empty", !visibleContent);
+  }
+
+  if (state._followOutput !== false) els.messages.scrollTop = els.messages.scrollHeight;
+}
+
+function scheduleStreamingAssistantPatch(sessionId, index) {
+  streamingRenderQueue.set(`${sessionId}:${index}`, { sessionId, index });
+  if (streamingRenderFrame) return;
+  streamingRenderFrame = requestAnimationFrame(() => {
+    streamingRenderFrame = 0;
+    const pending = Array.from(streamingRenderQueue.values());
+    streamingRenderQueue.clear();
+    pending.forEach(({ sessionId: pendingSessionId, index: pendingIndex }) => {
+      patchStreamingAssistantMessage(pendingSessionId, pendingIndex);
+    });
+  });
 }
 
 function renderMessages() {
@@ -4576,7 +4674,13 @@ function renderMessages() {
 
   for (let j = 0; j < msgs.length; j += 1) {
     const msg = msgs[j];
-    if (isInternalMessage(msg)) continue;
+    if (!msg || isInternalMessage(msg)) continue;
+
+    if (msg.meta?.kind === "compact-summary") {
+      flushThoughts();
+      rows.push(renderCompactSummaryProjection(msg, j));
+      continue;
+    }
 
     if (isAssistantThinkingMessage(msg)) {
       const text = (getMsgText(msg) || "").trim();
@@ -4710,6 +4814,7 @@ function renderTimeline() {
   for (let i = 0; i < state.messages.length; i++) {
 
     const msg = state.messages[i];
+    if (!msg) continue;
 
     if (msg.role === "user") {
 
@@ -6766,7 +6871,7 @@ function renderImageThumbs() {
 
     <div class="img-thumb">
 
-      <img src="data:${img.mime};base64,${img.base64}" alt="${escapeHtml(img.name)}" />
+      <img src="data:${img.mime};base64,${img.base64}" alt="${escapeHtml(img.name)}" onclick="showImageOverlay(this.src)" title="点击查看大图" style="cursor:pointer" />
 
       <button class="img-thumb-remove" type="button" title="${t("delete")}" data-index="${i}">&times;</button>
 
@@ -6912,7 +7017,10 @@ function updateAssistantMessage(index, rawContent, streaming = true, sessionId =
 
   if (!skipRender) { setSessionMessages(sessionId, targetMessages); }
 
-  if (!skipRender) { renderSessionMessages(sessionId); }
+  if (!skipRender) {
+    if (streaming) scheduleStreamingAssistantPatch(sessionId, index);
+    else renderSessionMessages(sessionId);
+  }
 
 }
 
@@ -6936,6 +7044,31 @@ function parseSseLine(line) {
 
   }
 
+}
+
+function streamDeltaText(value) {
+  if (typeof value === "string") return value;
+  if (!Array.isArray(value)) return "";
+  return value.map((part) => {
+    if (typeof part === "string") return part;
+    return part?.text || part?.content || part?.value || "";
+  }).join("");
+}
+
+function extractStreamDelta(data) {
+  const choice = data?.choices?.[0] || {};
+  const delta = choice.delta || {};
+  let reasoning = streamDeltaText(delta.reasoning_content ?? delta.reasoning ?? delta.thinking);
+  let text = streamDeltaText(delta.content ?? choice.message?.content);
+
+  if (data?.type === "content_block_delta") {
+    if (data.delta?.type === "thinking_delta") reasoning += streamDeltaText(data.delta.thinking);
+    if (data.delta?.type === "text_delta") text += streamDeltaText(data.delta.text);
+  }
+  if (data?.type === "response.output_text.delta") text += streamDeltaText(data.delta);
+  if (data?.type === "response.reasoning_text.delta") reasoning += streamDeltaText(data.delta);
+
+  return { reasoning, text, delta, choice };
 }
 
 
@@ -7518,7 +7651,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
         for (const msg of _modelMsgs) {
 
-          if (msg.streaming) continue;
+          if (!msg || msg.streaming) continue;
 
           const mapped = mapMessageForApi(msg, tools.length > 0);
 
@@ -7849,7 +7982,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
       }
 
-      const delta = data.choices?.[0]?.delta || {};
+      const { reasoning, text, delta, choice } = extractStreamDelta(data);
 
       if (Array.isArray(delta.tool_calls)) {
 
@@ -7857,15 +7990,11 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
       }
 
-      if (Array.isArray(data.choices?.[0]?.message?.tool_calls)) {
+      if (Array.isArray(choice.message?.tool_calls)) {
 
-        data.choices[0].message.tool_calls.forEach((part, index) => mergeToolCallDelta(toolCallsByIndex, { ...part, index }));
+        choice.message.tool_calls.forEach((part, index) => mergeToolCallDelta(toolCallsByIndex, { ...part, index }));
 
       }
-
-      const reasoning = delta.reasoning_content || delta.thinking || "";
-
-      const text = delta.content || data.choices?.[0]?.message?.content || "";
 
       if (reasoning) rawThought += reasoning;
 
@@ -7889,6 +8018,20 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
     }
 
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    const data = parseSseLine(buffer.trim());
+    if (data && data !== "[DONE]") {
+      const { reasoning, text } = extractStreamDelta(data);
+      if (reasoning) rawThought += reasoning;
+      if (text) rawContent += text;
+      if (data.usage) {
+        state.lastUsage = data.usage;
+        updateUsage(data.usage, sessionId, ctx);
+      }
+    }
   }
 
 
@@ -8846,15 +8989,7 @@ async function runAgentLoop(ctx = null) {
 
               const kept = ctx.messages.slice(-keepCount);
 
-              const summaryMsg = {
-
-                role: "assistant",
-
-                content: `📄 **上下文已自动压缩**：${result.compressed} 条记忆，预计节省 ~${formatCompact(Math.ceil((result.compressed || 0) * 3000 * 0.7))} tokens。\n\n${result.summary}`,
-
-                meta: { kind: "compact-summary" },
-
-              };
+              const summaryMsg = createCompactSummaryMessage(result);
 
               // Archive full messages before compaction (for memory extraction & history)
               try {
@@ -9250,9 +9385,10 @@ async function runAgentLoop(ctx = null) {
     const hasToolMarker = /```agent-tool|<agent-tool>/i.test(rawContent);
 
     if (!hasToolMarker) {
-      ctx.messages[assistantIndex].content = rawContent.trim();
-      ctx.messages[assistantIndex].streaming = false;
-      // Sub-agent: capture result and return without updating main session UI
+      if (ctx.messages[assistantIndex]) {
+        ctx.messages[assistantIndex].content = rawContent.trim();
+        ctx.messages[assistantIndex].streaming = false;
+      }
       if (ctx.isSubAgent) {
         if (ctx.requiresToolUse && (ctx.toolCallCount || 0) === 0 && ctx.noToolRetries < 1) {
           ctx.noToolRetries += 1;
@@ -9296,9 +9432,10 @@ async function runAgentLoop(ctx = null) {
 
     const cleanContent = stripToolBlock(rawContent);
 
-    ctx.messages[assistantIndex].content = cleanContent || "";
-
-    ctx.messages[assistantIndex].streaming = false;
+    if (ctx.messages[assistantIndex]) {
+      ctx.messages[assistantIndex].content = cleanContent || "";
+      ctx.messages[assistantIndex].streaming = false;
+    }
 
 
 
@@ -9435,8 +9572,9 @@ async function runAgentLoop(ctx = null) {
     // Sub-agent exhausted: capture last assistant content as result
     let lastContent = "";
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
-      if (ctx.messages[i].role === "assistant" && ctx.messages[i].content) {
-        lastContent = ctx.messages[i].content;
+      const m = ctx.messages[i];
+      if (m && m.role === "assistant" && m.content) {
+        lastContent = m.content;
         break;
       }
     }
@@ -9588,15 +9726,7 @@ async function compactConversation() {
 
       const kept = state.messages.slice(-keepCount);
 
-      const summaryMsg = {
-
-        role: "assistant",
-
-                content: `📄 **上下文已自动压缩**：${result.compressed} 条记忆，预计节省 ~${formatCompact(Math.ceil((result.compressed || 0) * 3000 * 0.7))} tokens。\n\n${result.summary}`,
-
-        meta: { kind: "compact-summary" },
-
-      };
+      const summaryMsg = createCompactSummaryMessage(result);
 
       state.messages = [summaryMsg, ...kept];
 
@@ -9798,6 +9928,41 @@ async function sendMessage(userText) {
     await runAgentLoop(ctx);
   } catch (err) {
     loopError = err;
+
+    // If the request had images and the error suggests the model doesn't
+    // support multimodal input, retry automatically with text-only content.
+    const lastUser = [...ctx.messages].reverse().find((m) => m && m.role === "user");
+    if (lastUser && Array.isArray(lastUser.content)) {
+      // If the request had images and failed, retry with text-only — unless
+      // the error is clearly unrelated to multimodal (rate limit, quota).
+      const skipRetry = /rate.?limit|too.*(many|fast|frequent)|429|quota.*exceeded/i.test(err.message || "");
+      if (!skipRetry) {
+        // Rewrite user message to text-only
+        const textOnly = lastUser.content.find((p) => p.type === "text")?.text || "";
+        lastUser.content = textOnly;
+        // Remove the failed assistant placeholder so retry adds a fresh one
+        const placeholderIdx = ctx.messages.findIndex((m) => m && m.role === "assistant" && m.streaming && !m.content);
+        if (placeholderIdx >= 0) ctx.messages.splice(placeholderIdx, 1);
+        // Also remove any key-fallback messages from the failed attempt
+        const cleaned = ctx.messages.filter((m) => !(m && m.meta?.kind === "key-fallback"));
+        ctx.messages.length = 0; ctx.messages.push(...cleaned);
+        setSessionMessages(sessionId, ctx.messages);
+        // Retry
+        loopError = null;
+        try {
+          await runAgentLoop(ctx);
+          // Annotate the assistant response
+          const lastAsst = [...ctx.messages].reverse().find((m) => m && m.role === "assistant");
+          if (lastAsst) {
+            lastAsst.content = "*（" + t("imageDroppedHint") + "）*\n\n" + (lastAsst.content || "");
+          }
+          setSessionMessages(sessionId, ctx.messages);
+          renderSessionMessages(sessionId);
+        } catch (retryErr) {
+          loopError = retryErr;
+        }
+      }
+    }
   }
 
   // Handle queued messages: on error/abort, return them to input box; on success, flush normally
@@ -9905,7 +10070,10 @@ ${r.result}`,
     } catch (err) {
       drainError = err;
     }
-    if (drainError) throw drainError;
+    if (drainError) {
+      setStreaming(false, sessionId);
+      throw drainError;
+    }
   }
 
   setStreaming(false, sessionId);
@@ -12324,11 +12492,21 @@ els.chatForm.addEventListener("submit", async (event) => {
 
     } else {
 
+      setStreaming(false, sessionId);
+
       const cleaned = messages.filter((msg) => !msg.streaming);
       setSessionMessages(sessionId, cleaned);
       if (sessionId === state.sessionId) state.messages = cleaned;
 
-      appendSystemError(err.message);
+      let errMsg = err.message;
+      // If images were attached, the auto-retry already stripped them and
+      // retried. If we still got here, the error is real.
+      const lastUserMsg = [...messages].reverse().find((m) => m && m.role === "user");
+      const hadImages = !!(lastUserMsg && (Array.isArray(lastUserMsg.content) || (lastUserMsg._images && lastUserMsg._images.length)));
+      if (hadImages) {
+        errMsg += "\n\n💡 图片已自动移除并重试，但仍失败。请检查 API Key 和模型是否可用。";
+      }
+      appendSystemError(errMsg);
 
     }
 

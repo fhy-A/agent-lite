@@ -273,6 +273,31 @@ class TestI18nCoverage(unittest.TestCase):
 
 
 # ═══════════════════════════════════════════════════════════════════
+# 2b. Context compaction marker
+# ═══════════════════════════════════════════════════════════════════
+
+class TestCompactSummaryMarker(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        root = Path(__file__).resolve().parent.parent
+        cls.source = (root / "app.js").read_text(encoding="utf-8")
+
+    def test_compact_summary_has_message_flow_projection(self):
+        self.assertIn('msg.meta?.kind === "compact-summary"', self.source)
+        self.assertIn("renderCompactSummaryProjection(msg, j)", self.source)
+        self.assertIn('class="msg branch-indicator compact-indicator"', self.source)
+
+    def test_auto_and_manual_compaction_share_message_factory(self):
+        self.assertEqual(self.source.count("const summaryMsg = createCompactSummaryMessage(result)"), 2)
+        self.assertIn('kind: "compact-summary"', self.source)
+
+    def test_marker_is_localized(self):
+        self.assertIn('compactMarker: "上下文已压缩"', self.source)
+        self.assertIn('compactMarker: "Context compacted"', self.source)
+
+
+# ═══════════════════════════════════════════════════════════════════
 # 3. Skills CRUD
 # ═══════════════════════════════════════════════════════════════════
 

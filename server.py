@@ -2939,7 +2939,14 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
 
     def proxy(self, method, upstream_path):
         length = int(self.headers.get("Content-Length", "0") or "0")
-        body = self.rfile.read(length) if length else None
+        body = None
+        if length:
+            body = b""
+            while len(body) < length:
+                chunk = self.rfile.read(length - len(body))
+                if not chunk:
+                    break
+                body += chunk
         is_stream = False
         if body:
             try:
@@ -2948,6 +2955,10 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
                 is_stream = False
         api_key = self.headers.get("Authorization", "")
         base_url = self.headers.get("X-Base-URL", "") or NEW_API_BASE_URL
+        # Avoid double /v1 prefix when user's base URL already includes it
+        # e.g. https://api.example.com/v1 + /v1/models → /models (not /v1/v1/models)
+        if base_url.rstrip("/").endswith("/v1") and upstream_path.startswith("/v1"):
+            upstream_path = upstream_path[len("/v1"):]
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = api_key
@@ -2969,7 +2980,8 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
                 if is_stream:
                     self.send_response(resp.status)
                     self.send_header("Content-Type", resp.headers.get("Content-Type", "text/event-stream"))
-                    self.send_header("Cache-Control", "no-cache")
+                    self.send_header("Cache-Control", "no-cache, no-transform")
+                    self.send_header("X-Accel-Buffering", "no")
                     self.send_header("Connection", "close")
                     self.end_headers()
                     headers_sent = True

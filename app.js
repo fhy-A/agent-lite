@@ -85,6 +85,14 @@ const state = {
 
   previewPath: "",
 
+  previewKind: "text",
+
+  previewMode: "source",
+
+  previewTable: null,
+
+  previewImageScale: null,
+
   previewWidth: Number(localStorage.getItem("agent-lite-preview-width") || 420),
 
   sidebarSessionHeight: Number(localStorage.getItem("agent-lite-session-height") || 0),
@@ -391,6 +399,8 @@ const els = {
   previewTitle: document.getElementById("previewTitle"),
 
   previewMeta: document.getElementById("previewMeta"),
+
+  previewModeActions: document.getElementById("previewModeActions"),
 
   previewLanguage: document.getElementById("previewLanguage"),
 
@@ -1867,6 +1877,11 @@ const I18N = {
     roundLimitTitle: "工具调用轮次已达到上限", roundLimitDesc: "任务可能还没完成，可以让 Agent 继续处理后续步骤。", continueTask: "继续处理",
     loadFailed: "加载失败", imageReadFailed: "无法读取图片文件", binaryFile: "二进制文件",
     previewUnsupported: "无法预览图片、数据库、压缩包或可执行文件", emptyFile: "空文件", noTextContent: "暂无文本内容",
+    previewRendered: "预览", previewSource: "源码", previewTable: "表格", previewFit: "适应窗口",
+    previewActualSize: "原始尺寸", previewZoomIn: "放大", previewZoomOut: "缩小",
+    previewPreviousPage: "上一页", previewNextPage: "下一页", previewPageOf: "第 {page} / {total} 页",
+    previewRows: "{count} 行", previewColumns: "{count} 列", previewPdf: "PDF 文档",
+    previewTableLimited: "仅解析前 {count} 行用于预览", previewNoRows: "文件中没有可预览的数据行",
     errorPrefix: "错误", compactIntro: "将把较早的 {compress} 条消息压缩为一段摘要，保留最近的 {keep} 条。",
     toCompact: "待压缩", keepRecent: "保留", estimatedSavings: "预计节省", messageUnit: "条",
     compactNote: "压缩后的摘要会保留关键信息（需求、操作、文件修改、未完成事项），但原始对话细节无法恢复。",
@@ -2058,6 +2073,11 @@ const I18N = {
     roundLimitTitle: "Tool-call round limit reached", roundLimitDesc: "The task may be incomplete. Ask the Agent to continue with the remaining steps.", continueTask: "Continue",
     loadFailed: "Load failed", imageReadFailed: "Unable to read image", binaryFile: "Binary file",
     previewUnsupported: "Preview is unavailable for images, databases, archives, and executables", emptyFile: "Empty file", noTextContent: "No text content",
+    previewRendered: "Preview", previewSource: "Source", previewTable: "Table", previewFit: "Fit",
+    previewActualSize: "Actual size", previewZoomIn: "Zoom in", previewZoomOut: "Zoom out",
+    previewPreviousPage: "Previous page", previewNextPage: "Next page", previewPageOf: "Page {page} / {total}",
+    previewRows: "{count} rows", previewColumns: "{count} columns", previewPdf: "PDF document",
+    previewTableLimited: "Only the first {count} rows were parsed for preview", previewNoRows: "No data rows to preview",
     errorPrefix: "Error", compactIntro: "Compress {compress} earlier messages into a summary and keep the latest {keep} messages.",
     toCompact: "To compact", keepRecent: "Keep", estimatedSavings: "Estimated savings", messageUnit: "messages",
     compactNote: "The summary retains requirements, actions, file changes, and pending work, but original conversation details cannot be restored.",
@@ -5878,7 +5898,7 @@ function isAutoSessionTitle(title = "") {
 
 
 
-function applyPreviewWidth(width = state.previewWidth) {
+function applyPreviewWidth(width = state.previewWidth, persist = true) {
 
   const viewportLimit = Math.max(320, window.innerWidth - 520);
 
@@ -5995,34 +6015,260 @@ function renderCodePreview(content = "") {
 
     .join("");
 
-  // Click line to highlight
-
-  els.filePreview.querySelectorAll(".code-line").forEach((el) => {
-
-    el.addEventListener("click", () => {
-
-      els.filePreview.querySelectorAll(".code-line").forEach((e) => e.classList.remove("active-line"));
-
-      el.classList.add("active-line");
-
-      const lineNum = el.dataset.line;
-
-      copyText(`${state.previewPath}:${lineNum}`);
-
-    });
-
-  });
+  // One delegated handler is substantially cheaper than one listener per line
+  // for large source files.
+  els.filePreview.onclick = (event) => {
+    const line = event.target.closest(".code-line");
+    if (!line || !els.filePreview.contains(line)) return;
+    els.filePreview.querySelector(".code-line.active-line")?.classList.remove("active-line");
+    line.classList.add("active-line");
+    copyText(`${state.previewPath}:${line.dataset.line}`);
+  };
 
 }
 
 
 
-function renderImagePreview(content = "", mime = "image/png") {
+function previewRawUrl(path = state.previewPath, version = state._previewMtime || "") {
+  const query = `/api/file?path=${encodeURIComponent(path || "")}&raw=1`;
+  return version ? `${query}&v=${encodeURIComponent(version)}` : query;
+}
 
+
+function renderPreviewModeActions(actions = []) {
+  if (!els.previewModeActions) return;
+  els.previewModeActions.replaceChildren();
+  actions.forEach((action) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `preview-mode-btn${action.active ? " active" : ""}${action.iconOnly ? " icon-only" : ""}`;
+    button.textContent = action.label;
+    button.title = action.title || action.label;
+    button.setAttribute("aria-label", action.title || action.label);
+    if (action.disabled) button.disabled = true;
+    button.addEventListener("click", action.onClick);
+    els.previewModeActions.appendChild(button);
+  });
+}
+
+
+function sanitizePreviewHtml(html = "") {
+  const documentNode = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
+  documentNode.querySelectorAll("script, style, iframe, object, embed, form, input, button, textarea, select").forEach((node) => node.remove());
+  documentNode.querySelectorAll("*").forEach((node) => {
+    [...node.attributes].forEach((attribute) => {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim().toLowerCase();
+      if (name.startsWith("on") || ((name === "href" || name === "src") && value.startsWith("javascript:"))) {
+        node.removeAttribute(attribute.name);
+      }
+    });
+  });
+  return documentNode.body.firstElementChild?.innerHTML || "";
+}
+
+
+function renderMarkdownPreview(content = "", mode = state.previewMode) {
+  state.previewMode = mode === "source" ? "source" : "rendered";
+  renderPreviewModeActions([
+    { label: t("previewRendered"), active: state.previewMode === "rendered", onClick: () => renderMarkdownPreview(content, "rendered") },
+    { label: t("previewSource"), active: state.previewMode === "source", onClick: () => renderMarkdownPreview(content, "source") },
+  ]);
+  if (state.previewMode === "source") {
+    renderCodePreview(content);
+    return;
+  }
+  els.filePreview.onclick = null;
+  els.filePreview.className = "file-preview markdown-preview";
+  els.filePreview.innerHTML = `<article class="preview-markdown-body">${sanitizePreviewHtml(renderMarkdownLite(content))}</article>`;
+}
+
+
+function parseDelimitedText(text = "", delimiter = ",", maxRows = 10001) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let quoted = false;
+  let limited = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (quoted) {
+      if (char === '"' && text[index + 1] === '"') {
+        field += '"';
+        index += 1;
+      } else if (char === '"') {
+        quoted = false;
+      } else {
+        field += char;
+      }
+      continue;
+    }
+    if (char === '"' && field.length === 0) {
+      quoted = true;
+    } else if (char === delimiter) {
+      row.push(field);
+      field = "";
+    } else if (char === "\n" || char === "\r") {
+      if (char === "\r" && text[index + 1] === "\n") index += 1;
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+      if (rows.length >= maxRows) {
+        limited = index < text.length - 1;
+        break;
+      }
+    } else {
+      field += char;
+    }
+  }
+  if (!limited && (field.length || row.length)) {
+    row.push(field);
+    rows.push(row);
+  }
+  while (rows.length && rows[rows.length - 1].every((cell) => cell === "")) rows.pop();
+  return { rows, limited };
+}
+
+
+function renderDelimitedTablePage() {
+  const tableState = state.previewTable;
+  if (!tableState) return;
+  const rows = tableState.rows;
+  if (!rows.length) {
+    els.filePreview.innerHTML = `<div class="preview-notice"><span>${escapeHtml(t("previewNoRows"))}</span></div>`;
+    return;
+  }
+  const headers = rows[0];
+  const dataRows = rows.slice(1);
+  const pageSize = tableState.pageSize;
+  const totalPages = Math.max(1, Math.ceil(dataRows.length / pageSize));
+  tableState.page = Math.min(Math.max(0, tableState.page), totalPages - 1);
+  const start = tableState.page * pageSize;
+  const visibleRows = dataRows.slice(start, start + pageSize);
+  const columnCount = Math.max(1, ...rows.map((row) => row.length));
+  const visibleColumnCount = Math.min(columnCount, 60);
+  const normalizedHeaders = Array.from({ length: visibleColumnCount }, (_, index) => headers[index] || `#${index + 1}`);
+  const headHtml = normalizedHeaders.map((header) => `<th>${escapeHtml(header)}</th>`).join("");
+  const bodyHtml = visibleRows.map((row, rowIndex) => {
+    const cells = Array.from({ length: visibleColumnCount }, (_, columnIndex) => `<td>${escapeHtml(row[columnIndex] || "")}</td>`).join("");
+    return `<tr><th class="table-row-number">${start + rowIndex + 2}</th>${cells}</tr>`;
+  }).join("");
+  const limitNotice = tableState.limited ? `<span class="table-limit-notice">${escapeHtml(t("previewTableLimited", { count: rows.length }))}</span>` : "";
+  els.filePreview.innerHTML = `
+    <div class="preview-table-scroll">
+      <table class="preview-data-table"><thead><tr><th class="table-row-number">#</th>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table>
+    </div>
+    <footer class="preview-table-footer">
+      <span>${escapeHtml(t("previewRows", { count: dataRows.length }))} · ${escapeHtml(t("previewColumns", { count: columnCount }))}</span>
+      ${limitNotice}
+      <div class="preview-table-pager">
+        <button type="button" class="mini-btn" data-table-page="previous" ${tableState.page === 0 ? "disabled" : ""} title="${escapeHtml(t("previewPreviousPage"))}">‹</button>
+        <span>${escapeHtml(t("previewPageOf", { page: tableState.page + 1, total: totalPages }))}</span>
+        <button type="button" class="mini-btn" data-table-page="next" ${tableState.page >= totalPages - 1 ? "disabled" : ""} title="${escapeHtml(t("previewNextPage"))}">›</button>
+      </div>
+    </footer>`;
+  els.filePreview.querySelector('[data-table-page="previous"]')?.addEventListener("click", () => {
+    tableState.page -= 1;
+    renderDelimitedTablePage();
+  });
+  els.filePreview.querySelector('[data-table-page="next"]')?.addEventListener("click", () => {
+    tableState.page += 1;
+    renderDelimitedTablePage();
+  });
+}
+
+
+function renderDelimitedPreview(content = "", delimiter = ",", mode = state.previewMode) {
+  state.previewMode = mode === "source" ? "source" : "table";
+  renderPreviewModeActions([
+    { label: t("previewTable"), active: state.previewMode === "table", onClick: () => renderDelimitedPreview(content, delimiter, "table") },
+    { label: t("previewSource"), active: state.previewMode === "source", onClick: () => renderDelimitedPreview(content, delimiter, "source") },
+  ]);
+  if (state.previewMode === "source") {
+    renderCodePreview(content);
+    return;
+  }
+  if (!state.previewTable || state.previewTable.content !== content || state.previewTable.delimiter !== delimiter) {
+    const parsed = parseDelimitedText(content, delimiter);
+    state.previewTable = { content, delimiter, rows: parsed.rows, limited: parsed.limited, page: 0, pageSize: 100 };
+  }
+  els.filePreview.onclick = null;
+  els.filePreview.className = "file-preview table-preview";
+  renderDelimitedTablePage();
+}
+
+
+function currentImageFitScale() {
+  const viewport = els.filePreview.querySelector(".image-preview-viewport");
+  const image = viewport?.querySelector("img");
+  if (!viewport || !image?.naturalWidth || !image?.naturalHeight) return 1;
+  return Math.min((viewport.clientWidth - 32) / image.naturalWidth, (viewport.clientHeight - 32) / image.naturalHeight, 1);
+}
+
+
+function applyImagePreviewScale(scale = null) {
+  const viewport = els.filePreview.querySelector(".image-preview-viewport");
+  const image = viewport?.querySelector("img");
+  if (!viewport || !image) return;
+  state.previewImageScale = scale === null ? null : Math.min(5, Math.max(0.1, scale));
+  viewport.classList.toggle("fit", state.previewImageScale === null);
+  if (state.previewImageScale === null) {
+    image.style.width = "";
+    image.style.height = "";
+  } else {
+    image.style.width = `${Math.round(image.naturalWidth * state.previewImageScale)}px`;
+    image.style.height = `${Math.round(image.naturalHeight * state.previewImageScale)}px`;
+  }
+  renderImagePreviewActions();
+}
+
+
+function renderImagePreviewActions() {
+  const displayScale = state.previewImageScale === null ? currentImageFitScale() : state.previewImageScale;
+  renderPreviewModeActions([
+    { label: "−", iconOnly: true, title: t("previewZoomOut"), onClick: () => applyImagePreviewScale(displayScale / 1.25) },
+    { label: state.previewImageScale === null ? t("previewFit") : `${Math.round(displayScale * 100)}%`, active: state.previewImageScale === null, title: t("previewFit"), onClick: () => applyImagePreviewScale(null) },
+    { label: "+", iconOnly: true, title: t("previewZoomIn"), onClick: () => applyImagePreviewScale(displayScale * 1.25) },
+    { label: "1:1", title: t("previewActualSize"), active: state.previewImageScale === 1, onClick: () => applyImagePreviewScale(1) },
+  ]);
+}
+
+
+function renderImagePreview(path = state.previewPath) {
+  state.previewImageScale = null;
+  els.filePreview.onclick = null;
   els.filePreview.className = "file-preview image-preview";
+  els.filePreview.innerHTML = `<div class="image-preview-viewport fit"><img src="${previewRawUrl(path)}" alt="${escapeHtml(path.split(/[\\/]/).pop() || "preview")}" draggable="false" /></div>`;
+  const viewport = els.filePreview.querySelector(".image-preview-viewport");
+  const image = viewport.querySelector("img");
+  image.addEventListener("load", renderImagePreviewActions, { once: true });
+  image.addEventListener("error", () => renderPreviewNotice(t("loadFailed"), t("imageReadFailed")), { once: true });
+  let drag = null;
+  viewport.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || state.previewImageScale === null) return;
+    drag = { x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop };
+    viewport.classList.add("dragging");
+    viewport.setPointerCapture(event.pointerId);
+  });
+  viewport.addEventListener("pointermove", (event) => {
+    if (!drag) return;
+    viewport.scrollLeft = drag.left - (event.clientX - drag.x);
+    viewport.scrollTop = drag.top - (event.clientY - drag.y);
+  });
+  const endDrag = () => { drag = null; viewport.classList.remove("dragging"); };
+  viewport.addEventListener("pointerup", endDrag);
+  viewport.addEventListener("pointercancel", endDrag);
+  renderImagePreviewActions();
+}
 
-  els.filePreview.innerHTML = `<img src="data:${mime};base64,${content}" alt="preview" />`;
 
+function renderPdfPreview(path = state.previewPath) {
+  els.filePreview.onclick = null;
+  els.filePreview.className = "file-preview pdf-preview";
+  renderPreviewModeActions([]);
+  els.filePreview.innerHTML = `<iframe class="preview-pdf-frame" src="${previewRawUrl(path)}#view=FitH&toolbar=1&navpanes=0" title="${escapeHtml(path.split(/[\\/]/).pop() || t("previewPdf"))}"></iframe>`;
 }
 
 
@@ -6349,9 +6595,33 @@ async function loadFiles(path = state.currentDir) {
 
 
 
+function formatPreviewMeta(data, suffix = "") {
+
+  const parts = [data.path || state.previewPath || "", formatSize(data.size || 0)];
+
+  const encoding = String(data.encoding || "").toLowerCase();
+
+  if (encoding && encoding !== "utf-8" && encoding !== "utf-8-sig") {
+
+    parts.push(encoding);
+
+  }
+
+  if (data.truncated) parts.push(t("fmtTruncatedContent"));
+
+  if (suffix) parts.push(suffix);
+
+  return parts.filter(Boolean).join(" \u00b7 ");
+
+}
+
+
+
 async function loadFile(path, mtime) {
 
   const data = await apiJson(`/api/file?path=${encodeURIComponent(path)}`);
+
+  const previousPath = state.previewPath;
 
   els.workbench.classList.add("preview-open");
 
@@ -10453,6 +10723,8 @@ async function saveMemorySubmit() {
 
 
 let previewDragState = null;
+let previewResizeFrame = 0;
+let previewPendingWidth = null;
 
 let sidebarDragState = null;
 
@@ -10470,6 +10742,12 @@ function finishPreviewDrag(event) {
 
   }
 
+  if (previewResizeFrame) {
+    cancelAnimationFrame(previewResizeFrame);
+    previewResizeFrame = 0;
+  }
+  applyPreviewWidth(previewPendingWidth ?? state.previewWidth, true);
+  previewPendingWidth = null;
   previewDragState = null;
 
   document.body.classList.remove("resizing-preview");
@@ -11164,7 +11442,12 @@ els.previewResizer.addEventListener("pointermove", (event) => {
 
   if (!previewDragState) return;
 
-  applyPreviewWidth(previewDragState.startWidth - (event.clientX - previewDragState.startX));
+  previewPendingWidth = previewDragState.startWidth - (event.clientX - previewDragState.startX);
+  if (previewResizeFrame) return;
+  previewResizeFrame = requestAnimationFrame(() => {
+    applyPreviewWidth(previewPendingWidth, false);
+    previewResizeFrame = 0;
+  });
 
 });
 

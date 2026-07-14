@@ -2,6 +2,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib import error, parse, request
 import base64
+import codecs
 import ctypes
 import datetime as dt
 import difflib
@@ -950,9 +951,33 @@ def display_attachment_path(root, target):
 
 
 def is_probably_text(data):
+    if data.startswith((codecs.BOM_UTF8, codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return True
     if b"\x00" in data[:4096]:
         return False
     return True
+
+
+def decode_preview_text(data, truncated=False):
+    """Decode a preview without inventing a replacement char at a byte cutoff."""
+    bom_encodings = (
+        (codecs.BOM_UTF8, "utf-8-sig"),
+        (codecs.BOM_UTF16_LE, "utf-16"),
+        (codecs.BOM_UTF16_BE, "utf-16"),
+    )
+    for bom, encoding in bom_encodings:
+        if data.startswith(bom):
+            decoder = codecs.getincrementaldecoder(encoding)(errors="replace")
+            return decoder.decode(data, final=not truncated), encoding
+
+    for encoding in ("utf-8", "gb18030"):
+        try:
+            decoder = codecs.getincrementaldecoder(encoding)(errors="strict")
+            return decoder.decode(data, final=not truncated), encoding
+        except UnicodeDecodeError:
+            continue
+
+    return data.decode("utf-8", errors="replace"), "utf-8-replacement"
 
 
 def read_text_limited(path, limit_bytes):
@@ -1898,46 +1923,47 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             raise ValueError("文件不存在")
         display_path = display_attachment_path(root, target) if is_attachment else to_project_relative(root, target)
         data = target.read_bytes()
+        stat = target.stat()
         truncated = len(data) > MAX_PREVIEW_BYTES
         preview = data[:MAX_PREVIEW_BYTES]
-        # Raw mode: return binary content directly for binary files, JSON for text
+        # Raw mode is a stable byte-stream endpoint used by browser-native image
+        # and PDF viewers. Text metadata/content continues to use the JSON mode.
         if raw:
-            import base64 as b64
             mime = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
-            if data and not is_probably_text(data[:1024]):
-                self.send_response(200)
-                self.send_header("Content-Type", mime)
-                self.send_header("Content-Length", str(len(data)))
-                self.send_header("Cache-Control", "max-age=86400")
-                self.end_headers()
-                self.wfile.write(data)
-                return
-            self.send_json({
-                "path": display_path,
-                "name": target.name,
-                "size": len(data),
-                "mime": mime,
-                "content": b64.b64encode(data).decode("ascii"),
-                "truncated": truncated,
-            })
+            safe_name = parse.quote(target.name)
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Disposition", f"inline; filename*=UTF-8''{safe_name}")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(data)
             return
-        if not is_probably_text(preview):
+        mime = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+        browser_binary = mime.startswith("image/") or mime == "application/pdf"
+        if browser_binary or not is_probably_text(preview):
             self.send_json({
                 "path": display_path,
                 "name": target.name,
                 "binary": True,
+                "mime": mime,
                 "size": len(data),
                 "content": "",
                 "truncated": truncated,
+                "updatedAt": dt.datetime.fromtimestamp(stat.st_mtime).replace(microsecond=0).isoformat(),
             })
             return
+        content, encoding = decode_preview_text(preview, truncated=truncated)
         self.send_json({
             "path": display_path,
             "name": target.name,
             "binary": False,
             "size": len(data),
-            "content": preview.decode("utf-8", errors="replace"),
+            "content": content,
+            "encoding": encoding,
             "truncated": truncated,
+            "updatedAt": dt.datetime.fromtimestamp(stat.st_mtime).replace(microsecond=0).isoformat(),
         })
 
     def pick_folder(self):

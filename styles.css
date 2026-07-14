@@ -956,6 +956,15 @@ input:focus, select:focus, textarea:focus {
   transition: none;
 }
 
+/* Keep large previews responsive while the divider is moving. Wrapping is
+   restored once pointerup removes the body class, causing only one full
+   reflow instead of one for every pointer event. */
+.resizing-preview .code-preview .line-code {
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
 .resizing-sidebar-main .pi-shell {
   transition: none;
 }
@@ -2273,6 +2282,50 @@ input:focus, select:focus, textarea:focus {
   gap: 6px;
 }
 
+.preview-mode-actions {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+}
+
+.preview-mode-actions:empty {
+  display: none;
+}
+
+.preview-mode-btn {
+  min-width: 28px;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.preview-mode-btn.icon-only {
+  width: 28px;
+  padding: 0;
+  font-size: 16px;
+}
+
+.preview-mode-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.preview-mode-btn.active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+}
+
 .preview-language {
   max-width: 64px;
   padding: 3px 6px;
@@ -2302,8 +2355,8 @@ input:focus, select:focus, textarea:focus {
 
 .code-preview .code-line {
   display: grid;
-  grid-template-columns: 52px minmax(max-content, 1fr);
-  min-width: max-content;
+  grid-template-columns: 52px minmax(0, 1fr);
+  min-width: 0;
 }
 
 .code-preview .code-line:hover .line-code,
@@ -2319,13 +2372,220 @@ input:focus, select:focus, textarea:focus {
 
 /* Image preview */
 .image-preview {
-  display: flex; align-items: flex-start; justify-content: center;
-  padding: 16px; overflow: auto;
+  overflow: hidden;
+  padding: 0;
 }
+
+.image-preview-viewport {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 16px;
+  overflow: auto;
+  cursor: grab;
+  user-select: none;
+}
+
+.image-preview-viewport.fit {
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+}
+
+.image-preview-viewport.dragging {
+  cursor: grabbing;
+}
+
 .image-preview img {
-  max-width: 100%; max-height: calc(100vh - 180px);
-  object-fit: contain; border-radius: 4px;
-  box-shadow: 0 1px 6px rgba(0,0,0,.12);
+  display: block;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, .16);
+}
+
+.image-preview-viewport.fit img {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+/* Markdown preview */
+.markdown-preview {
+  font-family: var(--ui-font, "Segoe UI", sans-serif);
+}
+
+.preview-markdown-body {
+  width: min(100%, 860px);
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 26px 30px 56px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+.preview-markdown-body > :first-child { margin-top: 0; }
+.preview-markdown-body > :last-child { margin-bottom: 0; }
+.preview-markdown-body h1,
+.preview-markdown-body h2,
+.preview-markdown-body h3,
+.preview-markdown-body h4 {
+  margin: 1.7em 0 .65em;
+  color: var(--text);
+  line-height: 1.28;
+}
+.preview-markdown-body h1 { font-size: 1.75em; }
+.preview-markdown-body h2 {
+  padding-bottom: .35em;
+  border-bottom: 1px solid var(--line);
+  font-size: 1.4em;
+}
+.preview-markdown-body h3 { font-size: 1.18em; }
+.preview-markdown-body p,
+.preview-markdown-body ul,
+.preview-markdown-body ol,
+.preview-markdown-body blockquote,
+.preview-markdown-body table { margin: .75em 0 1.05em; }
+.preview-markdown-body blockquote {
+  padding: .15em 0 .15em 1em;
+  border-left: 3px solid var(--accent);
+  color: var(--muted);
+}
+.preview-markdown-body table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow: auto;
+  border-collapse: collapse;
+}
+.preview-markdown-body th,
+.preview-markdown-body td {
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  text-align: left;
+}
+.preview-markdown-body th {
+  background: var(--panel);
+  font-weight: 650;
+}
+.preview-markdown-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 18px auto;
+  border-radius: 4px;
+}
+
+/* CSV / TSV preview */
+.table-preview {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  overflow: hidden;
+  font-family: var(--ui-font, "Segoe UI", sans-serif);
+}
+
+.preview-table-scroll {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.preview-data-table {
+  min-width: 100%;
+  border-spacing: 0;
+  border-collapse: separate;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.preview-data-table th,
+.preview-data-table td {
+  max-width: 420px;
+  padding: 7px 10px;
+  overflow: hidden;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  color: var(--text);
+  background: var(--panel);
+  font-weight: 650;
+}
+
+.preview-data-table .table-row-number {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  width: 1%;
+  min-width: 42px;
+  color: var(--muted);
+  background: var(--panel-3);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.preview-data-table thead .table-row-number {
+  z-index: 3;
+  background: var(--panel);
+}
+
+.preview-data-table tbody tr:hover td,
+.preview-data-table tbody tr:hover th {
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel-3));
+}
+
+.preview-table-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  background: var(--panel);
+  font-size: 11px;
+}
+
+.table-limit-notice {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-table-pager {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* PDF preview */
+.pdf-preview {
+  overflow: hidden;
+  background: #525659;
+}
+
+.preview-pdf-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #525659;
 }
 
 
@@ -2343,9 +2603,13 @@ input:focus, select:focus, textarea:focus {
 }
 
 .code-preview .line-code {
+  min-width: 0;
   padding: 0 16px;
   color: var(--text);
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  tab-size: 2;
 }
 
 .preview-notice {

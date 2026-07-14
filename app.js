@@ -129,6 +129,10 @@ const state = {
 
   authorizationRequests: [],
 
+  userInputRequests: {},
+
+  _userInputResolvers: new Map(),
+
   authorizationPanelCollapsed: false,
 
   confirmingEditId: null,
@@ -568,6 +572,8 @@ const els = {
 
   authorizationPanel: document.getElementById("authorizationPanel"),
 
+  userInputPanel: document.getElementById("userInputPanel"),
+
 };
 
 
@@ -578,17 +584,109 @@ const MAX_TOOL_ROUNDS = 200;
 
 const toolPolicy = {
 
-  plan: new Set(["list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "task", "use_skill"]),
+  plan: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "task", "use_skill"]),
 
-  accept: new Set(["list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "run_command", "task", "use_skill", "write_file", "delete_file", "save_memory"]),
+  accept: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "run_command", "task", "use_skill", "write_file", "delete_file", "save_memory"]),
 
-  bypass: new Set(["list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "run_command", "task", "use_skill", "write_file", "delete_file", "save_memory"]),
+  bypass: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "run_command", "task", "use_skill", "write_file", "delete_file", "save_memory"]),
 
 };
 
 
 
 const nativeTools = [
+
+  {
+
+    type: "function",
+
+    function: {
+
+      name: "request_user_input",
+
+      description: "Ask the user for a critical decision that cannot be safely inferred from context or discovered with available tools. Use this sparingly: do not ask about ordinary implementation choices, and search or inspect first when the answer is discoverable. Ask one question by default; use up to three only when they are independent decisions at the same stage. After receiving the answers, continue the original task immediately.",
+
+      parameters: {
+
+        type: "object",
+
+        properties: {
+
+          title: { type: "string", description: "Short questionnaire title." },
+
+          reason: { type: "string", description: "One concise sentence explaining why this decision is needed." },
+
+          questions: {
+
+            type: "array",
+
+            minItems: 1,
+
+            maxItems: 3,
+
+            items: {
+
+              type: "object",
+
+              properties: {
+
+                id: { type: "string", description: "Stable identifier unique within this questionnaire." },
+
+                prompt: { type: "string", description: "The decision the user needs to make." },
+
+                type: { type: "string", enum: ["single", "multiple", "text"] },
+
+                required: { type: "boolean" },
+
+                allowOther: { type: "boolean", description: "Allow a custom free-text answer in addition to the listed options." },
+
+                options: {
+
+                  type: "array",
+
+                  items: {
+
+                    type: "object",
+
+                    properties: {
+
+                      value: { type: "string" },
+
+                      label: { type: "string" },
+
+                      description: { type: "string" },
+
+                    },
+
+                    required: ["value", "label"],
+
+                    additionalProperties: false,
+
+                  },
+
+                },
+
+              },
+
+              required: ["id", "prompt", "type"],
+
+              additionalProperties: false,
+
+            },
+
+          },
+
+        },
+
+        required: ["questions"],
+
+        additionalProperties: false,
+
+      },
+
+    },
+
+  },
 
   {
 
@@ -1942,6 +2040,11 @@ const I18N = {
     progressSearch: "正在搜索 {target}…", progressList: "正在列出 {target}…", progressRun: "正在执行 {target}…",
     progressGlob: "正在匹配 {target}…", progressEdit: "正在编辑 {target}…", progressDelete: "正在删除 {target}…",
     progressFetch: "正在获取 {target}…", progressTask: "正在执行子任务：{target}…",
+    questionnaireTitle: "需要你的决定", questionnaireEyebrow: "关键决策",
+    questionnaireProgress: "{done}/{total} 已处理", questionnaireHint: "每个问题可独立确认或跳过；全部处理后 Agent 会自动继续。",
+    questionnaireConfirm: "确认此题", questionnaireCancel: "跳过此题",
+    questionnaireTextPlaceholder: "输入你的想法", questionnaireOtherPlaceholder: "其他想法或跳过原因（可选）",
+    questionnaireAnswered: "已确认", questionCanceled: "已跳过", questionnaireSummary: "问卷结果",
   },
   en: {
     toolListFiles: "List Files", toolReadFile: "Read File", toolSearchFiles: "Search Files",
@@ -2138,6 +2241,11 @@ const I18N = {
     progressSearch: "Searching {target}…", progressList: "Listing {target}…", progressRun: "Running {target}…",
     progressGlob: "Matching {target}…", progressEdit: "Editing {target}…", progressDelete: "Deleting {target}…",
     progressFetch: "Fetching {target}…", progressTask: "Running sub-task: {target}…",
+    questionnaireTitle: "Your decision is needed", questionnaireEyebrow: "Critical decision",
+    questionnaireProgress: "{done}/{total} resolved", questionnaireHint: "Resolve or skip each question independently. The Agent resumes automatically when all are done.",
+    questionnaireConfirm: "Confirm answer", questionnaireCancel: "Skip question",
+    questionnaireTextPlaceholder: "Enter your answer", questionnaireOtherPlaceholder: "Other thoughts or reason for skipping (optional)",
+    questionnaireAnswered: "Confirmed", questionCanceled: "Skipped", questionnaireSummary: "Questionnaire result",
   },
 };
 
@@ -4491,6 +4599,17 @@ function renderUserProjection(msg, index) {
   return textArticle + imageArticles;
 }
 
+function renderUserInputSummaryProjection(msg, index) {
+  const answers = Array.isArray(msg.meta?.answers) ? msg.meta.answers : [];
+  return `<article class="msg-flow-event user-input-flow" data-msg-index="${index}">
+    <span class="msg-flow-icon" aria-hidden="true">?</span>
+    <div class="msg-flow-body">
+      <strong>${escapeHtml(msg.meta?.title || t("questionnaireSummary"))}</strong>
+      ${answers.map((answer) => `<span><b>${escapeHtml(answer.prompt || "")}</b> ${escapeHtml(answer.answer || t("questionCanceled"))}</span>`).join("")}
+    </div>
+  </article>`;
+}
+
 function showImageOverlay(src) {
   const old = document.getElementById("imageOverlay");
   if (old) old.remove();
@@ -4734,6 +4853,7 @@ function scheduleStreamingAssistantPatch(sessionId, index) {
 
 function renderMessages() {
 
+  renderUserInputPanel();
   renderAuthorizationPanel();
 
   // Ensure state.messages reflects current session (syncs ctx.messages changes)
@@ -4809,13 +4929,21 @@ function renderMessages() {
     if (j === branchBoundary) insertBranchMarker();
 
     const msg = msgs[j];
-    if (!msg || isInternalMessage(msg)) continue;
+    if (!msg) continue;
 
     if (msg.meta?.kind === "compact-summary") {
       flushThoughts();
       rows.push(renderCompactSummaryProjection(msg, j));
       continue;
     }
+
+    if (msg.meta?.kind === "user-input-summary") {
+      flushThoughts();
+      rows.push(renderUserInputSummaryProjection(msg, j));
+      continue;
+    }
+
+    if (isInternalMessage(msg)) continue;
 
     if (isAssistantThinkingMessage(msg)) {
       const text = (getMsgText(msg) || "").trim();
@@ -5497,7 +5625,10 @@ async function refreshSessions() {
     const data = await apiJson("/api/sessions");
     state.sessions = data.data || [];
     for (const session of state.sessions) {
-      if (session?.id) setSessionRunState(session.id, session.runState || {});
+      if (session?.id) {
+        setSessionRunState(session.id, session.runState || {});
+        restoreUserInputRequest(session.id, session.runState?.userInputRequest);
+      }
     }
   } catch (err) {
     console.error("Failed to refresh sessions:", err);
@@ -5620,6 +5751,7 @@ async function loadSession(sessionId) {
   })));
   setSessionMessages(session.id, state.messages);
   setSessionRunState(session.id, session.runState || getSessionRunState(session.id));
+  restoreUserInputRequest(session.id, session.runState?.userInputRequest);
   if (loaded) loaded._seenCount = state.messages.length;
 
   state.pendingEdits = {};
@@ -7510,7 +7642,12 @@ function updateUsage(usage, sessionId = state.sessionId, ctx = null) {
 
 function getNativeTools(toolPreset = els.toolPreset.value, allowedToolNames = null) {
 
-  if (toolPreset === "off") return [];
+  // A critical clarification is part of the conversation protocol rather than
+  // an execution capability, so it remains available when operational tools
+  // are disabled.
+  if (toolPreset === "off") {
+    return nativeTools.filter((tool) => tool.function?.name === "request_user_input");
+  }
 
   const allowed = allowedToolNames || getAllowedToolNames(toolPreset);
 
@@ -7547,6 +7684,8 @@ function getAllowedToolNames(toolPreset = els.toolPreset.value) {
 
 
 function isToolAllowed(action) {
+
+  if (action === "request_user_input") return true;
 
   return getAllowedToolNames().has(action);
 
@@ -7631,6 +7770,11 @@ function groupAuthorizations(items) {
 function renderAuthorizationPanel() {
   const panel = els.authorizationPanel;
   if (!panel) return;
+  if (getUserInputRequest(state.sessionId)?.status === "pending") {
+    panel.classList.add("hidden");
+    panel.innerHTML = "";
+    return;
+  }
   const items = pendingAuthorizations();
   if (!items.length) {
     panel.classList.add("hidden");
@@ -7954,7 +8098,7 @@ function prepareMessagesForRunRecovery(messages, runState) {
     .filter((msg) => msg.meta?.kind !== "key-fallback")
     .filter((msg) => msg.meta?.kind !== "run-recovery");
 
-  if (runState?.phase === "tools") {
+  if (runState?.phase === "tools" && !runState?.resumedFromUserInput) {
     for (let index = cleaned.length - 1; index >= 0; index -= 1) {
       const msg = cleaned[index];
       if (msg?.role !== "assistant" || !Array.isArray(msg.meta?.toolCalls)) continue;
@@ -7969,6 +8113,8 @@ function prepareMessagesForRunRecovery(messages, runState) {
       break;
     }
   }
+
+  if (runState?.resumedFromUserInput) return cleaned;
 
   const pendingTools = Array.isArray(runState?.pendingTools)
     ? runState.pendingTools
@@ -8067,6 +8213,345 @@ async function resumePersistedSessionRun(summary) {
     }
 
     if (!recoveryError) notifyTaskComplete(summary.id);
+  });
+}
+
+function normalizeUserInputRequest(tool, ctx = null) {
+  const questions = (Array.isArray(tool.questions) ? tool.questions : [])
+    .slice(0, 3)
+    .map((question, index) => {
+      const type = ["single", "multiple", "text"].includes(question?.type) ? question.type : "single";
+      const options = type === "text" ? [] : (Array.isArray(question?.options) ? question.options : [])
+        .slice(0, 8)
+        .map((option, optionIndex) => ({
+          value: String(option?.value || `option_${optionIndex + 1}`),
+          label: String(option?.label || option?.value || `${optionIndex + 1}`),
+          description: String(option?.description || ""),
+        }));
+      return {
+        id: String(question?.id || `question_${index + 1}`),
+        prompt: String(question?.prompt || "").trim(),
+        type,
+        required: question?.required !== false,
+        allowOther: Boolean(question?.allowOther),
+        options,
+        status: "pending",
+        selected: [],
+        text: "",
+        other: "",
+        answer: null,
+      };
+    })
+    .filter((question) => question.prompt && (question.type === "text" || question.options.length));
+  return {
+    id: `user-input-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    sessionId: ctx?.sessionId || state.sessionId,
+    toolCallId: tool._toolCallId || "",
+    title: String(tool.title || t("questionnaireTitle")),
+    reason: String(tool.reason || ""),
+    questions,
+    status: "pending",
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function serializeUserInputRequest(request) {
+  if (!request) return null;
+  const { abortSignal, abortHandler, _finishing, ...serializable } = request;
+  return JSON.parse(JSON.stringify(serializable));
+}
+
+function getUserInputRequest(sessionId = state.sessionId) {
+  return sessionId ? state.userInputRequests[sessionId] || null : null;
+}
+
+function restoreUserInputRequest(sessionId, savedRequest) {
+  if (!sessionId) return null;
+  if (!savedRequest || savedRequest.status !== "pending") {
+    delete state.userInputRequests[sessionId];
+    return null;
+  }
+  const current = state.userInputRequests[sessionId];
+  if (current?.id === savedRequest.id) return current;
+  const restored = JSON.parse(JSON.stringify(savedRequest));
+  state.userInputRequests[sessionId] = restored;
+  return restored;
+}
+
+function userInputAnswerText(question) {
+  if (!question) return "";
+  if (question.status === "canceled") return question.other ? `${t("questionCanceled")}：${question.other}` : t("questionCanceled");
+  if (question.type === "text") return String(question.text || "").trim();
+  const labels = (question.selected || []).map((value) => question.options.find((option) => option.value === value)?.label || value);
+  if (question.other) labels.push(question.other);
+  return labels.join("、");
+}
+
+function buildUserInputResult(request) {
+  const answers = request.questions.map((question) => ({
+    id: question.id,
+    prompt: question.prompt,
+    type: question.type,
+    status: question.status,
+    values: question.type === "text" ? undefined : [...(question.selected || [])],
+    text: question.type === "text" ? String(question.text || "").trim() : undefined,
+    other: String(question.other || "").trim(),
+    answer: userInputAnswerText(question),
+  }));
+  return {
+    ok: true,
+    action: "request_user_input",
+    requestId: request.id,
+    title: request.title,
+    answers,
+    summary: answers.map((answer) => `${answer.prompt}：${answer.answer || t("questionCanceled")}`).join("\n"),
+  };
+}
+
+function appendUserInputSummary(request, result) {
+  const messages = getSessionMessages(request.sessionId);
+  if (messages.some((message) => message?.meta?.kind === "user-input-summary" && message.meta.requestId === request.id)) return;
+  messages.push({
+    role: "user",
+    content: result.summary,
+    meta: {
+      _system: true,
+      skipApi: true,
+      kind: "user-input-summary",
+      requestId: request.id,
+      title: request.title,
+      answers: result.answers,
+    },
+    _time: new Date().toISOString(),
+  });
+  setSessionMessages(request.sessionId, messages);
+}
+
+async function requestUserInput(tool, ctx = null) {
+  if (ctx?.isSubAgent) {
+    return { ok: false, action: "request_user_input", error: "Sub-agents cannot request user input directly. Return the decision point to the main Agent." };
+  }
+  const request = normalizeUserInputRequest(tool, ctx);
+  if (!request.questions.length) {
+    return { ok: false, action: "request_user_input", error: "No valid questionnaire questions were provided." };
+  }
+  state.userInputRequests[request.sessionId] = request;
+  const previous = getSessionRunState(request.sessionId);
+  setSessionRunState(request.sessionId, {
+    ...previous,
+    status: "waiting-user-input",
+    phase: "tools",
+    userInputRequest: serializeUserInputRequest(request),
+    updatedAt: new Date().toISOString(),
+  });
+  await saveSessionState(request.sessionId, getSessionMessages(request.sessionId), getSessionStats(request.sessionId))
+    .catch((error) => console.error("Failed to persist questionnaire result:", error));
+  if (request.sessionId === state.sessionId) renderMessages();
+  if (document.hidden) {
+    document.title = `[${t("questionnaireTitle")}] ${els.sessionTitle?.value || t("sessionTitleDefault")}`;
+    _notify(`Agent Lite - ${t("questionnaireTitle")}`, request.title);
+  }
+  return new Promise((resolve) => {
+    state._userInputResolvers.set(request.id, resolve);
+    const signal = ctx?.run?.abortController?.signal;
+    if (!signal) return;
+    const abortHandler = () => {
+      request.questions.filter((question) => question.status === "pending").forEach((question) => { question.status = "canceled"; });
+      finishUserInputRequest(request).catch(() => resolve(buildUserInputResult(request)));
+    };
+    request.abortSignal = signal;
+    request.abortHandler = abortHandler;
+    signal.addEventListener("abort", abortHandler, { once: true });
+  });
+}
+
+async function finishUserInputRequest(request) {
+  if (!request || request._finishing || request.status !== "pending" || request.questions.some((question) => question.status === "pending")) return;
+  request._finishing = true;
+  request.status = "resolved";
+  request.resolvedAt = new Date().toISOString();
+  if (request.abortSignal && request.abortHandler) request.abortSignal.removeEventListener("abort", request.abortHandler);
+  const result = buildUserInputResult(request);
+  appendUserInputSummary(request, result);
+  delete state.userInputRequests[request.sessionId];
+  const previous = getSessionRunState(request.sessionId);
+  setSessionRunState(request.sessionId, {
+    ...previous,
+    status: "running",
+    phase: "tools",
+    userInputRequest: null,
+    updatedAt: new Date().toISOString(),
+  });
+  await saveSessionState(request.sessionId, getSessionMessages(request.sessionId), getSessionStats(request.sessionId));
+  const resolver = state._userInputResolvers.get(request.id);
+  state._userInputResolvers.delete(request.id);
+  if (request.sessionId === state.sessionId) {
+    clearPermissionNotify();
+    renderMessages();
+  }
+  if (resolver) {
+    resolver(result);
+    return;
+  }
+
+  // After a reload there is no in-memory Promise to resolve. Recreate the
+  // missing tool result, preserve its assistant tool-call pair, and resume the
+  // saved run from the tool phase.
+  const messages = getSessionMessages(request.sessionId);
+  const hasToolResult = messages.some((message) => message?.role === "tool-result" && message.meta?.toolCallId === request.toolCallId);
+  if (!hasToolResult) {
+    messages.push({
+      role: "tool-result",
+      content: JSON.stringify(result, null, 2),
+      meta: { action: "request_user_input", toolCallId: request.toolCallId, native: true },
+    });
+    setSessionMessages(request.sessionId, messages);
+  }
+  const resumedState = {
+    ...getSessionRunState(request.sessionId),
+    status: "resuming",
+    phase: "tools",
+    resumedFromUserInput: true,
+    userInputRequest: null,
+    updatedAt: new Date().toISOString(),
+  };
+  setSessionRunState(request.sessionId, resumedState);
+  await saveSessionState(request.sessionId, messages, getSessionStats(request.sessionId))
+    .catch((error) => console.error("Failed to persist resumed questionnaire run:", error));
+  const summary = state.sessions.find((session) => session.id === request.sessionId) || { id: request.sessionId };
+  summary.runState = resumedState;
+  resumePersistedSessionRun(summary).catch((error) => console.error("Failed to resume questionnaire run:", error));
+}
+
+function renderUserInputQuestion(question, index) {
+  const resolved = question.status !== "pending";
+  const statusText = question.status === "resolved" ? t("questionnaireAnswered") : t("questionCanceled");
+  let control = "";
+  if (question.type === "text") {
+    control = `<textarea class="user-input-text" data-user-input-text rows="3" placeholder="${escapeHtml(t("questionnaireTextPlaceholder"))}" ${resolved ? "disabled" : ""}>${escapeHtml(question.text || "")}</textarea>`;
+  } else {
+    const inputType = question.type === "multiple" ? "checkbox" : "radio";
+    control = `<div class="user-input-options">${question.options.map((option) => {
+      const checked = (question.selected || []).includes(option.value);
+      return `<label class="user-input-option">
+        <input type="${inputType}" name="user-input-${escapeHtml(question.id)}" value="${escapeHtml(option.value)}" ${checked ? "checked" : ""} ${resolved ? "disabled" : ""}>
+        <span><b>${escapeHtml(option.label)}</b>${option.description ? `<small>${escapeHtml(option.description)}</small>` : ""}</span>
+      </label>`;
+    }).join("")}</div>`;
+  }
+  return `<section class="user-input-question${resolved ? " is-resolved" : ""}" data-question-id="${escapeHtml(question.id)}">
+    <header class="user-input-question-head">
+      <span>${index + 1}</span>
+      <strong>${escapeHtml(question.prompt)}</strong>
+      ${resolved ? `<em>${escapeHtml(statusText)}</em>` : ""}
+    </header>
+    <div class="user-input-question-body">
+      ${control}
+      <textarea class="user-input-other" data-user-input-other rows="2" placeholder="${escapeHtml(t("questionnaireOtherPlaceholder"))}" ${resolved ? "disabled" : ""}>${escapeHtml(question.other || "")}</textarea>
+    </div>
+    ${resolved ? "" : `<footer class="user-input-question-actions">
+      <button type="button" class="user-input-skip" data-user-input-action="cancel">${escapeHtml(t("questionnaireCancel"))}</button>
+      <button type="button" class="user-input-confirm" data-user-input-action="confirm">${escapeHtml(t("questionnaireConfirm"))}</button>
+    </footer>`}
+  </section>`;
+}
+
+function renderUserInputPanel() {
+  const panel = els.userInputPanel;
+  if (!panel) return;
+  const request = getUserInputRequest(state.sessionId);
+  if (!request || request.status !== "pending") {
+    panel.classList.add("hidden");
+    panel.innerHTML = "";
+    return;
+  }
+  const done = request.questions.filter((question) => question.status !== "pending").length;
+  panel.innerHTML = `<div class="user-input-card">
+    <header class="user-input-head">
+      <div>
+        <span>${escapeHtml(t("questionnaireEyebrow"))}</span>
+        <strong>${escapeHtml(request.title || t("questionnaireTitle"))}</strong>
+        ${request.reason ? `<p>${escapeHtml(request.reason)}</p>` : ""}
+      </div>
+      <b>${escapeHtml(t("questionnaireProgress", { done, total: request.questions.length }))}</b>
+    </header>
+    <div class="user-input-questions">${request.questions.map(renderUserInputQuestion).join("")}</div>
+    <p class="user-input-hint">${escapeHtml(t("questionnaireHint"))}</p>
+  </div>`;
+  panel.classList.remove("hidden");
+}
+
+function getUserInputQuestionElement(questionId) {
+  return [...(els.userInputPanel?.querySelectorAll("[data-question-id]") || [])]
+    .find((element) => element.dataset.questionId === questionId) || null;
+}
+
+async function persistUserInputProgress(request) {
+  const previous = getSessionRunState(request.sessionId);
+  setSessionRunState(request.sessionId, {
+    ...previous,
+    status: "waiting-user-input",
+    phase: "tools",
+    userInputRequest: serializeUserInputRequest(request),
+    updatedAt: new Date().toISOString(),
+  });
+  await saveSessionState(request.sessionId, getSessionMessages(request.sessionId), getSessionStats(request.sessionId));
+}
+
+async function resolveUserInputQuestion(questionId, action) {
+  const request = getUserInputRequest(state.sessionId);
+  const question = request?.questions.find((item) => item.id === questionId);
+  if (!request || !question || question.status !== "pending") return false;
+  const element = getUserInputQuestionElement(questionId);
+  if (!element) return false;
+  const other = String(element.querySelector("[data-user-input-other]")?.value || "").trim();
+  if (action === "cancel") {
+    question.status = "canceled";
+    question.other = other;
+  } else {
+    if (question.type === "text") {
+      question.text = String(element.querySelector("[data-user-input-text]")?.value || "").trim();
+      if (question.required && !question.text) {
+        showToast(t("fillRequired"));
+        return false;
+      }
+    } else {
+      question.selected = [...element.querySelectorAll(`input[type="${question.type === "multiple" ? "checkbox" : "radio"}"]:checked`)].map((input) => input.value);
+      if (question.required && !question.selected.length && !other) {
+        showToast(t("fillRequired"));
+        return false;
+      }
+    }
+    question.other = other;
+    question.status = "resolved";
+  }
+  if (request.questions.every((item) => item.status !== "pending")) {
+    renderUserInputPanel();
+    await finishUserInputRequest(request);
+    return true;
+  }
+  await persistUserInputProgress(request);
+  renderUserInputPanel();
+  return true;
+}
+
+function bindUserInputPanel() {
+  const panel = els.userInputPanel;
+  if (!panel) return;
+  panel.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-user-input-action]");
+    if (!button) return;
+    const questionElement = button.closest("[data-question-id]");
+    if (!questionElement) return;
+    button.disabled = true;
+    resolveUserInputQuestion(questionElement.dataset.questionId, button.dataset.userInputAction)
+      .catch((error) => {
+        console.error("Failed to resolve questionnaire question:", error);
+        showToast(error.message || t("saveFailed"));
+      })
+      .finally(() => {
+        if (button.isConnected) button.disabled = false;
+      });
   });
 }
 
@@ -8169,6 +8654,7 @@ function shouldRetryWithoutNativeTools(errorText = "") {
 function mapMessageForApi(msg, includeNativeTools = true) {
 
   if (!msg || typeof msg !== "object") return null;
+  if (msg.meta?.skipApi) return null;
 
   if (msg.role === "system") {
     return { role: "system", content: getMsgText(msg) };
@@ -9080,6 +9566,10 @@ async function executeToolCall(tool, options = {}) {
 
   }
 
+  if (tool.action === "request_user_input") {
+    return requestUserInput(tool, options.context || null);
+  }
+
   // A task tool is itself the user's delegation boundary. Child agents may
   // execute only the tools exposed by their inherited policy; suppressing the
   // shared UI confirmation prevents concurrent children from deadlocking on
@@ -9347,7 +9837,7 @@ function createSubContext(parentCtx, taskPrompt) {
     toolMutationEpoch: 0,
     successfulToolSignatures: new Set(),
     noToolRetries: 0,
-    tools: (parentCtx.tools || getNativeTools()).filter((tool) => tool.function?.name !== "task"),
+    tools: (parentCtx.tools || getNativeTools()).filter((tool) => !["task", "request_user_input"].includes(tool.function?.name)),
     stats: { input: 0, output: 0, cache: 0 },
     taskUsage: { input: 0, output: 0, cache: 0 },
     autoCompacted: 0,
@@ -9808,6 +10298,8 @@ async function runAgentLoop(ctx = null) {
       const pendingVisionPaths = new Set();
 
       const normalizedCalls = nativeCalls.map(normalizeNativeToolCall);
+      const questionnaireCallIndex = normalizedCalls.findIndex((tool) => tool.action === "request_user_input");
+      const questionnaireExclusive = questionnaireCallIndex >= 0;
       if (!ctx.isSubAgent) {
         await persistRunCheckpoint(ctx, "running", "tools", {
           round,
@@ -9838,7 +10330,7 @@ async function runAgentLoop(ctx = null) {
       // Queue all direct destructive operations from this model turn before
       // executing any of them, so the user can review the whole batch once.
       const authorizationDecisions = new Map();
-      if (getPermissionProfile() === "accept") {
+      if (!questionnaireExclusive && getPermissionProfile() === "accept") {
         const gatedCalls = normalizedCalls
           .map((tool, index) => ({ tool, index }))
           .filter(({ tool }) => shouldAskBeforeTool(tool.action));
@@ -9852,7 +10344,7 @@ async function runAgentLoop(ctx = null) {
       // Execute an all-task batch concurrently, with a conservative limit so
       // one request cannot flood the local gateway.
       let parallelTaskResults = null;
-      if (normalizedCalls.length > 1 && normalizedCalls.every((tool) => tool.action === "task")) {
+      if (!questionnaireExclusive && normalizedCalls.length > 1 && normalizedCalls.every((tool) => tool.action === "task")) {
         parallelTaskResults = await mapWithConcurrency(
           normalizedCalls,
           3,
@@ -9863,13 +10355,22 @@ async function runAgentLoop(ctx = null) {
       for (let callIndex = 0; callIndex < normalizedCalls.length; callIndex += 1) {
 
         const tool = normalizedCalls[callIndex];
-        let result = parallelTaskResults
-          ? parallelTaskResults[callIndex]
-          : await executeToolWithDelegation(tool, ctx, {
-              authorizationDecision: authorizationDecisions.has(callIndex)
-                ? authorizationDecisions.get(callIndex)
-                : undefined,
-            });
+        let result;
+        if (questionnaireExclusive && callIndex !== questionnaireCallIndex) {
+          result = {
+            ok: false,
+            action: tool.action,
+            error: "request_user_input must be the only tool call in its model turn. This operation was not executed.",
+          };
+        } else {
+          result = parallelTaskResults
+            ? parallelTaskResults[callIndex]
+            : await executeToolWithDelegation(tool, ctx, {
+                authorizationDecision: authorizationDecisions.has(callIndex)
+                  ? authorizationDecisions.get(callIndex)
+                  : undefined,
+              });
+        }
 
         const visionImage = toolImageVisionPayload(result);
         if (visionImage && !pendingVisionPaths.has(visionImage.path)) {
@@ -13494,6 +13995,7 @@ function showKeySyncModal(tokens, fullKeys) {
 async function init() {
 
   bindAuthorizationPanel();
+  bindUserInputPanel();
 
     // Keep the current page connected. When the backend process is replaced,
     // its instance ID changes and this existing page refreshes in place.

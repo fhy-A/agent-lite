@@ -113,6 +113,7 @@ const state = {
   // Per-session message cache for session switching
   _sessionMsgs: {},
   _sessionRuns: {},
+  _sessionRunStates: {},
   _sessionStats: {},
   _sessionSaveChains: {},
   _activeRun: null,
@@ -179,9 +180,55 @@ function ensureSessionRun(sessionId) {
       responseStartTime: null,
       timerInterval: null,
       timerDisplay: null,
+      recovery: null,
     };
   }
   return state._sessionRuns[sessionId];
+}
+
+function getSessionRunState(sessionId) {
+  if (!sessionId) return {};
+  return state._sessionRunStates[sessionId] || {};
+}
+
+function setSessionRunState(sessionId, runState) {
+  if (!sessionId) return;
+  const normalized = runState && Object.keys(runState).length ? { ...runState } : {};
+  state._sessionRunStates[sessionId] = normalized;
+  const local = state.sessions.find((session) => session.id === sessionId);
+  if (local) local.runState = normalized;
+}
+
+function makeRunCheckpoint(ctx, status = "running", phase = "model", extra = {}) {
+  const previous = getSessionRunState(ctx.sessionId);
+  return {
+    version: 1,
+    status,
+    phase,
+    startedAt: previous.startedAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    model: ctx.model || "",
+    temperature: Number(ctx.temperature ?? 0.2),
+    maxTokens: Number(ctx.maxTokens || 0),
+    toolPreset: ctx.toolPreset || "default",
+    permissionProfile: ctx.permissionProfile || "accept",
+    thinkingLevel: ctx.thinkingLevel || getThinkingLevel(),
+    taskPrompt: ctx._taskPrompt || previous.taskPrompt || "",
+    recoveryCount: Number(extra.recoveryCount ?? previous.recoveryCount ?? 0),
+    ...extra,
+  };
+}
+
+async function persistRunCheckpoint(ctx, status = "running", phase = "model", extra = {}) {
+  if (!ctx?.sessionId || ctx.isSubAgent) return;
+  setSessionRunState(ctx.sessionId, makeRunCheckpoint(ctx, status, phase, extra));
+  await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats);
+}
+
+async function clearRunCheckpoint(ctx) {
+  if (!ctx?.sessionId || ctx.isSubAgent) return;
+  setSessionRunState(ctx.sessionId, {});
+  await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats);
 }
 
 function getSessionMessages(sessionId) {
@@ -291,6 +338,7 @@ function buildRunContext(sessionId) {
     allowedToolNames,
     tools: getNativeTools(toolPreset, allowedToolNames),
     explicitSkill: null,
+    thinkingLevel: getThinkingLevel(),
   };
 }
 
@@ -1724,12 +1772,12 @@ const I18N = {
     welcome: "我是 Agent Lite，你的本地 AI 编程伙伴。\\n\\n我可以读文件、搜代码、跑命令、改项目。",
     welcomeTagline: "开始对话，用自然语言驱动代码。",
     inputPlaceholder: "描述需求、粘贴代码，或输入 / 调用命令",
-    thinkingLabel: "思考中", completedLabel: "完成",
+    thinkingLabel: "思考中", networkRecovering: "网络恢复中", completedLabel: "完成",
     refreshBtn: "刷新", closePreview: "关闭", filterFiles: "筛选文件…",
     statusDone: "完成", statusFail: "失败", statusRunning: "准备",
     toolExecFailed: "工具执行失败", fetchFailed: "抓取失败",
     fillRequired: "请补全必填内容", nameExists: "名称已存在",
-    enterMemoryName: "请输入记忆名称", enterMemoryBody: "请输入记忆内容", waitForReply: "请等待当前回答完成后再新建会话",
+    enterMemoryName: "请输入记忆名称", enterMemoryBody: "请输入记忆内容",
     memNamePlaceholder: "name，只能使用英文、数字、中划线和下划线，例如 coding-conventions",
     memDescPlaceholder: "description，简要说明",
     memBodyPlaceholder: "记忆内容...",
@@ -1859,7 +1907,7 @@ const I18N = {
     openFailed: "打开失败", pathCopied: "路径已复制", noMatchingFiles: "无匹配文件", emptyDirectory: "该目录为空",
     writeFailed: "写入失败", compactFailed: "压缩失败", readMemoryFailed: "读取 Memory 失败",
     notEnoughToExtract: "没有足够的对话内容可提取 Memory", loginFirst: "请先登录",
-    platformAccount: "平台账户", loggedOut: "已退出登录", notLoggedIn: "未登录中转站", loginPlatform: "登录平台账号",
+    platformAccount: "平台账户", loggedOut: "已退出登录", notLoggedIn: "未登录中转站", loginPlatform: "登录平台账号", platformUrl: "平台地址",
     loggedInAs: "已登录：{name}", loginExpired: "登录已过期，请重新登录", syncFailed: "同步失败：{message}",
     syncGatewayKeys: "同步中转站 API Key", syncKeysTitle: "同步中转站 API Key", keyCount: "共 {count} 个 API Key",
     newKeyCount: "{count} 个未添加", copyAll: "复制全部", allKeysAdded: "所有 API Key 已添加",
@@ -1920,12 +1968,12 @@ const I18N = {
     welcome: "I'm Agent Lite, your local AI coding partner. I can read files, search code, run commands, and modify projects.",
     welcomeTagline: "Start a conversation, drive code with natural language.",
     inputPlaceholder: "Describe your task, paste code, or type / for commands",
-    thinkingLabel: "Thinking", completedLabel: "Completed",
+    thinkingLabel: "Thinking", networkRecovering: "Reconnecting", completedLabel: "Completed",
     refreshBtn: "Refresh", closePreview: "Close", filterFiles: "Filter files...",
     statusDone: "Done", statusFail: "Failed", statusRunning: "Preparing",
     toolExecFailed: "Tool execution failed", fetchFailed: "Fetch failed",
     fillRequired: "Please fill in required fields", nameExists: "Name already exists",
-    enterMemoryName: "Enter memory name", enterMemoryBody: "Enter memory content", waitForReply: "Please wait for the current reply to finish",
+    enterMemoryName: "Enter memory name", enterMemoryBody: "Enter memory content",
     memNamePlaceholder: "name, use letters, numbers, hyphens and underscores, e.g. coding-conventions",
     memDescPlaceholder: "description, a brief summary",
     memBodyPlaceholder: "Memory content...",
@@ -2054,7 +2102,7 @@ const I18N = {
     openFailed: "Open failed", pathCopied: "Path copied", noMatchingFiles: "No matching files", emptyDirectory: "Directory is empty",
     writeFailed: "Write failed", compactFailed: "Compaction failed", readMemoryFailed: "Failed to load Memory",
     notEnoughToExtract: "Not enough conversation content to extract Memory", loginFirst: "Please sign in first",
-    platformAccount: "Platform Account", loggedOut: "Signed out", notLoggedIn: "Not signed in to the gateway", loginPlatform: "Sign in to platform",
+    platformAccount: "Platform Account", loggedOut: "Signed out", notLoggedIn: "Not signed in to the gateway", loginPlatform: "Sign in to platform", platformUrl: "Platform URL",
     loggedInAs: "Signed in as {name}", loginExpired: "Session expired. Please sign in again.", syncFailed: "Sync failed: {message}",
     syncGatewayKeys: "Sync Gateway API Keys", syncKeysTitle: "Sync Gateway API Keys", keyCount: "{count} API Keys",
     newKeyCount: "{count} not added", copyAll: "Copy all", allKeysAdded: "All API Keys have been added",
@@ -2135,7 +2183,10 @@ function applyI18n() {
   document.querySelectorAll("[data-i18n]").forEach(el => {
     if (_managed.has(el.id)) return;
     const key = el.dataset.i18n;
-    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+    const uiLabel = el.querySelector("[data-ui-label]");
+    if (uiLabel) {
+      uiLabel.textContent = t(key);
+    } else if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
       el.placeholder = t(key);
     } else if (el.childNodes.length === 1 && el.childNodes[0].nodeType === 3) {
       el.textContent = t(key);
@@ -2154,8 +2205,12 @@ function applyI18n() {
   };
   for (const [id, key] of Object.entries(idMap)) {
     const el = document.getElementById(id); if (!el) continue;
-    const txt = [...el.childNodes].reverse().find(n => n.nodeType === 3);
-    if (txt) txt.nodeValue = t(key); else el.textContent = t(key);
+    const uiLabel = el.querySelector("[data-ui-label]");
+    if (uiLabel) uiLabel.textContent = t(key);
+    else {
+      const txt = [...el.childNodes].reverse().find(n => n.nodeType === 3);
+      if (txt) txt.nodeValue = t(key); else el.textContent = t(key);
+    }
   }
   document.querySelectorAll(".theme-opt").forEach(el => {
     el.textContent = t({light:"light",dark:"dark",system:"followSystem"}[el.dataset.theme]||"followSystem");
@@ -3645,35 +3700,38 @@ function highlightSyntax(code, lang) {
     return result + escapeHtml(source.slice(cursor));
   }
 
+  const source = String(code ?? "");
   const patterns = _resolveSyntaxPatterns(lang);
 
-  if (!patterns) return escapeHtml(code);
+  if (!patterns) return escapeHtml(source);
 
-  let result = escapeHtml(code);
-
-  // Apply each pattern: wrap matches in <span class="...">
-
-  patterns.forEach(([regex, cls]) => {
-
-    result = result.replace(regex, (match, ...groups) => {
-
-      // For patterns with capture groups (like HTML tags), preserve the structure
-
-      if (groups.length > 1 && groups[0] !== undefined && match.length > groups[0].length) {
-
-        // Complex replacement for patterns that capture parts
-
-        return match;
-
-      }
-
-      return `<span class="${cls}">${match}</span>`;
-
-    });
-
+  // Match against the original source, then escape each accepted token once.
+  // Replacing against already generated <span> markup corrupts class names and
+  // makes fragments such as `-kw">` appear as if they were source code.
+  const tokens = [];
+  patterns.forEach(([regex, cls], priority) => {
+    const flags = regex.flags.includes("g") ? regex.flags : `${regex.flags}g`;
+    const matcher = new RegExp(regex.source, flags);
+    for (const match of source.matchAll(matcher)) {
+      const text = match[0];
+      if (!text) continue;
+      const start = match.index ?? 0;
+      tokens.push({ start, end: start + text.length, text, cls, priority });
+    }
   });
 
-  return result;
+  tokens.sort((a, b) => a.start - b.start || b.end - a.end || a.priority - b.priority);
+
+  let cursor = 0;
+  let result = "";
+  for (const token of tokens) {
+    if (token.start < cursor) continue;
+    result += escapeHtml(source.slice(cursor, token.start));
+    result += `<span class="${token.cls}">${escapeHtml(token.text)}</span>`;
+    cursor = token.end;
+  }
+
+  return result + escapeHtml(source.slice(cursor));
 
 }
 
@@ -4167,6 +4225,11 @@ function getRunTimerDisplay(sessionId = state.sessionId) {
 }
 
 function renderThinkingBadge(sessionId = state.sessionId) {
+  const recovery = ensureSessionRun(sessionId)?.recovery;
+  if (recovery?.nextRetryAt) {
+    const remaining = Math.max(0, Math.ceil((recovery.nextRetryAt - Date.now()) / 1000));
+    return `<span class="streaming-dot">${escapeHtml(t("networkRecovering") || "Reconnecting")} ${escapeHtml(`${remaining}s`)} <span class="streaming-timer">${escapeHtml(getRunTimerDisplay(sessionId))}</span></span>`;
+  }
   return `<span class="streaming-dot">${t("thinkingLabel")} <span class="streaming-timer">${escapeHtml(getRunTimerDisplay(sessionId))}</span></span>`;
 }
 
@@ -4598,6 +4661,28 @@ function renderCompactSummaryProjection(msg, index) {
   return `<article class="msg branch-indicator compact-indicator" data-msg-index="${index}"><div class="branch-indicator-bar"><span class="branch-indicator-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M7 12h10M9 17h6"/><path d="M3 3h18v18H3z"/></svg></span><span>${escapeHtml(label)}</span></div></article>`;
 }
 
+function getBranchFlowMarker() {
+  const current = state.sessions.find((session) => session.id === state.sessionId);
+  if (!current || current._branchMsgCount == null) return null;
+
+  const rawCount = Number(current?._branchMsgCount);
+  if (!Number.isFinite(rawCount) || rawCount < 0) return null;
+
+  const parent = state.sessions.find((session) => session.id === current._parentId)
+    || state.sessions.find((session) => Array.isArray(session._branches) && session._branches.includes(state.sessionId));
+  if (!parent) return null;
+
+  return {
+    messageCount: Math.max(0, Math.trunc(rawCount)),
+    parentTitle: parent?.title || "",
+  };
+}
+
+function renderBranchFlowProjection(parentTitle) {
+  const label = t("branchedFromHere", { title: parentTitle || "" });
+  return `<article class="msg branch-indicator"><div class="branch-indicator-bar"><span class="branch-indicator-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span><span>${escapeHtml(label)}</span></div></article>`;
+}
+
 const streamingRenderQueue = new Map();
 let streamingRenderFrame = 0;
 
@@ -4697,6 +4782,11 @@ function renderMessages() {
   const rows = [];
   let pendingThoughts = [];
   let thoughtSerial = 0;
+  const branchMarker = getBranchFlowMarker();
+  const branchBoundary = branchMarker
+    ? (branchMarker.messageCount > msgs.length ? 0 : branchMarker.messageCount)
+    : -1;
+  let branchMarkerInserted = false;
 
   const flushThoughts = () => {
     if (!pendingThoughts.length) return false;
@@ -4706,7 +4796,18 @@ function renderMessages() {
     return true;
   };
 
+  const insertBranchMarker = () => {
+    if (!branchMarker || branchMarkerInserted) return;
+    flushThoughts();
+    rows.push(renderBranchFlowProjection(branchMarker.parentTitle));
+    branchMarkerInserted = true;
+  };
+
   for (let j = 0; j < msgs.length; j += 1) {
+    // _branchMsgCount is an index in the raw message array. Insert the marker
+    // while walking that same array so hidden tool messages cannot shift it.
+    if (j === branchBoundary) insertBranchMarker();
+
     const msg = msgs[j];
     if (!msg || isInternalMessage(msg)) continue;
 
@@ -4744,41 +4845,7 @@ function renderMessages() {
     // Deliberately omit tool-call/tool-result details from the conversation.
   }
   flushThoughts();
-
-  // Branch indicator: show in child sessions at the branch point
-  var branchMsgCount = -1;
-  for (var k = 0; k < state.sessions.length; k++) {
-    if (state.sessions[k].id === state.sessionId) {
-      branchMsgCount = state.sessions[k]._branchMsgCount;
-      break;
-    }
-  }
-  if (typeof branchMsgCount === "number" && branchMsgCount >= 0) {
-    // Find parent title and insert marker at branch point
-    var parentSession = null;
-    for (var p = 0; p < state.sessions.length; p++) {
-      if (state.sessions[p]._branches && state.sessions[p]._branches.indexOf(state.sessionId) >= 0) {
-        parentSession = state.sessions[p]; break;
-      }
-    }
-    // Also try finding by _parentId
-    if (!parentSession) {
-      for (var q = 0; q < state.sessions.length; q++) {
-        if (state.sessions[q].id === state.sessionId) {
-          var pid = state.sessions[q]._parentId;
-          if (pid) {
-            for (var r = 0; r < state.sessions.length; r++) {
-              if (state.sessions[r].id === pid) { parentSession = state.sessions[r]; break; }
-            }
-          }
-          break;
-        }
-      }
-    }
-    var parentTitle = (parentSession && parentSession.title) || "";
-    var insertAt = Math.min(branchMsgCount, rows.length);
-    rows.splice(insertAt, 0, '<article class="msg branch-indicator"><div class="branch-indicator-bar"><span class="branch-indicator-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span><span>' + t("branchedFromHere", { title: escapeHtml(parentTitle) }) + '</span></div></article>');
-  }
+  insertBranchMarker();
 
   // Render queued messages (sent while agent is busy)
   const run = ensureSessionRun(state.sessionId);
@@ -5429,6 +5496,9 @@ async function refreshSessions() {
   try {
     const data = await apiJson("/api/sessions");
     state.sessions = data.data || [];
+    for (const session of state.sessions) {
+      if (session?.id) setSessionRunState(session.id, session.runState || {});
+    }
   } catch (err) {
     console.error("Failed to refresh sessions:", err);
     // Keep existing sessions on error — don't wipe the list
@@ -5463,6 +5533,7 @@ async function createSession(title = t("sessionTitleDefault")) {
 
   state.messages = session.messages || [];
   setSessionMessages(session.id, state.messages);
+  setSessionRunState(session.id, session.runState || {});
 
   state.pendingEdits = {};
 
@@ -5548,6 +5619,7 @@ async function loadSession(sessionId) {
 
   })));
   setSessionMessages(session.id, state.messages);
+  setSessionRunState(session.id, session.runState || getSessionRunState(session.id));
   if (loaded) loaded._seenCount = state.messages.length;
 
   state.pendingEdits = {};
@@ -5610,6 +5682,7 @@ async function saveSessionState(sessionId, messages, stats, title) {
         _time: msg._time || undefined,
       })),
     stats: { ...(stats || getSessionStats(sessionId) || {}) },
+    runState: { ...getSessionRunState(sessionId) },
   };
 
   // Serialize saves per session so a slower, older request cannot overwrite
@@ -5666,6 +5739,7 @@ async function saveCurrentSession() {
       })),
 
       stats: state.stats,
+      runState: { ...getSessionRunState(state.sessionId) },
 
     }),
 
@@ -5923,7 +5997,7 @@ function applyPreviewWidth(width = state.previewWidth, persist = true) {
 
   document.documentElement.style.setProperty("--preview-width", `${next}px`);
 
-  localStorage.setItem("agent-lite-preview-width", String(next));
+  if (persist) localStorage.setItem("agent-lite-preview-width", String(next));
 
 }
 
@@ -5977,6 +6051,8 @@ function renderPreviewNotice(title, body = "") {
 
   els.previewLanguage.textContent = "";
 
+  renderPreviewModeActions([]);
+
   els.refreshPreview.disabled = true;
 
   els.copyPreview.disabled = true;
@@ -6005,7 +6081,11 @@ function renderCodePreview(content = "") {
 
   const lang = languageFromPath(state.previewPath || "");
 
-  const doHighlight = _resolveSyntaxPatterns(lang);
+  // Large previews favor responsive scrolling/resizing over syntax coloring.
+  // The source remains exact and line-addressable in this mode.
+  const doHighlight = normalized.length <= 350000 && lines.length <= 8000
+    ? _resolveSyntaxPatterns(lang)
+    : null;
 
   els.filePreview.className = "file-preview code-preview";
 
@@ -6645,6 +6725,11 @@ async function loadFile(path, mtime) {
 
   state.previewPath = data.path || path;
 
+  if (previousPath !== state.previewPath) {
+    state.previewTable = null;
+    state.previewImageScale = null;
+  }
+
   state._previewMtime = data.updatedAt || "";
 
   const language = languageFromPath(state.previewPath);
@@ -6653,36 +6738,33 @@ async function loadFile(path, mtime) {
 
   els.previewTitle.textContent = data.name || "File";
 
-  els.previewMeta.textContent = `${data.path} · ${formatSize(data.size || 0)}${data.truncated ? " · truncated" : ""}`;
+  els.previewMeta.textContent = formatPreviewMeta(data);
 
   els.previewLanguage.textContent = language;
 
   els.refreshPreview.disabled = false;
 
-  // Image preview — fetch raw base64 from backend
-
   const ext = (data.name || "").split(".").pop()?.toLowerCase();
 
   if (ext && /^(png|jpg|jpeg|gif|webp|svg|bmp|ico)$/i.test(ext)) {
-
-    try {
-
-      const raw = await apiJson(`/api/file?path=${encodeURIComponent(path)}&raw=1`);
-
-      state.previewContent = raw.content || "";
-
-      renderImagePreview(state.previewContent, raw.mime || `image/${ext === "jpg" ? "jpeg" : ext}`);
-
-    } catch (_) {
-
-      renderPreviewNotice(t("loadFailed"), t("imageReadFailed"));
-
-    }
-
+    state.previewKind = "image";
+    state.previewContent = "";
+    els.previewLanguage.textContent = ext;
+    renderImagePreview(state.previewPath);
     els.copyPreview.disabled = true;
-
+    startPreviewAutoRefresh();
     return;
 
+  }
+
+  if (ext === "pdf") {
+    state.previewKind = "pdf";
+    state.previewContent = "";
+    els.previewLanguage.textContent = "pdf";
+    renderPdfPreview(state.previewPath);
+    els.copyPreview.disabled = true;
+    startPreviewAutoRefresh();
+    return;
   }
 
   if (data.binary) {
@@ -6701,7 +6783,20 @@ async function loadFile(path, mtime) {
 
   if (state.previewContent) {
 
-    renderCodePreview(state.previewContent);
+    if (ext === "md" || ext === "markdown" || ext === "mdown") {
+      state.previewKind = "markdown";
+      if (previousPath !== state.previewPath) state.previewMode = "rendered";
+      renderMarkdownPreview(state.previewContent, state.previewMode);
+    } else if (ext === "csv" || ext === "tsv") {
+      state.previewKind = "delimited";
+      if (previousPath !== state.previewPath) state.previewMode = "table";
+      renderDelimitedPreview(state.previewContent, ext === "tsv" ? "\t" : ",", state.previewMode);
+    } else {
+      state.previewKind = "text";
+      state.previewMode = "source";
+      renderPreviewModeActions([]);
+      renderCodePreview(state.previewContent);
+    }
 
   } else {
 
@@ -6735,16 +6830,23 @@ function startPreviewAutoRefresh() {
 
       if (data.updatedAt && data.updatedAt !== state._previewMtime) {
 
-        if (!data.binary) {
-
+        state._previewMtime = data.updatedAt;
+        els.previewMeta.textContent = formatPreviewMeta(data, t("autoUpdated"));
+        if (state.previewKind === "image") {
+          renderImagePreview(state.previewPath);
+        } else if (state.previewKind === "pdf") {
+          renderPdfPreview(state.previewPath);
+        } else if (!data.binary) {
           state.previewContent = data.content || "";
-
-          state._previewMtime = data.updatedAt;
-
-          els.previewMeta.textContent = `${data.path} · ${formatSize(data.size || 0)} (${t("autoUpdated")})`;
-
-          renderCodePreview(state.previewContent);
-
+          if (state.previewKind === "markdown") {
+            renderMarkdownPreview(state.previewContent, state.previewMode);
+          } else if (state.previewKind === "delimited") {
+            const ext = state.previewPath.split(".").pop()?.toLowerCase();
+            state.previewTable = null;
+            renderDelimitedPreview(state.previewContent, ext === "tsv" ? "\t" : ",", state.previewMode);
+          } else {
+            renderCodePreview(state.previewContent);
+          }
         }
 
       }
@@ -7799,10 +7901,267 @@ function _safeParseJSON(raw) {
   try { return JSON.parse(raw) || {}; } catch (_) { return {}; }
 }
 
+const RUN_RECOVERY_OWNER = (() => {
+  const key = "agent-lite-run-recovery-owner";
+  let value = sessionStorage.getItem(key);
+  if (!value) {
+    value = typeof crypto?.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    sessionStorage.setItem(key, value);
+  }
+  return value;
+})();
+
+async function withSessionRecoveryLock(sessionId, worker) {
+  const lockName = `agent-lite-run-recovery:${sessionId}`;
+  if (navigator.locks?.request) {
+    return navigator.locks.request(lockName, { ifAvailable: true }, async (lock) => {
+      if (!lock) return false;
+      await worker();
+      return true;
+    });
+  }
+
+  const leaseKey = `agent-lite-run-recovery-lease:${sessionId}`;
+  const now = Date.now();
+  try {
+    const current = JSON.parse(localStorage.getItem(leaseKey) || "null");
+    if (current?.expiresAt > now && current.owner !== RUN_RECOVERY_OWNER) return false;
+  } catch (_) { /* replace invalid lease */ }
+
+  localStorage.setItem(leaseKey, JSON.stringify({
+    owner: RUN_RECOVERY_OWNER,
+    expiresAt: now + (30 * 60 * 1000),
+  }));
+  try {
+    await worker();
+    return true;
+  } finally {
+    try {
+      const current = JSON.parse(localStorage.getItem(leaseKey) || "null");
+      if (current?.owner === RUN_RECOVERY_OWNER) localStorage.removeItem(leaseKey);
+    } catch (_) {
+      localStorage.removeItem(leaseKey);
+    }
+  }
+}
+
+function prepareMessagesForRunRecovery(messages, runState) {
+  const source = Array.isArray(messages) ? messages.filter(Boolean) : [];
+  const cleaned = source
+    .filter((msg) => !msg.streaming)
+    .filter((msg) => msg.meta?.kind !== "key-fallback")
+    .filter((msg) => msg.meta?.kind !== "run-recovery");
+
+  if (runState?.phase === "tools") {
+    for (let index = cleaned.length - 1; index >= 0; index -= 1) {
+      const msg = cleaned[index];
+      if (msg?.role !== "assistant" || !Array.isArray(msg.meta?.toolCalls)) continue;
+      cleaned[index] = {
+        ...msg,
+        meta: {
+          ...(msg.meta || {}),
+          toolCalls: undefined,
+          recoveredToolRound: true,
+        },
+      };
+      break;
+    }
+  }
+
+  const pendingTools = Array.isArray(runState?.pendingTools)
+    ? runState.pendingTools
+      .map((tool) => `${tool.action || "tool"}${tool.path ? ` (${tool.path})` : ""}`)
+      .join(", ")
+    : "";
+  const recoveryInstruction = runState?.phase === "tools"
+    ? [
+        "[System recovery] The page reloaded while tools were being executed.",
+        pendingTools ? `The interrupted tool batch was: ${pendingTools}.` : "",
+        "Before repeating any write, command, network request, or other side effect, inspect the current files and state to determine what already completed.",
+        "Continue the original task from the saved conversation and finish it only after that verification.",
+      ].filter(Boolean).join(" ")
+    : "[System recovery] The page reloaded while the previous model response was incomplete. Continue the original task from the saved conversation and finish it. Do not repeat completed work.";
+
+  cleaned.push({
+    role: "user",
+    content: recoveryInstruction,
+    meta: { _system: true, kind: "run-recovery" },
+    _time: new Date().toISOString(),
+  });
+  return cleaned;
+}
+
+function buildRecoveredRunContext(session, runState) {
+  const sessionId = session.id;
+  const messages = prepareMessagesForRunRecovery(session.messages, runState);
+  setSessionMessages(sessionId, messages);
+  setSessionStats(sessionId, session.stats || { input: 0, output: 0, cache: 0, cost: 0 });
+
+  const ctx = buildRunContext(sessionId);
+  ctx.messages = messages;
+  ctx.stats = getSessionStats(sessionId);
+  ctx.model = runState.model || ctx.model;
+  ctx.temperature = Number(runState.temperature ?? ctx.temperature ?? 0.2);
+  ctx.maxTokens = Number(runState.maxTokens || ctx.maxTokens || getEffectiveMaxTokens(ctx.model));
+  ctx.toolPreset = runState.toolPreset || ctx.toolPreset || "default";
+  ctx.permissionProfile = runState.permissionProfile || ctx.permissionProfile || "accept";
+  ctx.thinkingLevel = runState.thinkingLevel || ctx.thinkingLevel || "auto";
+  ctx.allowedToolNames = getAllowedToolNames(ctx.toolPreset);
+  ctx.tools = getNativeTools(ctx.toolPreset, ctx.allowedToolNames);
+  ctx.taskUsage = { input: 0, output: 0, cache: 0 };
+  ctx.responseUsage = { input: 0, output: 0, cache: 0 };
+  ctx._taskPrompt = runState.taskPrompt || "";
+  ctx.run = ensureSessionRun(sessionId);
+  ctx.run.model = ctx.model;
+  ctx.run._activeCtx = ctx;
+  return ctx;
+}
+
+async function resumePersistedSessionRun(summary) {
+  const runState = summary?.runState || {};
+  if (!summary?.id || !["running", "waiting-network", "resuming"].includes(runState.status)) return;
+
+  await withSessionRecoveryLock(summary.id, async () => {
+    const session = await apiJson(`/api/sessions/${encodeURIComponent(summary.id)}`);
+    const latestRunState = session.runState || runState;
+    if (!["running", "waiting-network", "resuming"].includes(latestRunState.status)) return;
+
+    const updatedAt = Date.parse(latestRunState.updatedAt || latestRunState.startedAt || 0);
+    if (Number.isFinite(updatedAt) && updatedAt > 0 && Date.now() - updatedAt > 6 * 60 * 60 * 1000) {
+      setSessionRunState(summary.id, { ...latestRunState, status: "failed", lastError: "Saved task recovery expired" });
+      await saveSessionState(summary.id, session.messages || [], session.stats || {}, session.title);
+      return;
+    }
+
+    const ctx = buildRecoveredRunContext(session, latestRunState);
+    const recoveryCount = Number(latestRunState.recoveryCount || 0) + 1;
+    setStreaming(true, summary.id);
+    const originalStartedAt = Date.parse(latestRunState.startedAt || 0);
+    if (Number.isFinite(originalStartedAt) && originalStartedAt > 0) {
+      ctx.run.responseStartTime = originalStartedAt;
+    }
+    await persistRunCheckpoint(ctx, "resuming", latestRunState.phase || "model", {
+      recoveryCount,
+      lastError: latestRunState.lastError || "",
+    }).catch(() => {});
+
+    let recoveryError = null;
+    try {
+      await runAgentLoop(ctx);
+      await clearRunCheckpoint(ctx);
+    } catch (error) {
+      recoveryError = error;
+      const status = error?.name === "AbortError" ? "paused" : "failed";
+      await persistRunCheckpoint(ctx, status, "model", {
+        recoveryCount,
+        lastError: error?.message || String(error),
+      }).catch(() => {});
+    } finally {
+      setStreaming(false, summary.id);
+      ctx.run._activeCtx = null;
+      await saveSessionState(summary.id, ctx.messages, ctx.stats, session.title).catch(() => {});
+      if (summary.id === state.sessionId) renderSessionMessages(summary.id);
+      renderSessions();
+    }
+
+    if (!recoveryError) notifyTaskComplete(summary.id);
+  });
+}
+
+async function resumePersistedRuns() {
+  if (!els.apiKey.value.trim() || !els.baseUrl.value.trim()) return;
+  const candidates = state.sessions.filter((session) =>
+    ["running", "waiting-network", "resuming"].includes(session?.runState?.status));
+  if (candidates.length === 0) return;
+  await Promise.allSettled(candidates.map((session) => resumePersistedSessionRun(session)));
+}
+
+function createModelRequestError(message, details = {}) {
+  const error = new Error(String(message || "Model request failed"));
+  error.status = Number(details.status || 0);
+  error.code = String(details.code || "");
+  error.transient = Boolean(details.transient);
+  error.modelRequest = true;
+  return error;
+}
+
+function isTransientModelError(error) {
+  if (!error || error.name === "AbortError") return false;
+  if (typeof error.transient === "boolean") return error.transient;
+  const status = Number(error.status || 0);
+  if ([408, 425, 429, 500, 502, 503, 504].includes(status)) return true;
+  if ([400, 401, 403, 404, 422].includes(status)) return false;
+  const text = `${error.code || ""} ${error.message || error}`.toLowerCase();
+  if (/invalid token|insufficient.*quota|quota.*not enough|model_not_found|no available channel|permission denied/.test(text)) return false;
+  return /timeout|timed out|network|fetch failed|failed to fetch|upstream error|do request failed|temporar|connection (reset|refused|closed)|econn(reset|refused)|winerror 10061|stream interrupted|unexpected end/.test(text);
+}
+
+function createRequestSignal(userSignal, timeoutMs) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const onUserAbort = () => controller.abort(userSignal?.reason);
+  if (userSignal) {
+    if (userSignal.aborted) onUserAbort();
+    else userSignal.addEventListener("abort", onUserAbort, { once: true });
+  }
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    timedOut: () => timedOut,
+    cleanup() {
+      clearTimeout(timeoutId);
+      userSignal?.removeEventListener?.("abort", onUserAbort);
+    },
+  };
+}
+
+function resetAssistantForModelRetry(ctx, assistantIndex) {
+  const messages = ctx?.messages || [];
+  const current = messages[assistantIndex] || {};
+  messages[assistantIndex] = {
+    ...current,
+    role: "assistant",
+    content: "",
+    streaming: true,
+    meta: { ...(current.meta || {}) },
+  };
+  delete messages[assistantIndex].meta.toolCalls;
+  if (!ctx?.isSubAgent) {
+    setSessionMessages(ctx.sessionId, messages);
+    renderSessionMessages(ctx.sessionId);
+  }
+}
+
+async function waitForModelRetry(ctx, attempt, maxAttempts, delayMs, error) {
+  const run = ctx?.run || ensureSessionRun(ctx?.sessionId || state.sessionId);
+  const nextRetryAt = Date.now() + delayMs;
+  run.recovery = {
+    attempt,
+    maxAttempts,
+    nextRetryAt,
+    message: error?.message || String(error),
+  };
+  if (!ctx?.isSubAgent) {
+    await persistRunCheckpoint(ctx, "waiting-network", "model", {
+      recoveryCount: attempt,
+      nextRetryAt: new Date(nextRetryAt).toISOString(),
+      lastError: run.recovery.message,
+    }).catch(() => {});
+  }
+  while (Date.now() < nextRetryAt) {
+    if (run.abortController?.signal.aborted) throw new DOMException("Aborted", "AbortError");
+    if (!ctx?.isSubAgent && ctx.sessionId === state.sessionId) renderSessionMessages(ctx.sessionId);
+    await new Promise((resolve) => setTimeout(resolve, Math.min(1000, nextRetryAt - Date.now())));
+  }
+}
+
 function shouldRetryWithoutNativeTools(errorText = "") {
-
-  return /tool|function|tool_choice|unsupported|invalid|upstream error|do request failed|request failed/i.test(errorText);
-
+  return /(tool_choice|tools? (?:are )?not supported|unsupported (?:tool|function)|function calling (?:is )?not supported|unknown field.*tools|invalid.*tool_calls?)/i.test(errorText);
 }
 
 
@@ -7885,7 +8244,7 @@ function mapMessageForApi(msg, includeNativeTools = true) {
 
 
 
-async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) {
+async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx = null) {
 
   const model = ctx?.model || getSelectedModel();
 
@@ -8001,7 +8360,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
   // Thinking / reasoning control
 
-  const thinkingMode = getThinkingLevel();
+  const thinkingMode = ctx?.thinkingLevel || getThinkingLevel();
 
   if (/claude|opus|sonnet|haiku/i.test(model)) {
 
@@ -8068,11 +8427,10 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
     const key = fallbackKeys[ki];
 
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 1; attempt++) {
 
+      const request = createRequestSignal(run.abortController.signal, FETCH_TIMEOUT_MS);
       try {
-
-        const timeoutId = setTimeout(() => run.abortController.abort(), FETCH_TIMEOUT_MS);
         res = await fetch("/proxy/chat", {
 
           method: "POST",
@@ -8089,11 +8447,10 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
           body: JSON.stringify(payload),
 
-          signal: run.abortController.signal,
+          signal: request.signal,
 
         });
 
-        clearTimeout(timeoutId);
         if (res.ok) break;
 
         lastError = `HTTP ${res.status}`;
@@ -8103,12 +8460,10 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
         if (res.status >= 400 && res.status < 500 && res.status !== 429) break;
 
       } catch (err) {
-
-        clearTimeout(timeoutId);
-        if (err.name === "AbortError") throw err;
-
-        lastError = err.message;
-
+        if (run.abortController.signal.aborted) throw new DOMException("Aborted", "AbortError");
+        lastError = request.timedOut() ? "Model request timed out" : (err?.message || "Network request failed");
+      } finally {
+        request.cleanup();
       }
 
     }
@@ -8168,7 +8523,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
       await new Promise((r) => setTimeout(r, 2000));
 
-      const retry = await callModelOnce(assistantIndex, useNativeTools, ctx);
+      const retry = await _callModelOnceAttempt(assistantIndex, useNativeTools, ctx);
 
       state._retriedModelAccess = false;
 
@@ -8182,11 +8537,16 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
     if (tools.length > 0 && shouldRetryWithoutNativeTools(errText)) {
 
-      return callModelOnce(assistantIndex, false, ctx);
+      return _callModelOnceAttempt(assistantIndex, false, ctx);
 
     }
 
-    throw new Error(errText);
+    throw createModelRequestError(errText, {
+      status: res?.status,
+      code: errCode,
+      transient: [408, 425, 429, 500, 502, 503, 504].includes(Number(res?.status))
+        || /no access to model|upstream error|do request failed|timed out|network|fetch failed|connection/i.test(errText),
+    });
 
   }
 
@@ -8207,12 +8567,23 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
   let rawContent = "";
 
   const toolCallsByIndex = new Map();
+  let streamCompleted = false;
 
 
 
   while (true) {
 
-    const { value, done } = await reader.read();
+    let packet;
+    try {
+      packet = await reader.read();
+    } catch (error) {
+      if (run.abortController.signal.aborted) throw new DOMException("Aborted", "AbortError");
+      throw createModelRequestError(error?.message || "Stream interrupted", {
+        code: "stream_interrupted",
+        transient: true,
+      });
+    }
+    const { value, done } = packet;
 
     if (done) break;
 
@@ -8232,6 +8603,10 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
       if (typeof data === "string" && data.startsWith("[ERROR]")) {
         const errMsg = data.slice(7).trim() || "Stream interrupted";
+        throw createModelRequestError(errMsg, {
+          code: "stream_error",
+          transient: true,
+        });
         rawContent += `\n\n> ⚠️ ${errMsg}\n`;
         const finalText = rawThought ? `<think>${rawThought}</think>\n${rawContent}` : rawContent;
         const toolCalls = normalizeToolCallList(toolCallsByIndex);
@@ -8241,6 +8616,7 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
       }
 
       if (data === "[DONE]") {
+        streamCompleted = true;
 
         const finalText = rawThought ? `<think>${rawThought}</think>\n${rawContent}` : rawContent;
 
@@ -8307,7 +8683,9 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
   buffer += decoder.decode();
   if (buffer.trim()) {
     const data = parseSseLine(buffer.trim());
-    if (data && data !== "[DONE]") {
+    if (data === "[DONE]") {
+      streamCompleted = true;
+    } else if (data) {
       const { reasoning, text } = extractStreamDelta(data);
       if (reasoning) rawThought += reasoning;
       if (text) rawContent += text;
@@ -8316,6 +8694,13 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
         updateUsage(data.usage, sessionId, ctx);
       }
     }
+  }
+
+  if (!streamCompleted) {
+    throw createModelRequestError("Stream interrupted before completion", {
+      code: "stream_interrupted",
+      transient: true,
+    });
   }
 
 
@@ -8342,6 +8727,46 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
 
   return { content: rawContent, toolCalls };
 
+}
+
+
+async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) {
+  ctx = ctx || buildRunContext(state.sessionId);
+  const run = ctx.run || ensureSessionRun(ctx.sessionId);
+  const maxAttempts = 5;
+  const delays = [1000, 2000, 4000, 8000, 15000];
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const statsSnapshot = { ...(ctx.stats || {}) };
+    const taskUsageSnapshot = { ...(ctx.taskUsage || {}) };
+    const responseUsageSnapshot = { ...(ctx.responseUsage || {}) };
+    try {
+      const result = await _callModelOnceAttempt(assistantIndex, useNativeTools, ctx);
+      run.recovery = null;
+      if (!ctx.isSubAgent) {
+        await persistRunCheckpoint(ctx, "running", "model", {
+          recoveryCount: attempt - 1,
+          nextRetryAt: "",
+          lastError: "",
+        }).catch(() => {});
+      }
+      return result;
+    } catch (error) {
+      if (error?.name === "AbortError" || !isTransientModelError(error) || attempt >= maxAttempts) {
+        run.recovery = null;
+        throw error;
+      }
+      ctx.stats = statsSnapshot;
+      ctx.taskUsage = taskUsageSnapshot;
+      ctx.responseUsage = responseUsageSnapshot;
+      if (!ctx.isSubAgent) setSessionStats(ctx.sessionId, ctx.stats);
+      resetAssistantForModelRetry(ctx, assistantIndex);
+      const jitter = Math.floor(Math.random() * 250);
+      const delayMs = delays[Math.min(attempt - 1, delays.length - 1)] + jitter;
+      await waitForModelRetry(ctx, attempt, maxAttempts, delayMs, error);
+    }
+  }
+  throw createModelRequestError("Model request failed");
 }
 
 
@@ -9235,6 +9660,10 @@ async function runAgentLoop(ctx = null) {
     // Check abort signal so stop button works even mid-tool-execution
     if (ctx.run.abortController?.signal.aborted) throw new DOMException("Aborted", "AbortError");
 
+    if (!ctx.isSubAgent) {
+      await persistRunCheckpoint(ctx, "running", "model", { round }).catch(() => {});
+    }
+
     // Auto-compact whenever context exceeds 95%
 
     if (true) {
@@ -9285,7 +9714,7 @@ async function runAgentLoop(ctx = null) {
 
               const oldSummaries = ctx.messages.filter((m) => m.meta?.kind === "compact-summary");
 
-              ctx.messages = [summaryMsg, ...oldSummaries, ...kept.filter((m) => m.meta?.kind !== "compact-summary")];
+              ctx.messages = [...oldSummaries, summaryMsg, ...kept.filter((m) => m.meta?.kind !== "compact-summary")];
               if (!ctx.isSubAgent) { setSessionMessages(ctx.sessionId, ctx.messages); }
 
               ctx.stats = { input: 0, output: 0, cache: 0 };
@@ -9379,6 +9808,15 @@ async function runAgentLoop(ctx = null) {
       const pendingVisionPaths = new Set();
 
       const normalizedCalls = nativeCalls.map(normalizeNativeToolCall);
+      if (!ctx.isSubAgent) {
+        await persistRunCheckpoint(ctx, "running", "tools", {
+          round,
+          pendingTools: normalizedCalls.map((tool) => ({
+            action: tool.action || "unknown",
+            path: tool.path || "",
+          })),
+        }).catch(() => {});
+      }
       for (const tool of normalizedCalls) {
         ctx.messages.push({
           role: "tool-call",
@@ -10205,6 +10643,8 @@ async function sendMessage(userText) {
 
   await saveSessionState(sessionId, ctx.messages, ctx.stats);
 
+  await persistRunCheckpoint(ctx, "running", "model").catch(() => {});
+
   setStreaming(true, sessionId);
 
   let loopError = null;
@@ -10355,9 +10795,17 @@ ${r.result}`,
       drainError = err;
     }
     if (drainError) {
-      setStreaming(false, sessionId);
-      throw drainError;
+      loopError = drainError;
     }
+  }
+
+  if (loopError) {
+    const status = loopError?.name === "AbortError" ? "paused" : "failed";
+    await persistRunCheckpoint(ctx, status, "model", {
+      lastError: loopError?.message || String(loopError),
+    }).catch(() => {});
+  } else {
+    await clearRunCheckpoint(ctx).catch(() => {});
   }
 
   setStreaming(false, sessionId);
@@ -11629,6 +12077,8 @@ const settingsDropdown = document.getElementById("settingsDropdown");
 
 document.getElementById("settingsMenuBtn").addEventListener("click", () => {
 
+  markUpdateNoticeSeen("settings");
+
   openSettingsPage("models");
 
 });
@@ -12186,9 +12636,13 @@ function renderAccountPanel(container) {
           <div class="account-id">${t("accountUserId")}: ${escapeHtml(auth.userId || "")}</div>
         </div>
       </div>
-      <div style="margin-top:16px">
+      <div class="field" style="margin-top:12px"><label>${t("platformUrl")}</label><input id="settingsPlatformUrl" class="field-input" type="text" placeholder="http://localhost:3001" value="${escapeHtml(getPlatformUrl())}" /></div>
+      <div style="margin-top:12px">
         <button id="accountLogout" class="mini-btn" type="button">${t("logout")}</button>
       </div>`;
+    document.getElementById("settingsPlatformUrl").addEventListener("change", function () {
+      localStorage.setItem("agent-lite-platform-url", this.value.trim());
+    });
     document.getElementById("accountLogout").addEventListener("click", () => {
       clearPlatformAuth();
       showToast(t("loggedOut"), "warning");
@@ -12198,13 +12652,77 @@ function renderAccountPanel(container) {
     container.innerHTML = `<h3 style="margin:0 0 14px">${t("platformAccount")}</h3>
       <div class="muted-line" style="padding:16px;text-align:center">
         <p>${t("notLoggedIn")}</p>
+        <div class="field" style="margin-bottom:8px"><label>${t("platformUrl")}</label><input id="settingsPlatformUrl" class="field-input" type="text" placeholder="http://localhost:3001" value="${escapeHtml(getPlatformUrl())}" /></div>
         <button id="accountLoginNow" class="mini-btn primary" type="button" style="margin-top:8px">${t("loginPlatform")}</button>
       </div>`;
+    document.getElementById("settingsPlatformUrl").addEventListener("change", function () {
+      localStorage.setItem("agent-lite-platform-url", this.value.trim());
+    });
     document.getElementById("accountLoginNow").addEventListener("click", () => {
-      const platformUrl = "http://localhost:3001";
+      const platformUrl = getPlatformUrl();
       window.open(`${platformUrl}/agent-lite/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
     });
   }
+}
+
+const UPDATE_NOTICE_STORAGE_KEYS = {
+  settings: "agent-lite-update-seen-settings",
+  page: "agent-lite-update-seen-page",
+};
+
+function isUpdateNoticeUnread(target, version) {
+  if (!version) return false;
+  return localStorage.getItem(UPDATE_NOTICE_STORAGE_KEYS[target]) !== version;
+}
+
+function markUpdateNoticeSeen(target) {
+  const version = state.updateInfo?.updateAvailable ? state.updateInfo.remoteVersion : "";
+  const storageKey = UPDATE_NOTICE_STORAGE_KEYS[target];
+  if (!version || !storageKey) return;
+  localStorage.setItem(storageKey, version);
+  const dotId = target === "settings" ? "settingsUpdateDot" : "settingsPageUpdateDot";
+  document.getElementById(dotId)?.classList.add("hidden");
+}
+
+function setUpdateNotice(data) {
+  state.updateInfo = data || null;
+  const remoteVersion = data?.remoteVersion || "";
+  const available = Boolean(data?.updateAvailable && remoteVersion);
+  const settingsDot = document.getElementById("settingsUpdateDot");
+  const pageDot = document.getElementById("settingsPageUpdateDot");
+  settingsDot?.classList.toggle("hidden", !available || !isUpdateNoticeUnread("settings", remoteVersion));
+  pageDot?.classList.toggle("hidden", !available || !isUpdateNoticeUnread("page", remoteVersion));
+
+  const versionBadge = document.getElementById("settingsPageUpdateVersion");
+  if (versionBadge) {
+    versionBadge.textContent = available ? `v${remoteVersion}` : "";
+    versionBadge.classList.toggle("hidden", !available);
+    versionBadge.title = available ? `${t("updateAvailable")} (v${remoteVersion})` : "";
+  }
+  const settingsButton = document.getElementById("settingsMenuBtn");
+  if (settingsButton) {
+    settingsButton.classList.toggle("has-update", available);
+    settingsButton.title = available
+      ? `${t("updateAvailable")} (v${remoteVersion})`
+      : t("settingsBtn");
+  }
+}
+
+async function checkForUpdates({ silent = true } = {}) {
+  if (state._updateCheckPromise) return state._updateCheckPromise;
+  state._updateCheckPromise = (async () => {
+    try {
+      const data = await apiJson("/api/check-update");
+      setUpdateNotice(data);
+      return data;
+    } catch (error) {
+      if (!silent) throw error;
+      return null;
+    } finally {
+      state._updateCheckPromise = null;
+    }
+  })();
+  return state._updateCheckPromise;
 }
 
 function renderUpdatePanel(container) {
@@ -12233,7 +12751,7 @@ function renderUpdatePanel(container) {
   document.getElementById("updateCheckBtn").addEventListener("click", async () => {
     status(t("checkingUpdate")); actions("");
     try {
-      const data = await apiJson("/api/check-update");
+      const data = await checkForUpdates({ silent: false });
       if (data.updateAvailable) {
         remoteVer = data.remoteVersion;
         downloadUrl = data.downloadUrl;
@@ -12432,9 +12950,13 @@ function showOnboarding() {
 
 document.getElementById("settingsNav").addEventListener("click", (e) => {
 
-  if (e.target.classList.contains("settings-nav-item")) {
+  const navItem = e.target.closest(".settings-nav-item");
 
-    switchSettingsPanel(e.target.dataset.panel);
+  if (navItem) {
+
+    if (navItem.dataset.panel === "update") markUpdateNoticeSeen("page");
+
+    switchSettingsPanel(navItem.dataset.panel);
 
   }
 
@@ -12823,11 +13345,9 @@ els.chatForm.addEventListener("submit", async (event) => {
 
 els.newChat.addEventListener("click", () => {
 
-  if (state.isStreaming) { showToast(t("waitForReply")); return; }
-
-  const run = ensureSessionRun(state.sessionId);
-  if (run?.abortController) run.abortController.abort();
-  if (run) run.messageQueue = [];
+  // Starting a new conversation only changes the foreground view. Any task
+  // bound to the previous session keeps its own controller, queue and cache.
+  cacheActiveSessionState();
   state.messageQueue = [];
 
   state.sessionId = null;
@@ -12845,6 +13365,8 @@ els.newChat.addEventListener("click", () => {
 
   localStorage.removeItem("agent-lite-last-session");
 
+  syncActiveStreamingState();
+
   renderMessages();
 
   renderSessions();
@@ -12861,6 +13383,9 @@ els.exportChat.addEventListener("click", exportMarkdown);
 
 // ── Agent Lite × New API Platform Auth ──
 
+function getPlatformUrl() {
+  return localStorage.getItem("agent-lite-platform-url") || "http://localhost:3001";
+}
 function getPlatformAuth() {
   try { return JSON.parse(localStorage.getItem("agent-lite-platform-auth") || "null"); } catch (_) { return null; }
 }
@@ -12889,7 +13414,7 @@ async function syncKeysFromPlatform() {
     const resp = await fetch("/api/agent-lite/sync-keys", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: auth.token, userId: auth.userId })
+      body: JSON.stringify({ token: auth.token, userId: auth.userId, platformUrl: getPlatformUrl() })
     });
     if (!resp.ok) throw new Error(`Sync failed (${resp.status})`);
     const data = await resp.json();
@@ -12906,8 +13431,7 @@ async function syncKeysFromPlatform() {
       showToast(t("loginExpired"), "error");
       // Re-open connect page after a short delay
       setTimeout(() => {
-        const platformUrl = "http://localhost:3001";
-        window.open(`${platformUrl}/agent-lite/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
+        window.open(`${getPlatformUrl()}/agent-lite/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
       }, 1000);
     } else {
       showToast(t("syncFailed", { message: msg }), "error");
@@ -13055,6 +13579,10 @@ async function init() {
   // Load app version
   try { const r = await fetch("/VERSION"); state.appVersion = (await r.text()).trim(); } catch (_) {}
 
+  // Check releases in the background. Update failures must never delay or
+  // interrupt startup; the settings indicators appear only for a newer build.
+  void checkForUpdates({ silent: true });
+
   // Show onboarding if first launch or version changed
   if (shouldShowOnboarding()) { showOnboarding(); }
 
@@ -13074,6 +13602,13 @@ async function init() {
   }
 
   if (els.apiKey.value.trim() && els.baseUrl.value.trim()) await refreshModels();
+
+  // Resume tasks whose browser-side stream was interrupted by a page reload.
+  // Each session owns an independent lock and run context, so multiple saved
+  // tasks can recover without forcing the user to remain on one conversation.
+  resumePersistedRuns().catch((error) => {
+    console.error("Failed to resume persisted runs:", error);
+  });
 
   // Restore preview state
 

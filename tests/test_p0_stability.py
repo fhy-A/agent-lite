@@ -1,0 +1,123 @@
+"""P0 stability regression tests.
+
+Run: python -m pytest tests/test_p0_stability.py -v
+"""
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import server as server_mod
+
+
+ROOT = Path(__file__).resolve().parent.parent
+APP_SOURCE = (ROOT / "app.js").read_text(encoding="utf-8")
+
+
+class TestFrontendNetworkRecovery(unittest.TestCase):
+    def test_request_timeout_does_not_abort_whole_agent_run(self):
+        self.assertIn("function createRequestSignal(userSignal, timeoutMs)", APP_SOURCE)
+        self.assertIn("timedOut = true", APP_SOURCE)
+        self.assertIn("controller.abort();", APP_SOURCE)
+        self.assertIn("timedOut: () => timedOut", APP_SOURCE)
+        self.assertNotIn("setTimeout(() => run.abortController.abort(), FETCH_TIMEOUT_MS)", APP_SOURCE)
+
+    def test_transient_failures_use_bounded_backoff(self):
+        self.assertIn("const maxAttempts = 5", APP_SOURCE)
+        self.assertIn("const delays = [1000, 2000, 4000, 8000, 15000]", APP_SOURCE)
+        self.assertIn("isTransientModelError(error)", APP_SOURCE)
+        self.assertIn('persistRunCheckpoint(ctx, "waiting-network", "model"', APP_SOURCE)
+
+    def test_incomplete_sse_is_not_treated_as_success(self):
+        self.assertIn("let streamCompleted = false", APP_SOURCE)
+        self.assertIn('code: "stream_interrupted"', APP_SOURCE)
+        self.assertIn("Stream interrupted before completion", APP_SOURCE)
+
+
+class TestFrontendRefreshRecovery(unittest.TestCase):
+    def test_recovery_is_locked_per_session(self):
+        self.assertIn("async function withSessionRecoveryLock(sessionId, worker)", APP_SOURCE)
+        self.assertIn("navigator.locks?.request", APP_SOURCE)
+        self.assertIn("agent-lite-run-recovery-lease", APP_SOURCE)
+
+    def test_recovery_removes_partial_stream_and_guards_side_effects(self):
+        self.assertIn("function prepareMessagesForRunRecovery(messages, runState)", APP_SOURCE)
+        self.assertIn(".filter((msg) => !msg.streaming)", APP_SOURCE)
+        self.assertIn("Before repeating any write, command, network request", APP_SOURCE)
+        self.assertIn('meta: { _system: true, kind: "run-recovery" }', APP_SOURCE)
+
+    def test_recovery_restores_saved_execution_settings(self):
+        for expected in (
+            "ctx.model = runState.model || ctx.model",
+            "ctx.temperature = Number(runState.temperature",
+            "ctx.toolPreset = runState.toolPreset",
+            "ctx.permissionProfile = runState.permissionProfile",
+            "ctx.thinkingLevel = runState.thinkingLevel",
+        ):
+            self.assertIn(expected, APP_SOURCE)
+
+    def test_init_starts_recovery_after_models_are_loaded(self):
+        models_pos = APP_SOURCE.index("await refreshModels();")
+        resume_pos = APP_SOURCE.index("resumePersistedRuns().catch", models_pos)
+        self.assertGreater(resume_pos, models_pos)
+
+
+class TestServerRunStatePersistence(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.sessions_dir = Path(self.temp_dir.name)
+        self.patch_sessions = mock.patch.object(server_mod, "SESSIONS_DIR", self.sessions_dir)
+        self.patch_sessions.start()
+        self.addCleanup(self.patch_sessions.stop)
+
+    def make_handler(self, body):
+        handler = object.__new__(server_mod.AgentLiteHandler)
+        handler.read_body_json = mock.Mock(return_value=body)
+        handler.send_json = mock.Mock()
+        return handler
+
+    def test_create_summary_and_save_preserve_run_state(self):
+        running = {
+            "status": "waiting-network",
+            "phase": "model",
+            "model": "deepseek-v4-pro",
+            "recoveryCount": 2,
+        }
+        create_handler = self.make_handler({"title": "P0", "runState": running})
+        server_mod.AgentLiteHandler.create_session(create_handler)
+        created = create_handler.send_json.call_args.args[0]
+
+        stored = json.loads(server_mod.session_path(created["id"]).read_text(encoding="utf-8"))
+        self.assertEqual(stored["runState"], running)
+        self.assertEqual(server_mod.session_summary(stored)["runState"], running)
+
+        save_handler = self.make_handler({
+            "title": "P0",
+            "messages": [{"role": "user", "content": "continue"}],
+            "stats": {"input": 3},
+            "runState": {"status": "resuming", "phase": "tools"},
+        })
+        server_mod.AgentLiteHandler.save_session(save_handler, created["id"])
+        saved = save_handler.send_json.call_args.args[0]
+        self.assertEqual(saved["runState"]["status"], "resuming")
+        self.assertEqual(saved["runState"]["phase"], "tools")
+
+    def test_ordinary_save_does_not_erase_existing_checkpoint(self):
+        session_id = "stabletest01"
+        server_mod.write_json(server_mod.session_path(session_id), {
+            "id": session_id,
+            "title": "checkpoint",
+            "messages": [],
+            "runState": {"status": "running", "phase": "tools"},
+        })
+        handler = self.make_handler({"title": "checkpoint", "messages": []})
+        server_mod.AgentLiteHandler.save_session(handler, session_id)
+        saved = handler.send_json.call_args.args[0]
+        self.assertEqual(saved["runState"], {"status": "running", "phase": "tools"})
+
+
+if __name__ == "__main__":
+    unittest.main()

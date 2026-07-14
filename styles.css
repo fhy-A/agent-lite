@@ -4602,6 +4602,74 @@ button:focus-visible,
   background: transparent;
 }
 
+.settings-menu-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 10px;
+  text-align: center;
+}
+
+.settings-menu-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: currentColor;
+}
+
+.update-notice-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
+.settings-update-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-update-nav .update-notice-dot {
+  margin-left: 0;
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
+.settings-menu-btn .update-notice-dot {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  margin-left: 0;
+  transform: translateY(-50%);
+}
+
+.settings-update-version {
+  min-width: 0;
+  margin-left: auto;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  color: var(--accent);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+/* These badges use the shared `hidden` state but sit outside the scoped
+   panels that currently define it. Hide them explicitly so an empty badge
+   cannot leave a stray line in the settings navigation. */
+.update-notice-dot.hidden,
+.settings-update-version.hidden {
+  display: none;
+}
+
 /* Top toolbar: stronger anchoring without turning it into a decorative header. */
 .pi-stage {
   grid-template-rows: 44px minmax(0, 1fr);

@@ -411,6 +411,16 @@ class TestDispatcherLimits(unittest.TestCase):
     def test_abort_controller_per_job(self):
         self.assertIn('abortController: new AbortController()', self.source)
 
+    def test_new_session_keeps_background_session_running(self):
+        start = self.source.index('els.newChat.addEventListener("click"')
+        end = self.source.index('els.exportChat.addEventListener', start)
+        handler = self.source[start:end]
+        self.assertIn('cacheActiveSessionState();', handler)
+        self.assertIn('syncActiveStreamingState();', handler)
+        self.assertNotIn('state.isStreaming) { showToast', handler)
+        self.assertNotIn('run.abortController.abort()', handler)
+        self.assertNotIn('run.messageQueue = []', handler)
+
 
 if __name__ == "__main__":
     unittest.main()

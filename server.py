@@ -101,6 +101,34 @@ def _read_remote_version():
             return tag, exe_url
     except Exception:
         pass
+
+    # Anonymous GitHub API requests can be rate-limited on shared networks.
+    # Fall back to the public latest-release redirect, then verify that the
+    # versioned installer exists before advertising the update.
+    try:
+        latest_req = request.Request(
+            "https://github.com/fhy-A/agent-lite/releases/latest",
+            headers={"User-Agent": "AgentLite"},
+        )
+        with request.urlopen(latest_req, timeout=10) as latest_resp:
+            latest_url = latest_resp.geturl()
+        match = re.search(r"/releases/tag/([^/?#]+)", latest_url)
+        tag = match.group(1).lstrip("v") if match else ""
+        if tag and re.fullmatch(r"\d+(?:\.\d+)+", tag):
+            exe_url = (
+                "https://github.com/fhy-A/agent-lite/releases/download/"
+                f"v{tag}/AgentLite-v{tag}.exe"
+            )
+            asset_req = request.Request(
+                exe_url,
+                method="HEAD",
+                headers={"User-Agent": "AgentLite"},
+            )
+            with request.urlopen(asset_req, timeout=10) as asset_resp:
+                if asset_resp.status < 400:
+                    return tag, exe_url
+    except Exception:
+        pass
     return None, None
 
 
@@ -896,6 +924,7 @@ def session_summary(session):
         "_branchDepth": session.get("_branchDepth", 0),
         "_branches": session.get("_branches", []),
         "_branchMsgCount": session.get("_branchMsgCount") if "_branchMsgCount" in session else None,
+        "runState": session.get("runState") or {},
     }
 
 
@@ -1767,6 +1796,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             "createdAt": now_iso(),
             "updatedAt": now_iso(),
             "stats": body.get("stats") or {},
+            "runState": body.get("runState") or {},
         }
         parent_id = body.get("_parentId")
         if parent_id:
@@ -1789,6 +1819,8 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         session["title"] = body.get("title") or session.get("title") or "未命名会话"
         session["messages"] = body.get("messages") or []
         session["stats"] = body.get("stats") or session.get("stats") or {}
+        if "runState" in body:
+            session["runState"] = body.get("runState") or {}
         session["updatedAt"] = now_iso()
         write_json(path, session)
         session["_filePath"] = str(path.resolve())
@@ -3199,7 +3231,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         if not token or not user_id:
             self.send_json({"error": "Missing token or userId"}, 400)
             return
-        base_url = "http://localhost:3001"
+        base_url = (body.get("platformUrl") or "").strip().rstrip("/") or "http://localhost:3001"
         headers = {"Authorization": token, "New-Api-User": user_id, "Content-Type": "application/json"}
         try:
             req1 = request.Request(base_url + "/api/token/?p=0&size=100", headers=headers)

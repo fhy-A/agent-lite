@@ -296,10 +296,82 @@ class TestCompactSummaryMarker(unittest.TestCase):
         self.assertIn('compactMarker: "上下文已压缩"', self.source)
         self.assertIn('compactMarker: "Context compacted"', self.source)
 
+    def test_repeated_auto_compaction_keeps_marker_chronology(self):
+        self.assertIn(
+            'ctx.messages = [...oldSummaries, summaryMsg, ...kept.filter',
+            self.source,
+        )
+
+
+class TestBranchFlowMarker(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        root = Path(__file__).resolve().parent.parent
+        cls.source = (root / "app.js").read_text(encoding="utf-8")
+
+    def test_branch_marker_uses_raw_message_boundary(self):
+        self.assertIn("const branchMarker = getBranchFlowMarker();", self.source)
+        self.assertIn("if (j === branchBoundary) insertBranchMarker();", self.source)
+
+    def test_branch_marker_does_not_splice_projected_rows(self):
+        self.assertNotIn("rows.splice(insertAt", self.source)
+
+    def test_plain_session_is_not_treated_as_branch(self):
+        self.assertIn("if (!current || current._branchMsgCount == null) return null;", self.source)
+        self.assertIn("if (!parent) return null;", self.source)
+
 
 # ═══════════════════════════════════════════════════════════════════
 # 3. Skills CRUD
 # ═══════════════════════════════════════════════════════════════════
+
+class TestPreviewLineWrapping(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        root = Path(__file__).resolve().parent.parent
+        cls.styles = (root / "styles.css").read_text(encoding="utf-8")
+        cls.script = (root / "app.js").read_text(encoding="utf-8")
+
+    def test_code_preview_wraps_inside_narrow_pane(self):
+        self.assertIn("grid-template-columns: 52px minmax(0, 1fr);", self.styles)
+        self.assertIn("white-space: pre-wrap;", self.styles)
+        self.assertIn("overflow-wrap: anywhere;", self.styles)
+
+    def test_drag_temporarily_disables_expensive_wrapping(self):
+        self.assertIn(".resizing-preview .code-preview .line-code", self.styles)
+        self.assertIn("requestAnimationFrame(() =>", self.script)
+        self.assertIn("applyPreviewWidth(previewPendingWidth, false);", self.script)
+
+    def test_large_preview_uses_lightweight_rendering(self):
+        self.assertIn("normalized.length <= 350000 && lines.length <= 8000", self.script)
+        self.assertIn("formatPreviewMeta(data)", self.script)
+        self.assertIn(r'join(" \u00b7 ")', self.script)
+
+
+class TestPreviewDecoding(unittest.TestCase):
+
+    def test_truncated_utf8_drops_incomplete_tail_without_replacement(self):
+        encoded = "中文".encode("utf-8")
+        text, encoding = server_mod.decode_preview_text(encoded[:-1], truncated=True)
+        self.assertEqual(text, "中")
+        self.assertEqual(encoding, "utf-8")
+        self.assertNotIn("\ufffd", text)
+
+    def test_utf16_bom_is_text_and_decodes(self):
+        encoded = "配置文件".encode("utf-16")
+        self.assertTrue(server_mod.is_probably_text(encoded))
+        text, encoding = server_mod.decode_preview_text(encoded)
+        self.assertEqual(text, "配置文件")
+        self.assertEqual(encoding, "utf-16")
+
+    def test_gb18030_fallback(self):
+        encoded = "中文源码".encode("gb18030")
+        text, encoding = server_mod.decode_preview_text(encoded)
+        self.assertEqual(text, "中文源码")
+        self.assertEqual(encoding, "gb18030")
+
 
 class TestSkillsCRUD(unittest.TestCase):
 

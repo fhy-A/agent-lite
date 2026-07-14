@@ -61,7 +61,11 @@
 
       <footer class="side-footer">
         <div class="settings-dropdown">
-          <button id="settingsMenuBtn" type="button">设置</button>
+          <button id="settingsMenuBtn" class="settings-menu-btn" type="button">
+            <svg class="ui-icon settings-menu-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.12.37.34.7.64.95.3.25.68.39 1.07.4H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51.65z"/></svg>
+            <span data-ui-label>设置</span>
+            <span id="settingsUpdateDot" class="update-notice-dot hidden" aria-hidden="true"></span>
+          </button>
           <div class="cwd-dropdown-menu hidden" id="settingsDropdown" style="bottom:100%; top:auto; margin-bottom:4px; margin-top:0;">
             <button class="cwd-dropdown-item" id="settingsModels">Models</button>
             <button class="cwd-dropdown-item" id="settingsMemory">Memory</button>
@@ -426,7 +430,7 @@
           <button class="settings-nav-item" data-panel="theme" data-i18n="theme">Theme</button>
           <button class="settings-nav-item" data-panel="language" data-i18n="language">Language</button>
           <button class="settings-nav-item" data-panel="account" data-i18n="account">账户</button>
-          <button class="settings-nav-item" data-panel="update" data-i18n="update">Update</button>
+          <button class="settings-nav-item settings-update-nav" data-panel="update" data-i18n="update"><span data-ui-label>Update</span><span id="settingsPageUpdateVersion" class="settings-update-version hidden" aria-label="Latest version"></span><span id="settingsPageUpdateDot" class="update-notice-dot hidden" aria-hidden="true"></span></button>
         </div>
         <div class="settings-detail" id="settingsDetail"></div>
       </div>

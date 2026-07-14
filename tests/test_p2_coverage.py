@@ -298,7 +298,7 @@ class TestCompactSummaryMarker(unittest.TestCase):
 
     def test_repeated_auto_compaction_keeps_marker_chronology(self):
         self.assertIn(
-            'ctx.messages = [...oldSummaries, summaryMsg, ...kept.filter',
+            '_compactPrefix = compactPrefix',
             self.source,
         )
 

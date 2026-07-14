@@ -2578,37 +2578,51 @@ function getMatchedSkillPrompts(userMessage) {
 
   const active = state.skills.filter((s) => !state.disabledSkills.has(s.name) && !explicitOnly.has(s.name));
 
-  const matched = active.filter((s) => {
+  const candidates = active.map((s) => {
 
     // 1. Check explicit keywords
 
     const kwList = s.keywords || [];
 
-    if (kwList.some((kw) => kw.length >= 2 && lower.includes(kw.toLowerCase()))) return true;
+    const keywordScore = kwList.reduce((best, kw) => {
+      const parts = String(kw || "").toLowerCase().split("+").map((part) => part.trim()).filter(Boolean);
+      if (parts.length === 0 || !parts.every((part) => lower.includes(part))) return best;
+      const specificity = parts.reduce((total, part) => total + part.length, 0);
+      return Math.max(best, 300 + specificity);
+    }, 0);
+
+    if (keywordScore) return { skill: s, score: keywordScore };
 
     // 2. Check skill name
 
     const name = (s.name || "").toLowerCase();
 
-    if (name.length >= 2 && lower.includes(name)) return true;
+    if (name.length >= 2 && lower.includes(name)) return { skill: s, score: 200 + name.length };
 
     // 3. Check description
 
     const desc = (s.description || "").toLowerCase();
 
-    if (!desc) return false;
+    if (!desc) return null;
 
     const descWords = desc.replace(/,/g, " ").split(/\s+/).filter((w) => w.length >= 2);
 
-    return descWords.some((w) => lower.includes(w));
+    const matchedDescLength = descWords.reduce((best, word) => lower.includes(word) ? Math.max(best, word.length) : best, 0);
+    return matchedDescLength ? { skill: s, score: 100 + matchedDescLength } : null;
 
-  });
+  }).filter(Boolean);
 
-  if (matched.length === 0) return "";
+  if (candidates.length === 0) return "";
 
-  // Cap at 3, prefer skills with explicit keyword matches (shorter body = more targeted)
+  // Use only the strongest match tier so broad description words cannot override
+  // explicit keywords or names. Within that tier, shorter bodies are more targeted.
 
-  const sorted = matched.sort((a, b) => (a.body || "").length - (b.body || "").length).slice(0, 3);
+  const bestScore = Math.max(...candidates.map((item) => item.score));
+  const sorted = candidates
+    .filter((item) => item.score === bestScore)
+    .map((item) => item.skill)
+    .sort((a, b) => (a.body || "").length - (b.body || "").length)
+    .slice(0, 3);
 
   return sorted.map((s) => `[Skill: ${s.name}]\n${s.body}`).join("\n\n---\n\n");
 

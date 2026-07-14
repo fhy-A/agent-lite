@@ -679,26 +679,35 @@ def read_skill(name):
 def match_skills(user_message):
     """Find skills whose keywords, name, or description match the user message."""
     user_lower = (user_message or "").lower()
-    matched = []
+    candidates = []
     for skill in list_skills():
         # Check explicit keywords first
         kw_list = skill.get("keywords") or []
-        if any(kw.lower() in user_lower for kw in kw_list if len(kw) >= 2):
-            matched.append(skill)
+        keyword_scores = []
+        for keyword in kw_list:
+            parts = [part.strip().lower() for part in str(keyword).split("+") if part.strip()]
+            if parts and all(part in user_lower for part in parts):
+                keyword_scores.append(300 + sum(len(part) for part in parts))
+        if keyword_scores:
+            candidates.append((max(keyword_scores), skill))
             continue
         # Check skill name
         name = (skill.get("name") or "").lower()
         if name and len(name) >= 2 and name in user_lower:
-            matched.append(skill)
+            candidates.append((200 + len(name), skill))
             continue
         # Check description
         desc = (skill.get("description") or "").lower()
         if not desc:
             continue
         keywords = [w for w in desc.replace(",", " ").split() if len(w) >= 2]
-        if any(kw in user_lower for kw in keywords):
-            matched.append(skill)
-    return matched
+        matched_lengths = [len(keyword) for keyword in keywords if keyword in user_lower]
+        if matched_lengths:
+            candidates.append((100 + max(matched_lengths), skill))
+    if not candidates:
+        return []
+    best_score = max(score for score, _ in candidates)
+    return [skill for score, skill in candidates if score == best_score]
 
 
 def create_skill(name, description, body_text, tools="", keywords=""):

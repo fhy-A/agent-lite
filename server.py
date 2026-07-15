@@ -15,6 +15,7 @@ import subprocess
 import uuid
 import sys
 import threading
+import time
 import webbrowser
 
 try:
@@ -594,7 +595,14 @@ def write_json(path, data):
     with _json_write_lock:
         try:
             temp_path.write_text(payload, encoding="utf-8")
-            os.replace(temp_path, path)
+            for attempt in range(5):
+                try:
+                    os.replace(temp_path, path)
+                    break
+                except PermissionError:
+                    if attempt >= 4:
+                        raise
+                    time.sleep(0.01 * (2 ** attempt))
         finally:
             try:
                 temp_path.unlink(missing_ok=True)
@@ -1796,6 +1804,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             "createdAt": now_iso(),
             "updatedAt": now_iso(),
             "stats": body.get("stats") or {},
+            "lastUsage": body.get("lastUsage"),
             "runState": body.get("runState") or {},
         }
         parent_id = body.get("_parentId")
@@ -1809,20 +1818,23 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
     def save_session(self, session_id):
         body = self.read_body_json()
         path = session_path(session_id)
-        if path.exists():
-            session = read_json(path, {})
-            if not session.get("id"):
-                session["id"] = safe_session_id(session_id)
-                session["createdAt"] = session.get("createdAt") or now_iso()
-        else:
-            session = {"id": safe_session_id(session_id), "createdAt": now_iso()}
-        session["title"] = body.get("title") or session.get("title") or "未命名会话"
-        session["messages"] = body.get("messages") or []
-        session["stats"] = body.get("stats") or session.get("stats") or {}
-        if "runState" in body:
-            session["runState"] = body.get("runState") or {}
-        session["updatedAt"] = now_iso()
-        write_json(path, session)
+        with _json_write_lock:
+            if path.exists():
+                session = read_json(path, {})
+                if not session.get("id"):
+                    session["id"] = safe_session_id(session_id)
+                    session["createdAt"] = session.get("createdAt") or now_iso()
+            else:
+                session = {"id": safe_session_id(session_id), "createdAt": now_iso()}
+            session["title"] = body.get("title") or session.get("title") or "未命名会话"
+            session["messages"] = body.get("messages") or []
+            session["stats"] = body.get("stats") or session.get("stats") or {}
+            if "lastUsage" in body:
+                session["lastUsage"] = body.get("lastUsage")
+            if "runState" in body:
+                session["runState"] = body.get("runState") or {}
+            session["updatedAt"] = now_iso()
+            write_json(path, session)
         session["_filePath"] = str(path.resolve())
         self.send_json(session)
 

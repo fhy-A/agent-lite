@@ -297,10 +297,20 @@ class TestCompactSummaryMarker(unittest.TestCase):
         self.assertIn('compactMarker: "Context compacted"', self.source)
 
     def test_repeated_auto_compaction_keeps_marker_chronology(self):
-        self.assertIn(
-            '_compactPrefix = compactPrefix',
-            self.source,
-        )
+        self.assertIn("getModelContextMessages(ctx.messages)", self.source)
+        self.assertIn("ctx.messages.splice(", self.source)
+        self.assertIn("await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats)", self.source)
+        self.assertNotIn("_compactPrefix", self.source)
+
+    def test_usage_is_isolated_and_persisted_per_session(self):
+        self.assertIn("_sessionLastUsage: {}", self.source)
+        self.assertIn("setSessionLastUsage(sessionId, data.usage)", self.source)
+        self.assertIn("lastUsage: getSessionLastUsage(sessionId)", self.source)
+
+    def test_context_limit_handles_hyphenated_claude_versions(self):
+        self.assertIn("function getModelContextLimit(model)", self.source)
+        self.assertIn("const claudeVersion = normalized.match", self.source)
+        self.assertIn("major === 4 && minor >= 6", self.source)
 
 
 class TestBranchFlowMarker(unittest.TestCase):

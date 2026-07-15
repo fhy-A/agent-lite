@@ -115,6 +115,7 @@ const state = {
   _sessionRuns: {},
   _sessionRunStates: {},
   _sessionStats: {},
+  _sessionLastUsage: {},
   _sessionSaveChains: {},
   _activeRun: null,
 
@@ -268,6 +269,50 @@ function setSessionStats(sessionId, stats) {
   if (sessionId === state.sessionId) state.stats = state._sessionStats[sessionId];
 }
 
+function getSessionLastUsage(sessionId = state.sessionId) {
+  if (!sessionId) return state.lastUsage;
+  return state._sessionLastUsage[sessionId] || null;
+}
+
+function setSessionLastUsage(sessionId, usage) {
+  if (!sessionId) return;
+  if (usage) state._sessionLastUsage[sessionId] = usage;
+  else delete state._sessionLastUsage[sessionId];
+  if (sessionId === state.sessionId) state.lastUsage = usage || null;
+}
+
+function isCompactSummaryMessage(msg) {
+  return msg?.meta?.kind === "compact-summary";
+}
+
+function getModelContextMessages(messages) {
+  const visible = (Array.isArray(messages) ? messages : [])
+    .filter((msg) => !isDetachedFromMainContext(msg));
+  let latestSummaryIndex = -1;
+  visible.forEach((msg, index) => {
+    if (isCompactSummaryMessage(msg)) latestSummaryIndex = index;
+  });
+  return latestSummaryIndex >= 0 ? visible.slice(latestSummaryIndex) : visible;
+}
+
+function getModelContextLimit(model) {
+  const normalized = String(model || "").toLowerCase().replace(/_/g, "-");
+  const claudeVersion = normalized.match(/claude.*?(\d+)[.-](\d+)/);
+  if (claudeVersion) {
+    const major = Number(claudeVersion[1]);
+    const minor = Number(claudeVersion[2]);
+    if (major >= 5 || (major === 4 && minor >= 6)) return 1000000;
+    return 200000;
+  }
+  if (/claude|opus|sonnet|haiku/i.test(normalized)) return 200000;
+  if (/gpt-4\.1|gpt-5[.-][2-9]/i.test(normalized)) return 1000000;
+  if (/gpt|o1|o3|o4|openai/i.test(normalized)) return 128000;
+  if (/deepseek.*v4/i.test(normalized)) return 1000000;
+  if (/deepseek/i.test(normalized)) return 128000;
+  if (/gemini/i.test(normalized)) return 1000000;
+  return 128000;
+}
+
 function resetRenderCache() {
   state._lastRenderedHtml = "";
   state._lastQueueLen = -1;
@@ -278,6 +323,7 @@ function cacheActiveSessionState() {
   if (!prevId) return;
   state._sessionMsgs[prevId] = state.messages || [];
   state._sessionStats[prevId] = state.stats || { input: 0, output: 0, cache: 0, cost: 0 };
+  if (state.lastUsage) state._sessionLastUsage[prevId] = state.lastUsage;
 }
 
 function isSessionStreaming(sessionId) {
@@ -3473,7 +3519,7 @@ function sessionFilePath(session) {
 
 
 
-function calcStats(messages = state.messages, stats = state.stats) {
+function calcStats(messages = state.messages, stats = state.stats, sessionId = state.sessionId, modelOverride = "") {
 
   messages = Array.isArray(messages) ? messages.filter(Boolean) : [];
 
@@ -3505,12 +3551,12 @@ function calcStats(messages = state.messages, stats = state.stats) {
 
   // Use the last API-reported prompt_tokens as context size when available,
   // falling back to the old estimation heuristic.
-  const lastUsage = state.lastUsage;
+  const lastUsage = getSessionLastUsage(sessionId);
   let contextTokens;
   if (lastUsage?.prompt_tokens) {
     contextTokens = lastUsage.prompt_tokens;
   } else {
-    contextTokens = messages
+    contextTokens = getModelContextMessages(messages)
       .filter((msg) => !msg.streaming)
       .reduce((sum, msg) => sum + estimateTokens(getMsgText(msg)), 0)
       + estimateTokens(getSystemPrompt());
@@ -3518,25 +3564,8 @@ function calcStats(messages = state.messages, stats = state.stats) {
 
 
 
-  const model = getSelectedModel() || "";
-
-  let ctxLimit = 128000; // 默认
-
-  if (/claude.*(?:4\.[5-9]|[5-9]\.)/i.test(model)) ctxLimit = 200000;
-
-  else if (/claude.*(?:4\.[6-9]|[5-9])/i.test(model)) ctxLimit = 1000000;
-
-  else if (/claude|opus|sonnet|haiku/i.test(model)) ctxLimit = 200000;
-
-  else if (/gpt-4\.1|gpt-5\.[2-9]/i.test(model)) ctxLimit = 1000000;
-
-  else if (/gpt|o1|o3|o4|openai/i.test(model)) ctxLimit = 128000;
-
-  else if (/deepseek.*v4/i.test(model)) ctxLimit = 1000000;
-
-  else if (/deepseek/i.test(model)) ctxLimit = 128000;
-
-  else if (/gemini/i.test(model)) ctxLimit = 1000000;
+  const model = modelOverride || getSelectedModel() || "";
+  const ctxLimit = getModelContextLimit(model);
 
   const contextPct = Math.min(100, (contextTokens / ctxLimit) * 100);
 
@@ -4713,6 +4742,7 @@ function createCompactSummaryMessage(result) {
       compressed,
       estimatedSaved,
     },
+    _time: new Date().toISOString(),
   };
 }
 
@@ -5632,6 +5662,7 @@ async function createSession(title = t("sessionTitleDefault")) {
   state.messages = session.messages || [];
   setSessionMessages(session.id, state.messages);
   setSessionRunState(session.id, session.runState || {});
+  setSessionLastUsage(session.id, session.lastUsage || null);
 
   state.pendingEdits = {};
 
@@ -5744,6 +5775,7 @@ async function loadSession(sessionId) {
 
   state.stats = state._sessionStats[session.id] || session.stats || { input: 0, output: 0, cache: 0, cost: 0 };
   setSessionStats(session.id, state.stats);
+  setSessionLastUsage(session.id, state._sessionLastUsage[session.id] || session.lastUsage || null);
   resetRenderCache();
 
   els.sessionTitle.value = session.title || t("untitledSession");
@@ -5781,6 +5813,7 @@ async function saveSessionState(sessionId, messages, stats, title) {
         _time: msg._time || undefined,
       })),
     stats: { ...(stats || getSessionStats(sessionId) || {}) },
+    lastUsage: getSessionLastUsage(sessionId),
     runState: { ...getSessionRunState(sessionId) },
   };
 
@@ -8714,14 +8747,9 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
 
   // Capture messages at stream start (closure survives session switches)
   let _streamMsgs = ctx?.messages || getSessionMessages(sessionId);
-  let _modelMsgs = ctx?.isSubAgent
+  const _modelMsgs = ctx?.isSubAgent
     ? _streamMsgs
-    : _streamMsgs.filter((msg) => !isDetachedFromMainContext(msg));
-  // If a compact has occurred, send only the summary prefix + recent messages to the model.
-  // Full history stays in ctx.messages for UI display.
-  if (ctx?._compactPrefix && !ctx?.isSubAgent) {
-    _modelMsgs = [...ctx._compactPrefix, ..._modelMsgs.slice(ctx._compactCutoff)];
-  }
+    : getModelContextMessages(_streamMsgs);
 
   const payload = {
 
@@ -9132,9 +9160,7 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
       }
 
       if (data.usage) {
-
-        state.lastUsage = data.usage;
-
+        setSessionLastUsage(sessionId, data.usage);
         updateUsage(data.usage, sessionId, ctx);
 
       }
@@ -9153,7 +9179,7 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
       if (reasoning) rawThought += reasoning;
       if (text) rawContent += text;
       if (data.usage) {
-        state.lastUsage = data.usage;
+        setSessionLastUsage(sessionId, data.usage);
         updateUsage(data.usage, sessionId, ctx);
       }
     }
@@ -10176,10 +10202,10 @@ async function runAgentLoop(ctx = null) {
     // Trim old verbose tool results to reduce context bloat (every round)
     const trimmedCount = trimOldToolResults(ctx.messages);
 
-    // Auto-compact whenever context exceeds 85% (was 95%)
+    // Auto-compact whenever context reaches the 95% threshold.
     if (true) {
 
-      const ctxPct = calcStats(ctx.messages, ctx.stats).contextPct;
+      const ctxPct = calcStats(ctx.messages, ctx.stats, ctx.sessionId, ctx.model).contextPct;
 
       if (ctxPct >= 95 && ctx.messages.length >= 8) {
 
@@ -10191,6 +10217,7 @@ async function runAgentLoop(ctx = null) {
 
           try {
 
+            const modelContext = getModelContextMessages(ctx.messages);
             const result = await apiJson("/api/compact", {
 
               method: "POST",
@@ -10201,7 +10228,7 @@ async function runAgentLoop(ctx = null) {
 
                 model,
 
-                messages: ctx.messages.map((m) => ({ role: m.role, content: m.content || "" })),
+                messages: modelContext.map((m) => ({ role: m.role, content: m.content || "" })),
 
               }),
 
@@ -10210,27 +10237,26 @@ async function runAgentLoop(ctx = null) {
             if (result.ok) {
 
               const keepCount = result.kept || 5;
-
-              const kept = ctx.messages.slice(-keepCount);
-
               const summaryMsg = createCompactSummaryMessage(result);
+              const kept = modelContext.filter((msg) => !isCompactSummaryMessage(msg)).slice(-keepCount);
+              const firstKept = kept[0];
+              const insertAt = firstKept ? ctx.messages.indexOf(firstKept) : ctx.messages.length;
 
-              const oldSummaries = ctx.messages.filter((m) => m.meta?.kind === "compact-summary");
-              const compactPrefix = [...oldSummaries, summaryMsg];
-              const cutoffIndex = ctx.messages.length - keepCount;
-
-              // Store compact prefix for model context only — keep full history for UI
-              ctx._compactPrefix = compactPrefix;
-              ctx._compactCutoff = cutoffIndex;
-
-              // Still update session so compact survives page refresh
-              if (!ctx.isSubAgent) { setSessionMessages(ctx.sessionId, ctx.messages); }
+              // Keep full history for the UI and persist the summary at the exact
+              // model-context boundary. Future requests start at the latest marker.
+              ctx.messages.splice(insertAt >= 0 ? insertAt : ctx.messages.length, 0, summaryMsg);
+              if (!ctx.isSubAgent) setSessionMessages(ctx.sessionId, ctx.messages);
 
               ctx.stats = { input: 0, output: 0, cache: 0 };
+              setSessionStats(ctx.sessionId, ctx.stats);
+              setSessionLastUsage(ctx.sessionId, null);
 
               ctx.autoCompacted = (ctx.autoCompacted || 0) + 1;
 
-              if (!ctx.isSubAgent) renderSessionMessages(ctx.sessionId);
+              if (!ctx.isSubAgent) {
+                renderSessionMessages(ctx.sessionId);
+                await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats);
+              }
 
             }
 
@@ -10976,6 +11002,7 @@ async function compactConversation() {
 
       setSessionMessages(state.sessionId, state.messages);
       setSessionStats(state.sessionId, state.stats);
+      setSessionLastUsage(state.sessionId, null);
 
       renderMessages();
 

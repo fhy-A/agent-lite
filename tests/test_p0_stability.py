@@ -118,6 +118,34 @@ class TestServerRunStatePersistence(unittest.TestCase):
         saved = handler.send_json.call_args.args[0]
         self.assertEqual(saved["runState"], {"status": "running", "phase": "tools"})
 
+    def test_session_save_persists_last_usage(self):
+        initial_usage = {
+            "prompt_tokens": 1250,
+            "completion_tokens": 80,
+            "total_tokens": 1330,
+        }
+        create_handler = self.make_handler({"title": "usage", "lastUsage": initial_usage})
+        server_mod.AgentLiteHandler.create_session(create_handler)
+        created = create_handler.send_json.call_args.args[0]
+        self.assertEqual(created["lastUsage"], initial_usage)
+
+        updated_usage = {
+            "prompt_tokens": 2400,
+            "completion_tokens": 120,
+            "total_tokens": 2520,
+        }
+        save_handler = self.make_handler({
+            "title": "usage",
+            "messages": [{"role": "assistant", "content": "done"}],
+            "lastUsage": updated_usage,
+        })
+        server_mod.AgentLiteHandler.save_session(save_handler, created["id"])
+
+        stored = json.loads(
+            server_mod.session_path(created["id"]).read_text(encoding="utf-8")
+        )
+        self.assertEqual(stored["lastUsage"], updated_usage)
+
 
 if __name__ == "__main__":
     unittest.main()

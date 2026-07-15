@@ -111,10 +111,9 @@ class TestSubAgentFrontend(unittest.TestCase):
     def test_background_messages_are_detached_from_main_model_context(self):
         self.assertIn('function isDetachedFromMainContext(msg)', self.source)
         self.assertIn('msg.meta?.detachedFromMain', self.source)
-        self.assertIn(
-            '_streamMsgs.filter((msg) => !isDetachedFromMainContext(msg))',
-            self.source,
-        )
+        self.assertIn('function getModelContextMessages(messages)', self.source)
+        self.assertIn('.filter((msg) => !isDetachedFromMainContext(msg))', self.source)
+        self.assertIn('getModelContextMessages(_streamMsgs)', self.source)
         self.assertGreaterEqual(self.source.count('detachedFromMain: true'), 3)
 
     def test_legacy_background_notifications_stay_out_of_model_context(self):

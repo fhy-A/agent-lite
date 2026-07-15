@@ -85,6 +85,27 @@ class TestWriteJsonAtomicity(unittest.TestCase):
             # At least some keys should have survived
             self.assertGreater(len(data), 0)
 
+    def test_permission_error_during_replace_is_retried(self):
+        """A short Windows file lock should not fail an otherwise valid save."""
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "retry.json"
+            original_replace = server_mod.os.replace
+            attempts = []
+
+            def flaky_replace(source, destination):
+                attempts.append((source, destination))
+                if len(attempts) < 3:
+                    raise PermissionError("temporarily locked")
+                return original_replace(source, destination)
+
+            with mock.patch.object(server_mod.os, "replace", side_effect=flaky_replace), \
+                    mock.patch.object(server_mod.time, "sleep") as sleep:
+                server_mod.write_json(target, {"ok": True})
+
+            self.assertEqual(server_mod.read_json(target, {}), {"ok": True})
+            self.assertEqual(len(attempts), 3)
+            self.assertEqual(sleep.call_count, 2)
+
 
 # ═══════════════════════════════════════════════════════════════════
 # 2. Concurrent file operations via route server
@@ -313,24 +334,27 @@ class TestConcurrentSessionSaves(unittest.TestCase):
         server_mod.AgentLiteHandler.create_session(h)
         sid = h.send_json.call_args[0][0]["id"]
         written_counts = []
+        errors = []
         lock = threading.Lock()
 
         def saver(msg_count):
-            h2 = self._make_handler()
-            h2.send_json = mock.Mock()
-            h2.path = f"/api/sessions/{sid}"  # needed for session_id extraction
-            h2.read_body_json.return_value = {
-                "title": "saved by thread",
-                "messages": [
-                    {"role": "user", "content": f"msg-{msg_count}-{i}"}
-                    for i in range(msg_count)
-                ],
-            }
-            server_mod.AgentLiteHandler.save_session(h2, sid)
-            data = h2.send_json.call_args[0][0]
-            if data.get("ok"):
+            try:
+                h2 = self._make_handler()
+                h2.send_json = mock.Mock()
+                h2.path = f"/api/sessions/{sid}"  # needed for session_id extraction
+                h2.read_body_json.return_value = {
+                    "title": "saved by thread",
+                    "messages": [
+                        {"role": "user", "content": f"msg-{msg_count}-{i}"}
+                        for i in range(msg_count)
+                    ],
+                }
+                server_mod.AgentLiteHandler.save_session(h2, sid)
                 with lock:
                     written_counts.append(msg_count)
+            except Exception as exc:
+                with lock:
+                    errors.append(f"save {msg_count}: {exc}")
 
         thread_counts = [5, 8, 3, 10, 7, 12, 4, 6, 9, 2]
         threads = [threading.Thread(target=saver, args=(c,)) for c in thread_counts]
@@ -338,6 +362,9 @@ class TestConcurrentSessionSaves(unittest.TestCase):
             t.start()
         for t in threads:
             t.join()
+
+        self.assertEqual(errors, [], f"Concurrent session saves failed: {errors}")
+        self.assertEqual(len(written_counts), len(thread_counts))
 
         # The last save wins — but crucially, no corruption
         session_file = server_mod.session_path(sid)
@@ -391,7 +418,9 @@ class TestDispatcherLimits(unittest.TestCase):
     def test_detached_messages_not_leaked_to_model(self):
         self.assertIn('function isDetachedFromMainContext(msg)', self.source)
         self.assertIn('msg.meta?.detachedFromMain', self.source)
-        self.assertIn('_streamMsgs.filter((msg) => !isDetachedFromMainContext(msg))', self.source)
+        self.assertIn('function getModelContextMessages(messages)', self.source)
+        self.assertIn('.filter((msg) => !isDetachedFromMainContext(msg))', self.source)
+        self.assertIn('getModelContextMessages(ctx.messages)', self.source)
 
     def test_parallel_usage_ledger_isolation(self):
         self.assertIn('if (!ctx?.isSubAgent) setSessionStats(sessionId, stats);', self.source)

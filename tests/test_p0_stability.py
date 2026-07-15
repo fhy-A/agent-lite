@@ -42,9 +42,12 @@ class TestFrontendRefreshRecovery(unittest.TestCase):
         self.assertIn("navigator.locks?.request", APP_SOURCE)
         self.assertIn("agent-lite-run-recovery-lease", APP_SOURCE)
 
-    def test_recovery_removes_partial_stream_and_guards_side_effects(self):
+    def test_recovery_reuses_server_runtime_stream_and_guards_side_effects(self):
         self.assertIn("function prepareMessagesForRunRecovery(messages, runState)", APP_SOURCE)
-        self.assertIn(".filter((msg) => !msg.streaming)", APP_SOURCE)
+        self.assertIn('runState?.phase === "model"', APP_SOURCE)
+        self.assertIn("Boolean(runState?.runtimeRunId)", APP_SOURCE)
+        self.assertIn("if (hasRuntimeRun) return cleaned", APP_SOURCE)
+        self.assertIn("ctx._reuseRuntimeAssistant = Boolean(ctx.runtimeRunId)", APP_SOURCE)
         self.assertIn("Before repeating any write, command, network request", APP_SOURCE)
         self.assertIn('meta: { _system: true, kind: "run-recovery" }', APP_SOURCE)
 

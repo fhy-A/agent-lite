@@ -186,6 +186,7 @@ function ensureSessionRun(sessionId) {
       timerInterval: null,
       timerDisplay: null,
       recovery: null,
+      runtimeRunId: "",
     };
   }
   return state._sessionRuns[sessionId];
@@ -220,6 +221,7 @@ function makeRunCheckpoint(ctx, status = "running", phase = "model", extra = {})
     thinkingLevel: ctx.thinkingLevel || getThinkingLevel(),
     taskPrompt: ctx._taskPrompt || previous.taskPrompt || "",
     recoveryCount: Number(extra.recoveryCount ?? previous.recoveryCount ?? 0),
+    runtimeRunId: String(extra.runtimeRunId ?? ctx.runtimeRunId ?? previous.runtimeRunId ?? ""),
     ...extra,
   };
 }
@@ -8093,10 +8095,15 @@ async function withSessionRecoveryLock(sessionId, worker) {
 
 function prepareMessagesForRunRecovery(messages, runState) {
   const source = Array.isArray(messages) ? messages.filter(Boolean) : [];
+  const hasRuntimeRun = runState?.phase === "model" && Boolean(runState?.runtimeRunId);
   const cleaned = source
-    .filter((msg) => !msg.streaming)
+    .filter((msg) => hasRuntimeRun || !msg.streaming)
     .filter((msg) => msg.meta?.kind !== "key-fallback")
     .filter((msg) => msg.meta?.kind !== "run-recovery");
+
+  // The local runtime still owns this upstream stream. Keep the in-progress
+  // assistant row and reattach instead of adding a synthetic recovery prompt.
+  if (hasRuntimeRun) return cleaned;
 
   if (runState?.phase === "tools" && !runState?.resumedFromUserInput) {
     for (let index = cleaned.length - 1; index >= 0; index -= 1) {
@@ -8160,6 +8167,9 @@ function buildRecoveredRunContext(session, runState) {
   ctx.responseUsage = { input: 0, output: 0, cache: 0 };
   ctx._taskPrompt = runState.taskPrompt || "";
   ctx.run = ensureSessionRun(sessionId);
+  ctx.runtimeRunId = String(runState.runtimeRunId || "");
+  ctx._reuseRuntimeAssistant = Boolean(ctx.runtimeRunId);
+  ctx.run.runtimeRunId = ctx.runtimeRunId;
   ctx.run.model = ctx.model;
   ctx.run._activeCtx = ctx;
   return ctx;
@@ -8809,7 +8819,7 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
 
             // Downgrade to user text — orphaned tool result
 
-            result.push({ role: "user", content: `【工具结果】\n${mapped.content || ""}` });
+            result.push({ role: "user", content: `[Tool result]\n${mapped.content || ""}` });
 
             continue;
 
@@ -8900,56 +8910,45 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
     state.abortController = run.abortController;
   }
 
-  const FETCH_TIMEOUT_MS = 180000;  // 3 min safety net
-
   const baseUrl = els.baseUrl.value.trim() || "http://localhost:3000";
-
   const fallbackKeys = getFallbackKeys(model);
-
   const totalKeys = fallbackKeys.length;
-
   let res;
-
   let lastError = "";
+  const useRuntimeBridge = !ctx?.isSubAgent && Boolean(window.AgentRuntime?.openSseResponse);
 
+  if (useRuntimeBridge) {
+    res = await window.AgentRuntime.openSseResponse({
+      runId: ctx.runtimeRunId || run.runtimeRunId || "",
+      sessionId,
+      payload,
+      baseUrl,
+      keys: fallbackKeys,
+      signal: run.abortController.signal,
+      onRunCreated(runtimeRunId) {
+        ctx.runtimeRunId = runtimeRunId;
+        run.runtimeRunId = runtimeRunId;
+        persistRunCheckpoint(ctx, "running", "model", { runtimeRunId }).catch(() => {});
+      },
+    });
+  } else {
+    const FETCH_TIMEOUT_MS = 180000;  // 3 min safety net for sub-agents
 
-
-  for (let ki = 0; ki < fallbackKeys.length; ki++) {
-
-    const key = fallbackKeys[ki];
-
-    for (let attempt = 0; attempt < 1; attempt++) {
-
+    for (let ki = 0; ki < fallbackKeys.length; ki++) {
+      const key = fallbackKeys[ki];
       const request = createRequestSignal(run.abortController.signal, FETCH_TIMEOUT_MS);
       try {
         res = await fetch("/proxy/chat", {
-
           method: "POST",
-
           headers: {
-
             "Content-Type": "application/json",
-
             "X-Base-URL": baseUrl,
-
             Authorization: `Bearer ${key}`,
-
           },
-
           body: JSON.stringify(payload),
-
           signal: request.signal,
-
         });
-
-        if (res.ok) break;
-
-        lastError = `HTTP ${res.status}`;
-
-        // Don't retry same key on 4xx (bad request), but allow fallback to next key
-
-        if (res.status >= 400 && res.status < 500 && res.status !== 429) break;
-
+        if (!res.ok) lastError = `HTTP ${res.status}`;
       } catch (err) {
         if (run.abortController.signal.aborted) throw new DOMException("Aborted", "AbortError");
         lastError = request.timedOut() ? "Model request timed out" : (err?.message || "Network request failed");
@@ -8957,30 +8956,16 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
         request.cleanup();
       }
 
+      if (res?.ok) break;
+      if (ki < fallbackKeys.length - 1) {
+        const msg = totalKeys > 1
+          ? `Request failed (${lastError}); trying API key ${ki + 2}/${totalKeys}...`
+          : `Request failed (${lastError}); retrying...`;
+        ctx.messages.push({ role: "assistant", content: msg, meta: { kind: "key-fallback" } });
+        if (!skipRender) renderSessionMessages(sessionId);
+      }
     }
-
-    if (res && res.ok) break;
-
-
-
-    // Notify user about retry / fallback
-
-    if (ki < fallbackKeys.length - 1) {
-
-      const msg = fallbackKeys.length > 1
-
-        ? `请求失败（${lastError}），正在尝试下一个 key（${ki + 2}/${totalKeys}）...`
-
-        : `请求失败（${lastError}），正在重试...`;
-
-      ctx.messages.push({ role: "assistant", content: `🔄 ${msg}`, meta: { kind: "key-fallback" } });
-      if (!skipRender) { renderSessionMessages(sessionId); }
-
-    }
-
   }
-
-
 
   if (!res || !res.ok) {
 
@@ -9093,21 +9078,22 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
       if (!data) continue;
 
       if (typeof data === "string" && data.startsWith("[ERROR]")) {
-        const errMsg = data.slice(7).trim() || "Stream interrupted";
-        throw createModelRequestError(errMsg, {
-          code: "stream_error",
-          transient: true,
+        const rawError = data.slice(7).trim();
+        let detail = {};
+        try { detail = JSON.parse(rawError); } catch (_) { detail = {}; }
+        ctx.runtimeRunId = "";
+        run.runtimeRunId = "";
+        throw createModelRequestError(detail.message || rawError || "Stream interrupted", {
+          status: Number(detail.status || 0),
+          code: detail.code || "stream_error",
+          transient: detail.transient !== false,
         });
-        rawContent += `\n\n> ⚠️ ${errMsg}\n`;
-        const finalText = rawThought ? `<think>${rawThought}</think>\n${rawContent}` : rawContent;
-        const toolCalls = normalizeToolCallList(toolCallsByIndex);
-        updateAssistantMessage(assistantIndex, finalText || toolProgressSummary(toolCalls) || "(empty response)", false, sessionId, _streamMsgs, skipRender);
-        setStreaming(false, sessionId);
-        return;
       }
 
       if (data === "[DONE]") {
         streamCompleted = true;
+        ctx.runtimeRunId = "";
+        run.runtimeRunId = "";
 
         const finalText = rawThought ? `<think>${rawThought}</think>\n${rawContent}` : rawContent;
 
@@ -9129,6 +9115,9 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
 
         }
 
+        if (!ctx.isSubAgent) {
+          await persistRunCheckpoint(ctx, "running", "model", { runtimeRunId: "" }).catch(() => {});
+        }
         return { content: rawContent, toolCalls };
 
       }
@@ -9192,6 +9181,9 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
     });
   }
 
+  ctx.runtimeRunId = "";
+  run.runtimeRunId = "";
+
 
 
   const finalCombined = rawThought ? `<think>${rawThought}</think>\n${rawContent}` : rawContent;
@@ -9214,6 +9206,9 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
 
   }
 
+  if (!ctx.isSubAgent) {
+    await persistRunCheckpoint(ctx, "running", "model", { runtimeRunId: "" }).catch(() => {});
+  }
   return { content: rawContent, toolCalls };
 
 }
@@ -9237,10 +9232,13 @@ async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) 
           recoveryCount: attempt - 1,
           nextRetryAt: "",
           lastError: "",
+          runtimeRunId: "",
         }).catch(() => {});
       }
       return result;
     } catch (error) {
+      ctx.runtimeRunId = "";
+      run.runtimeRunId = "";
       if (error?.name === "AbortError" || !isTransientModelError(error) || attempt >= maxAttempts) {
         run.recovery = null;
         throw error;
@@ -9908,6 +9906,16 @@ function updateBackgroundJob(job, status, detail = "") {
   renderSessions();
 }
 
+function cancelSessionRun(run) {
+  if (!run) return;
+  const runtimeRunId = String(run.runtimeRunId || "");
+  if (runtimeRunId) {
+    window.AgentRuntime?.cancelRun(runtimeRunId).catch(() => {});
+    run.runtimeRunId = "";
+  }
+  if (run.abortController) run.abortController.abort();
+}
+
 function backgroundActiveForSession(sessionId) {
   return state._backgroundDispatcher.jobs.filter((job) => job.sessionId === sessionId && job.status === "running").length;
 }
@@ -10270,7 +10278,25 @@ async function runAgentLoop(ctx = null) {
 
 
 
-    const assistantIndex = ctx.messages.push({ role: "assistant", content: "", streaming: true, _model: ctx.model || getSelectedModel() }) - 1;
+    let assistantIndex = -1;
+    if (ctx._reuseRuntimeAssistant) {
+      for (let index = ctx.messages.length - 1; index >= 0; index -= 1) {
+        if (ctx.messages[index]?.role === "assistant" && ctx.messages[index]?.streaming) {
+          assistantIndex = index;
+          ctx.messages[index] = {
+            ...ctx.messages[index],
+            content: "",
+            streaming: true,
+            _model: ctx.model || getSelectedModel(),
+          };
+          break;
+        }
+      }
+      ctx._reuseRuntimeAssistant = false;
+    }
+    if (assistantIndex < 0) {
+      assistantIndex = ctx.messages.push({ role: "assistant", content: "", streaming: true, _model: ctx.model || getSelectedModel() }) - 1;
+    }
 
     ctx.responseUsage = { input: 0, output: 0, cache: 0 };
 
@@ -11902,7 +11928,7 @@ els.prompt.addEventListener("keydown", (event) => {
 els.stopBtn.addEventListener("click", () => {
 
   const run = ensureSessionRun(state.sessionId);
-  if (run?.abortController) run.abortController.abort();
+  cancelSessionRun(run);
 
 });
 
@@ -11912,7 +11938,7 @@ els.sendBtn.addEventListener("click", (event) => {
   if (!state.isStreaming) return;  // idle → let form submit send
   event.preventDefault();
   const run = ensureSessionRun(state.sessionId);
-  if (run?.abortController) run.abortController.abort();
+  cancelSessionRun(run);
 });
 
 
@@ -13696,7 +13722,7 @@ document.addEventListener("keydown", (event) => {
     // Pause current agent run if streaming
     if (state.isStreaming) {
       const run = ensureSessionRun(state.sessionId);
-      if (run?.abortController) run.abortController.abort();
+      cancelSessionRun(run);
     }
   }
 

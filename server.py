@@ -54,6 +54,192 @@ MAX_SEARCH_RESULTS = 100
 MAX_COMMAND_SECONDS = 30
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 _json_write_lock = threading.RLock()
+_model_runtime_runs = {}
+_model_runtime_lock = threading.RLock()
+_MODEL_RUNTIME_TERMINAL_TTL = 30 * 60
+_MODEL_RUNTIME_ACTIVE_TTL = 6 * 60 * 60
+
+
+def _normalize_runtime_base_url(base_url):
+    value = str(base_url or NEW_API_BASE_URL or "http://localhost:3000").strip().rstrip("/")
+    if value.endswith("/v1"):
+        value = value[:-3]
+    return value.rstrip("/")
+
+
+def _append_runtime_event(run, data):
+    with run["condition"]:
+        run["events"].append({"seq": len(run["events"]) + 1, "data": str(data)})
+        run["updated_at"] = time.time()
+        run["condition"].notify_all()
+
+
+def _finish_runtime_run(run, status, error_message="", upstream_status=0):
+    with run["condition"]:
+        if run["status"] in {"completed", "failed", "cancelled"}:
+            return
+        run["status"] = status
+        run["error"] = str(error_message or "")
+        run["upstream_status"] = int(upstream_status or 0)
+        run["updated_at"] = time.time()
+        run["condition"].notify_all()
+
+
+def _runtime_snapshot(run, cursor=0):
+    cursor = max(0, int(cursor or 0))
+    with run["condition"]:
+        events = [dict(event) for event in run["events"] if event["seq"] > cursor]
+        return {
+            "runId": run["id"],
+            "sessionId": run["session_id"],
+            "status": run["status"],
+            "error": run["error"],
+            "upstreamStatus": run["upstream_status"],
+            "events": events,
+            "nextCursor": events[-1]["seq"] if events else cursor,
+        }
+
+
+def _cleanup_runtime_runs():
+    now = time.time()
+    with _model_runtime_lock:
+        expired = []
+        for run_id, run in _model_runtime_runs.items():
+            age = now - run["updated_at"]
+            terminal = run["status"] in {"completed", "failed", "cancelled"}
+            if (terminal and age > _MODEL_RUNTIME_TERMINAL_TTL) or age > _MODEL_RUNTIME_ACTIVE_TTL:
+                expired.append(run_id)
+        for run_id in expired:
+            _model_runtime_runs.pop(run_id, None)
+
+
+def _runtime_error_text(exc):
+    status = int(getattr(exc, "code", 0) or 0)
+    message = str(exc)
+    if isinstance(exc, error.HTTPError):
+        try:
+            raw = exc.read().decode("utf-8", errors="replace")
+            data = json.loads(raw)
+            message = data.get("error", {}).get("message") or data.get("error") or raw or message
+        except Exception:
+            pass
+    return status, str(message)[:2000]
+
+
+def _model_runtime_worker(run):
+    payload = dict(run["payload"])
+    payload["stream"] = True
+    stream_options = dict(payload.get("stream_options") or {})
+    stream_options["include_usage"] = True
+    payload["stream_options"] = stream_options
+    endpoint = _normalize_runtime_base_url(run["base_url"]) + "/v1/chat/completions"
+    keys = list(run["keys"] or [""])
+    last_error = "Upstream request failed"
+    last_status = 0
+
+    try:
+        for key_index, key in enumerate(keys):
+            if run["cancel_event"].is_set():
+                _finish_runtime_run(run, "cancelled")
+                return
+            headers = {"Content-Type": "application/json"}
+            if key:
+                headers["Authorization"] = f"Bearer {key}"
+            req = request.Request(
+                endpoint,
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                method="POST",
+                headers=headers,
+            )
+            try:
+                response = request.urlopen(req, timeout=180)
+                run["upstream_response"] = response
+                run["upstream_status"] = int(getattr(response, "status", 200) or 200)
+                saw_done = False
+                while not run["cancel_event"].is_set():
+                    raw_line = response.readline()
+                    if not raw_line:
+                        break
+                    line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].lstrip()
+                    _append_runtime_event(run, data)
+                    if data == "[DONE]":
+                        saw_done = True
+                        break
+                response.close()
+                run["upstream_response"] = None
+                if run["cancel_event"].is_set():
+                    _finish_runtime_run(run, "cancelled")
+                elif saw_done:
+                    _finish_runtime_run(run, "completed")
+                else:
+                    _finish_runtime_run(run, "failed", "Stream ended before completion", run["upstream_status"])
+                return
+            except Exception as exc:
+                run["upstream_response"] = None
+                last_status, last_error = _runtime_error_text(exc)
+                if run["events"] or key_index >= len(keys) - 1:
+                    break
+                continue
+        if run["cancel_event"].is_set():
+            _finish_runtime_run(run, "cancelled")
+        else:
+            _finish_runtime_run(run, "failed", last_error, last_status)
+    except Exception as exc:
+        status, message = _runtime_error_text(exc)
+        _finish_runtime_run(run, "failed", message, status)
+    finally:
+        run["keys"] = []
+        run["payload"] = {}
+        run["upstream_response"] = None
+
+
+def _create_model_runtime_run(session_id, payload, base_url, keys):
+    _cleanup_runtime_runs()
+    run_id = uuid.uuid4().hex
+    run = {
+        "id": run_id,
+        "session_id": str(session_id or ""),
+        "payload": dict(payload or {}),
+        "base_url": str(base_url or ""),
+        "keys": [str(key) for key in (keys or []) if str(key)],
+        "status": "running",
+        "error": "",
+        "upstream_status": 0,
+        "events": [],
+        "condition": threading.Condition(threading.RLock()),
+        "cancel_event": threading.Event(),
+        "upstream_response": None,
+        "created_at": time.time(),
+        "updated_at": time.time(),
+    }
+    with _model_runtime_lock:
+        _model_runtime_runs[run_id] = run
+    threading.Thread(target=_model_runtime_worker, args=(run,), daemon=True).start()
+    return run
+
+
+def _get_model_runtime_run(run_id):
+    _cleanup_runtime_runs()
+    with _model_runtime_lock:
+        return _model_runtime_runs.get(str(run_id or ""))
+
+
+def _cancel_model_runtime_run(run_id):
+    run = _get_model_runtime_run(run_id)
+    if not run:
+        return False
+    run["cancel_event"].set()
+    response = run.get("upstream_response")
+    if response is not None:
+        try:
+            response.close()
+        except Exception:
+            pass
+    _finish_runtime_run(run, "cancelled")
+    return True
 
 
 def _hidden_subprocess_kwargs():
@@ -1167,12 +1353,12 @@ SUBAGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "list_files",
-            "description": "列出项目目录中的文件和文件夹。",
+            "description": "List files and directories inside the current project.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "可选的相对目录"},
-                    "maxDepth": {"type": "integer", "description": "递归层数，默认 1"},
+                    "path": {"type": "string", "description": "Optional project-relative directory"},
+                    "maxDepth": {"type": "integer", "description": "Recursion depth, default 1"},
                 },
                 "required": [],
             },
@@ -1182,13 +1368,13 @@ SUBAGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "读取项目内的文本文件内容。",
+            "description": "Read text content from a project file.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "相对路径"},
-                    "startLine": {"type": "integer", "description": "起始行"},
-                    "endLine": {"type": "integer", "description": "结束行"},
+                    "path": {"type": "string", "description": "Project-relative path"},
+                    "startLine": {"type": "integer", "description": "First line to read"},
+                    "endLine": {"type": "integer", "description": "Last line to read"},
                 },
                 "required": ["path"],
             },
@@ -1198,13 +1384,13 @@ SUBAGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "search_files",
-            "description": "按关键词或正则搜索文件内容。",
+            "description": "Search project file contents by text or regular expression.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "搜索关键词"},
-                    "path": {"type": "string", "description": "搜索目录"},
-                    "regex": {"type": "boolean", "description": "是否正则"},
+                    "query": {"type": "string", "description": "Text or pattern to search"},
+                    "path": {"type": "string", "description": "Directory to search"},
+                    "regex": {"type": "boolean", "description": "Treat query as a regular expression"},
                 },
                 "required": ["query"],
             },
@@ -1214,12 +1400,12 @@ SUBAGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "glob_files",
-            "description": "按 glob 模式匹配文件路径。",
+            "description": "Match project paths using a glob pattern.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "pattern": {"type": "string", "description": "glob 模式"},
-                    "path": {"type": "string", "description": "搜索起始目录"},
+                    "pattern": {"type": "string", "description": "Glob pattern"},
+                    "path": {"type": "string", "description": "Directory to search from"},
                 },
                 "required": ["pattern"],
             },
@@ -1245,7 +1431,7 @@ def _execute_subagent_tool(tool_call):
         if name == "list_files":
             root, start = resolve_project_path(body.get("path") or "")
             if not start.exists() or not start.is_dir():
-                return f"目录不存在: {body.get('path') or '/'}"
+                return f"Directory not found: {body.get('path') or '/'}"
             max_depth = max(1, min(int(body.get("maxDepth") or 1), 3))
             items = []
             def walk_dir(current, depth):
@@ -1269,7 +1455,7 @@ def _execute_subagent_tool(tool_call):
                     if len(items) >= 100:
                         return
             walk_dir(start, 1)
-            return f"目录 {body.get('path') or '/'} 内容:\n" + "\n".join(items[:100])
+            return f"Directory listing for {body.get('path') or '/'}:\n" + "\n".join(items[:100])
 
         elif name == "read_file":
             path = body.get("path") or ""
@@ -1278,7 +1464,7 @@ def _execute_subagent_tool(tool_call):
             if not target:
                 root, target = resolve_project_path(path)
             if not target.exists() or not target.is_file():
-                return f"文件不存在: {path}"
+                return f"File not found: {path}"
             content, size, truncated = read_text_limited(target, MAX_TOOL_READ_BYTES)
             start_line = body.get("startLine")
             end_line = body.get("endLine")
@@ -1288,22 +1474,22 @@ def _execute_subagent_tool(tool_call):
                 e = min(len(lines), int(end_line or len(lines)))
                 content = "\n".join(lines[s-1:e])
             disp = display_attachment_path(root, target) if is_attachment else to_project_relative(root, target)
-            return f"文件 {disp} ({size} bytes):\n{content[:8000]}"
+            return f"File {disp} ({size} bytes):\n{content[:8000]}"
 
         elif name == "search_files":
             query = (body.get("query") or body.get("pattern") or "").strip()
             start_path = body.get("path") or ""
             use_regex = bool(body.get("regex"))
             if not query:
-                return "搜索关键词不能为空"
+                return "Search query cannot be empty"
             root, start = resolve_project_path(start_path)
             if not start.exists():
-                return f"路径不存在: {start_path}"
+                return f"Path not found: {start_path}"
             if use_regex:
                 try:
                     needle = re.compile(query, re.IGNORECASE)
                 except re.error as exc:
-                    return f"正则无效: {exc}"
+                    return f"Invalid regular expression: {exc}"
             else:
                 needle = query
             candidates = []
@@ -1337,16 +1523,16 @@ def _execute_subagent_tool(tool_call):
                     pass
                 if matches:
                     results.append(f"--- {rel} ---\n" + "\n".join(matches))
-            return f"搜索 '{query}' 结果:\n\n" + ("\n".join(results) or "没有匹配项")
+            return f"Search results for '{query}':\n\n" + ("\n".join(results) or "No matches")
 
         elif name == "glob_files":
             pattern = (body.get("pattern") or "").strip()
             start_path = body.get("path") or ""
             if not pattern:
-                return "glob 模式不能为空"
+                return "Glob pattern cannot be empty"
             root, start = resolve_project_path(start_path)
             if not start.exists():
-                return f"路径不存在: {start_path}"
+                return f"Path not found: {start_path}"
             results = []
             for p in root.rglob(pattern):
                 if any(part in SKIP_DIRS for part in p.relative_to(root).parts):
@@ -1357,13 +1543,13 @@ def _execute_subagent_tool(tool_call):
                 results.append(f"[{kind}] {rel}{size}")
                 if len(results) >= 100:
                     break
-            return f"glob '{pattern}' 匹配:\n" + ("\n".join(results) or "没有匹配项")
+            return f"Glob matches for '{pattern}':\n" + ("\n".join(results) or "No matches")
 
         else:
-            return f"未知工具: {name}"
+            return f"Unknown tool: {name}"
 
     except Exception as exc:
-        return f"工具执行失败: {exc}"
+        return f"Tool execution failed: {exc}"
 
 
 def run_subagent(task_prompt, system_prompt, model, api_key):
@@ -1400,7 +1586,7 @@ def run_subagent(task_prompt, system_prompt, model, api_key):
             with request.urlopen(req, timeout=120) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
         except Exception as exc:
-            return {"ok": False, "result": f"Sub-agent API 调用失败: {exc}", "rounds": round_idx + 1}
+            return {"ok": False, "result": f"Sub-agent API request failed: {exc}", "rounds": round_idx + 1}
 
         choice = (data.get("choices") or [{}])[0]
         msg = choice.get("message") or {}
@@ -1481,6 +1667,20 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         try:
             if route == "/api/ping":
                 self.send_json({"pong": True})
+                return
+            if route.startswith("/api/runtime/runs/"):
+                run_id = route.rsplit("/", 1)[-1]
+                run = _get_model_runtime_run(run_id)
+                if not run:
+                    self.send_json({"error": "Runtime run not found"}, 404)
+                    return
+                cursor = max(0, int((query.get("cursor") or [0])[0] or 0))
+                wait_seconds = max(0.0, min(float((query.get("wait") or [0])[0] or 0), 30.0))
+                with run["condition"]:
+                    has_new_events = any(event["seq"] > cursor for event in run["events"])
+                    if not has_new_events and run["status"] == "running" and wait_seconds > 0:
+                        run["condition"].wait(timeout=wait_seconds)
+                self.send_json(_runtime_snapshot(run, cursor))
                 return
             if route == "/api/config":
                 self.send_json(load_config())
@@ -1599,6 +1799,24 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             return
 
         try:
+            if self.path.rstrip("/") == "/api/runtime/runs":
+                body = self.read_body_json()
+                payload = body.get("payload")
+                keys = body.get("keys")
+                if not isinstance(payload, dict):
+                    self.send_json({"error": "payload must be an object"}, 400)
+                    return
+                if keys is not None and not isinstance(keys, list):
+                    self.send_json({"error": "keys must be an array"}, 400)
+                    return
+                run = _create_model_runtime_run(
+                    body.get("sessionId"),
+                    payload,
+                    body.get("baseUrl"),
+                    keys or [],
+                )
+                self.send_json({"runId": run["id"], "status": run["status"]}, 201)
+                return
             if self.path == "/api/config":
                 self.update_config()
                 return
@@ -1698,6 +1916,13 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         try:
+            if self.path.startswith("/api/runtime/runs/"):
+                run_id = parse.urlparse(self.path).path.rsplit("/", 1)[-1]
+                if not _cancel_model_runtime_run(run_id):
+                    self.send_json({"error": "Runtime run not found"}, 404)
+                else:
+                    self.send_json({"ok": True, "runId": run_id, "status": "cancelled"})
+                return
             if self.path.startswith("/api/memory"):
                 parsed = parse.urlparse(self.path)
                 query = parse.parse_qs(parsed.query)

@@ -1883,7 +1883,7 @@ const I18N = {
     welcome: "我是 Agent Lite，你的本地 AI 编程伙伴。\\n\\n我可以读文件、搜代码、跑命令、改项目。",
     welcomeTagline: "开始对话，用自然语言驱动代码。",
     inputPlaceholder: "描述需求、粘贴代码，或输入 / 调用命令",
-    thinkingLabel: "思考中", networkRecovering: "网络恢复中", completedLabel: "完成",
+    thinkingLabel: "思考中", networkRecovering: "网络恢复中", networkReconnectStatus: "网络连接已中断，正在自动恢复 · 已尝试 {attempt} 次 · ", networkReconnectSuffix: " 后重试", completedLabel: "完成",
     refreshBtn: "刷新", closePreview: "关闭", filterFiles: "筛选文件…",
     statusDone: "完成", statusFail: "失败", statusRunning: "准备",
     toolExecFailed: "工具执行失败", fetchFailed: "抓取失败",
@@ -2085,7 +2085,7 @@ const I18N = {
     welcome: "I'm Agent Lite, your local AI coding partner. I can read files, search code, run commands, and modify projects.",
     welcomeTagline: "Start a conversation, drive code with natural language.",
     inputPlaceholder: "Describe your task, paste code, or type / for commands",
-    thinkingLabel: "Thinking", networkRecovering: "Reconnecting", completedLabel: "Completed",
+    thinkingLabel: "Thinking", networkRecovering: "Reconnecting", networkReconnectStatus: "Connection lost. Recovering automatically · Attempt {attempt} · retry in ", networkReconnectSuffix: "", completedLabel: "Completed",
     refreshBtn: "Refresh", closePreview: "Close", filterFiles: "Filter files...",
     statusDone: "Done", statusFail: "Failed", statusRunning: "Preparing",
     toolExecFailed: "Tool execution failed", fetchFailed: "Fetch failed",
@@ -4331,12 +4331,20 @@ function getRunTimerDisplay(sessionId = state.sessionId) {
 }
 
 function renderThinkingBadge(sessionId = state.sessionId) {
-  const recovery = ensureSessionRun(sessionId)?.recovery;
-  if (recovery?.nextRetryAt) {
-    const remaining = Math.max(0, Math.ceil((recovery.nextRetryAt - Date.now()) / 1000));
-    return `<span class="streaming-dot">${escapeHtml(t("networkRecovering") || "Reconnecting")} ${escapeHtml(`${remaining}s`)} <span class="streaming-timer">${escapeHtml(getRunTimerDisplay(sessionId))}</span></span>`;
-  }
   return `<span class="streaming-dot">${t("thinkingLabel")} <span class="streaming-timer">${escapeHtml(getRunTimerDisplay(sessionId))}</span></span>`;
+}
+
+function getRecoveryCountdownSeconds(sessionId = state.sessionId) {
+  const recovery = ensureSessionRun(sessionId)?.recovery;
+  if (!recovery?.nextRetryAt) return 0;
+  return Math.max(0, Math.ceil((recovery.nextRetryAt - Date.now()) / 1000));
+}
+
+function renderNetworkRecoveryStatus(sessionId = state.sessionId) {
+  const recovery = ensureSessionRun(sessionId)?.recovery;
+  if (!recovery?.nextRetryAt) return "";
+  const attempt = Math.max(1, Number(recovery.attempt) || 1);
+  return `<div class="network-reconnect-status" role="status" aria-live="polite"><span>${escapeHtml(t("networkReconnectStatus", { attempt }))}</span><span class="network-reconnect-countdown">${escapeHtml(`${getRecoveryCountdownSeconds(sessionId)}s`)}</span><span>${escapeHtml(t("networkReconnectSuffix"))}</span></div>`;
 }
 
 function renderRunStatus(model, sessionId = state.sessionId) {
@@ -4593,7 +4601,7 @@ function renderUserProjection(msg, index) {
     </article>`;
   }).join("");
   if (!text && images.length === 0) return "";
-  const textArticle = text ? `<article class="msg user" data-msg-index="${index}"><div class="bubble">${renderMarkdownLite(text)}</div><div class="msg-meta">${dispatchStatus}${timeStr} ${renderCopyBtn(text)}</div></article>` : "";
+  const textArticle = text ? `<article class="msg user" data-msg-index="${index}"><div class="user-message-hover-area"><div class="bubble">${renderMarkdownLite(text)}</div><div class="msg-meta">${dispatchStatus}${timeStr} ${renderCopyBtn(text)}</div></div></article>` : "";
   return textArticle + imageArticles;
 }
 
@@ -4715,6 +4723,7 @@ function renderFinalAssistantProjection(msg, index) {
         <div class="role">${escapeHtml(model)} ${renderThinkingBadge(state.sessionId)}</div>
         <div class="streaming-thought-output${thought ? "" : " is-empty"}" data-stream-part="thought">${thought ? renderMarkdownLite(thought) : ""}</div>
         <div class="bubble streaming-answer-output${content && !isToolPlanningPlaceholder(content) ? "" : " is-empty"}" data-stream-part="answer">${content && !isToolPlanningPlaceholder(content) ? renderMarkdownLite(content) : ""}</div>
+        ${renderNetworkRecoveryStatus(state.sessionId)}
       </article>
     `;
   }
@@ -4803,6 +4812,21 @@ function renderBranchFlowProjection(parentTitle) {
 
 const streamingRenderQueue = new Map();
 let streamingRenderFrame = 0;
+let messageRestoreScrollFrame = 0;
+
+function scheduleMessagesScrollToBottom(sessionId = state.sessionId) {
+  if (!els.messages || !sessionId) return;
+  if (messageRestoreScrollFrame) cancelAnimationFrame(messageRestoreScrollFrame);
+
+  state._followOutput = true;
+  messageRestoreScrollFrame = requestAnimationFrame(() => {
+    messageRestoreScrollFrame = requestAnimationFrame(() => {
+      messageRestoreScrollFrame = 0;
+      if (state.sessionId !== sessionId) return;
+      els.messages.scrollTop = els.messages.scrollHeight;
+    });
+  });
+}
 
 function patchStreamingAssistantMessage(sessionId, index) {
   if (sessionId !== state.sessionId) return;
@@ -4983,7 +5007,9 @@ function renderMessages() {
   }
 
   var html = rows.filter(Boolean).join("");
-  const stableHtml = html.replace(/<span class="streaming-timer">[^<]*<\/span>/g, '<span class="streaming-timer"></span>');
+  const stableHtml = html
+    .replace(/<span class="streaming-timer">[^<]*<\/span>/g, '<span class="streaming-timer"></span>')
+    .replace(/<span class="network-reconnect-countdown">[^<]*<\/span>/g, '<span class="network-reconnect-countdown"></span>');
   const renderKey = `${state.sessionId || ""}:${stableHtml}`;
   if (state._lastRenderedHtml === renderKey) {
     renderToolLog();
@@ -5074,11 +5100,6 @@ function renderTimeline() {
 
   tl.innerHTML = `<div class="tl-track">${dots}</div>`;
   tl.classList.add("visible");
-
-  // Auto-scroll to bottom after render
-  els.messages.scrollTop = els.messages.scrollHeight;
-
-
 
   tl.querySelectorAll(".tl-dot-wrap").forEach((dot) => {
 
@@ -5709,6 +5730,7 @@ async function loadSession(sessionId) {
     syncActiveStreamingState();
     resetRenderCache();
     renderMessages();
+    scheduleMessagesScrollToBottom(sessionId);
     return;
   }
 
@@ -5789,6 +5811,7 @@ async function loadSession(sessionId) {
   syncActiveStreamingState();
 
   renderMessages();
+  scheduleMessagesScrollToBottom(session.id);
 
 }
 
@@ -7257,6 +7280,11 @@ function startLiveTimer() {
       if (timer.textContent !== display) timer.textContent = display;
     });
 
+    const recoveryDisplay = `${getRecoveryCountdownSeconds(state.sessionId)}s`;
+    document.querySelectorAll(".network-reconnect-countdown").forEach((countdown) => {
+      if (countdown.textContent !== recoveryDisplay) countdown.textContent = recoveryDisplay;
+    });
+
   }, 200);
 
 }
@@ -8641,6 +8669,7 @@ async function waitForModelRetry(ctx, attempt, maxAttempts, delayMs, error) {
   const run = ctx?.run || ensureSessionRun(ctx?.sessionId || state.sessionId);
   const nextRetryAt = Date.now() + delayMs;
   run.recovery = {
+    source: "model",
     attempt,
     maxAttempts,
     nextRetryAt,
@@ -8929,6 +8958,21 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
         ctx.runtimeRunId = runtimeRunId;
         run.runtimeRunId = runtimeRunId;
         persistRunCheckpoint(ctx, "running", "model", { runtimeRunId }).catch(() => {});
+      },
+      onReconnect({ attempt, nextRetryAt, error }) {
+        run.recovery = {
+          source: "runtime-poll",
+          attempt,
+          maxAttempts: 0,
+          nextRetryAt,
+          message: error?.message || String(error || ""),
+        };
+        if (sessionId === state.sessionId) renderSessionMessages(sessionId);
+      },
+      onReconnected() {
+        if (run.recovery?.source !== "runtime-poll") return;
+        run.recovery = null;
+        if (sessionId === state.sessionId) renderSessionMessages(sessionId);
       },
     });
   } else {

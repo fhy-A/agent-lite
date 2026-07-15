@@ -54,6 +54,8 @@
     keys = [],
     signal,
     onRunCreated,
+    onReconnect,
+    onReconnected,
   } = {}) {
     let activeRunId = String(runId || "");
     let cursor = 0;
@@ -77,6 +79,7 @@
                 `/api/runtime/runs/${encodeURIComponent(activeRunId)}?cursor=${cursor}&wait=25`,
                 { signal },
               );
+              if (failures > 0) onReconnected?.({ attempts: failures });
               failures = 0;
             } catch (error) {
               if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
@@ -85,6 +88,12 @@
               if (Number(error?.status) === 404) throw error;
               const delay = POLL_DELAYS[Math.min(failures, POLL_DELAYS.length - 1)];
               failures += 1;
+              onReconnect?.({
+                attempt: failures,
+                delayMs: delay,
+                nextRetryAt: Date.now() + delay,
+                error,
+              });
               await sleep(delay, signal);
               continue;
             }

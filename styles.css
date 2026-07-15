@@ -1080,14 +1080,19 @@ input:focus, select:focus, textarea:focus {
   position: relative;
   margin-bottom: 24px;
 }
-.msg.user::after {
+.user-message-hover-area {
+  position: relative;
+  width: fit-content;
+  max-width: min(660px, 92%);
+}
+.user-message-hover-area::after {
   content: "";
   position: absolute;
   top: 100%;
   left: 0;
   right: 0;
   height: 30px;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .msg.queued { margin-bottom: 8px; }
@@ -1850,8 +1855,8 @@ input:focus, select:focus, textarea:focus {
 .msg-image .bubble { padding: 2px; }
 
 /* ── Message meta (timestamp + copy) ── */
-.msg-meta { position: absolute; top: 100%; right: 0; display: flex; align-items: center; justify-content: flex-end; height: 26px; gap: 5px; margin-top: 2px; font-size: 11px; color: var(--muted); opacity: 0; pointer-events: none; transition: opacity .15s; }
-.msg.user:hover .msg-meta { opacity: 1; }
+.msg-meta { position: absolute; z-index: 1; top: 100%; right: 0; display: flex; align-items: center; justify-content: flex-end; height: 26px; gap: 5px; margin-top: 2px; font-size: 11px; color: var(--muted); opacity: 0; pointer-events: none; transition: opacity .15s; }
+.user-message-hover-area:hover .msg-meta { opacity: 1; }
 .msg-footer { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .msg-footer .response-info { margin-top: 0; }
 .msg-footer-hover { display: inline-flex; align-items: center; gap: 5px; opacity: 0; transition: opacity .15s; }
@@ -1862,7 +1867,7 @@ input:focus, select:focus, textarea:focus {
 .msg-copy-btn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; flex: 0 0 26px; transition: color .15s, background .15s, border-color .15s, opacity .15s; }
 .msg-copy-btn svg { display: block; width: 14px; height: 14px; }
 .msg.user .msg-copy-btn { opacity: 1; }
-.msg.user:hover .msg-meta { pointer-events: auto; }
+.user-message-hover-area:hover .msg-meta { pointer-events: auto; }
 .msg.user:has(.background-dispatch-status) .msg-meta { opacity: 1; }
 .background-dispatch-status {
   display: inline-flex;
@@ -2978,6 +2983,32 @@ input:focus, select:focus, textarea:focus {
   border-radius: 50%;
   background: var(--accent);
   animation: think-bounce 1.2s infinite ease-in-out;
+}
+
+.network-reconnect-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.network-reconnect-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #d9902f;
+  animation: think-bounce 1.2s infinite ease-in-out;
+}
+
+.network-reconnect-countdown {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
 }
 
 .active-run-status {
@@ -5052,7 +5083,7 @@ button:focus-visible,
 }
 
 .user .bubble {
-  max-width: min(660px, 92%);
+  max-width: 100%;
   padding: 11px 15px;
   border: 1px solid color-mix(in srgb, var(--accent) 15%, transparent);
   border-radius: 8px;

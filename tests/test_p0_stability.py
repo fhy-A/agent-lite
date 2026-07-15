@@ -14,6 +14,7 @@ import server as server_mod
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_SOURCE = (ROOT / "app.js").read_text(encoding="utf-8")
+RUNTIME_SOURCE = (ROOT / "agent-runtime.js").read_text(encoding="utf-8")
 
 
 class TestFrontendNetworkRecovery(unittest.TestCase):
@@ -35,8 +36,40 @@ class TestFrontendNetworkRecovery(unittest.TestCase):
         self.assertIn('code: "stream_interrupted"', APP_SOURCE)
         self.assertIn("Stream interrupted before completion", APP_SOURCE)
 
+    def test_runtime_poll_reconnect_is_visible_in_active_answer(self):
+        for expected in (
+            "onReconnect",
+            "onReconnected",
+            "nextRetryAt: Date.now() + delay",
+        ):
+            self.assertIn(expected, RUNTIME_SOURCE)
+        for expected in (
+            "networkReconnectStatus",
+            "renderNetworkRecoveryStatus(state.sessionId)",
+            'source: "runtime-poll"',
+            "network-reconnect-countdown",
+        ):
+            self.assertIn(expected, APP_SOURCE)
+
 
 class TestFrontendRefreshRecovery(unittest.TestCase):
+    def test_completed_session_restore_scrolls_after_layout(self):
+        self.assertIn("function scheduleMessagesScrollToBottom(sessionId = state.sessionId)", APP_SOURCE)
+        self.assertIn("if (state.sessionId !== sessionId) return", APP_SOURCE)
+        self.assertIn("els.messages.scrollTop = els.messages.scrollHeight", APP_SOURCE)
+
+        load_session = APP_SOURCE[
+            APP_SOURCE.index("async function loadSession(sessionId)"):
+            APP_SOURCE.index("async function saveSessionState", APP_SOURCE.index("async function loadSession(sessionId)"))
+        ]
+        self.assertEqual(load_session.count("scheduleMessagesScrollToBottom("), 2)
+
+        timeline = APP_SOURCE[
+            APP_SOURCE.index("function renderTimeline()"):
+            APP_SOURCE.index("function getToolLogDetail", APP_SOURCE.index("function renderTimeline()"))
+        ]
+        self.assertNotIn("els.messages.scrollTop", timeline)
+
     def test_recovery_is_locked_per_session(self):
         self.assertIn("async function withSessionRecoveryLock(sessionId, worker)", APP_SOURCE)
         self.assertIn("navigator.locks?.request", APP_SOURCE)

@@ -5013,17 +5013,20 @@ function renderMessages() {
   flushThoughts();
   insertBranchMarker();
 
-  // Persistent task status banner — visible across tool rounds, not just
-  // during individual SSE requests.
-  const run = ensureSessionRun(state.sessionId);
-  const activeBanner = run?.taskStartTime ? renderActiveRunBanner(state.sessionId) : "";
-  if (activeBanner) rows.unshift(activeBanner);
-
   // Render queued messages (sent while agent is busy)
+  const run = ensureSessionRun(state.sessionId);
   if (run && run.messageQueue.length > 0) {
     for (const q of run.messageQueue) {
       rows.push(`<article class="msg queued"><div class="bubble"><em>${escapeHtml(q.text || "").slice(0, 80)}</em></div></article>`);
     }
+  }
+
+  // Show a standalone status bar only when the task is running but there is
+  // no streaming assistant message currently being rendered (e.g. between
+  // tool rounds). During SSE the streaming message already carries the badge.
+  if (run?.taskStartTime) {
+    const alreadyHasStreaming = rows.some(function(r) { return r && r.indexOf('data-streaming-message="true"') >= 0; });
+    if (!alreadyHasStreaming) rows.push(renderActiveRunBanner(state.sessionId));
   }
 
   var html = rows.filter(Boolean).join("");

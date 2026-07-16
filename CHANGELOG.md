@@ -14,6 +14,44 @@
 
 ---
 
+## 2026-07-17 07:07 · Claude Code
+
+### SSE 渲染全面重构：固定状态栏 + 阶段化 + 思考摘要
+
+经过多轮迭代（8 个 commit），从临时修补到架构级重构。参考 Claude Code / Codex / OpenCode
+设计后确定最终方案。
+
+**调研结论**：
+- Claude Code：一条连续流，spinner 模式随事件切换（thinking → tool-use → responding）
+- Codex：底部常驻 footer + 内联 spinning，StatusEngine 提案支持阶段化
+- OpenCode：结构化 parts 模型（text/reasoning/tool-use 独立 start/delta/end 事件）
+- Code 约束：多 SSE 请求架构不可改，需在 UI 层用固定 DOM + 阶段状态模拟连续流
+
+**已完成改动总览**：
+
+| 层 | 改动 | 效果 |
+|----|------|------|
+| 消息投影 | 仅 toolCalls 中间消息入思考区 | 最终回答不重复 |
+| 消息投影 | 280 字截断 + thinking-summary-item 分段 | 简洁分段摘要 |
+| CSS | 旧 thought 样式 → thinking-summary-list/item | 间隙 1.15em |
+| 防闪烁 | innerHTML 前 detach 流式节点，后 replaceWith | DOM 不销毁，动画不重启 |
+| 生命周期 | taskStartTime 独立于 responseStartTime | 跨轮次计时不重置 |
+| 生命周期 | startLiveTimer 改用 taskStartTime 驱动 | 工具间隙计时持续 |
+| 固定状态条 | index.html 新增 #activeRunBanner（absolute+z-index） | 不入消息 DOM 流 |
+| 阶段化 | run._taskPhase + setTaskPhase() | 思考中 / 执行工具 |
+| 流式消息 | 移除 role div 中 thinking badge | 消除重复 |
+| i18n | 新增 executingTool 中英文键 | 执行工具标签 |
+
+**当前状态栏生命周期**：
+```
+发送消息 → 思考中（绿色）→ 执行工具·read_file（黄色快动）→ 思考中
+→ 执行工具·write_file → 思考中 → 最终回答流式开始 → 消失
+```
+
+**已知待处理**（用户将在下一轮反馈）：
+
+---
+
 ## 2026-07-17 18:00 · Claude Code + Codex
 
 ### SSE 渲染修复：思考摘要分离 + 流式节点防闪烁

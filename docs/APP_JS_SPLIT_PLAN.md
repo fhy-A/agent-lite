@@ -169,7 +169,7 @@ code/
 - [x] 固化脚本加载顺序与正式 EXE 资源清单。
 - [x] 增加模块存在、依赖顺序、重复定义和打包资源回归测试。
 - [ ] 抽离 i18n。
-- [ ] 抽离 notifications。
+- [x] 抽离 Toast 与系统通知到 `src/services/notifications.js`，业务触发条件仍保留在 `app.js`。
 - [ ] 抽离不涉及 Agent 循环的通用 API 请求。
 
 #### 拆分内容

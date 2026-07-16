@@ -14,6 +14,16 @@
 
 ---
 
+## 2026-07-16 15:22 · Codex
+
+### app.js 模块化：通知服务
+
+- 新增 `src/services/notifications.js`，统一封装页面 Toast 与浏览器系统通知。
+- `app.js` 改为从 `window.Code.services.notifications` 使用 `showToast` 和 `notify`；任务完成、权限待确认和问卷等业务触发条件继续留在原主流程中。
+- `index.html` 将通知服务固定在核心模块之后、运行时与主应用之前加载；正式 EXE 已通过现有 `src/` 资源规则自动包含该模块。
+- 扩充 `tests/test_frontend_modules.py`，覆盖通知模块文件、加载顺序、服务导出、主文件代理及重复定义。
+- 验证结果：前端模块定向测试 7 项通过；全量测试 469 项及 2 个子测试通过；新增模块与 `app.js` JavaScript 语法检查通过。
+
 ## 2026-07-16 14:46 · Codex
 
 ### app.js 模块化：第一批核心基础模块

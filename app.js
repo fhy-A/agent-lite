@@ -6,6 +6,7 @@ const {
   formatElapsed,
   estimateTokens,
 } = window.Code.core.utils;
+const { showToast, notify: _notify } = window.Code.services.notifications;
 
 function upgradeStaticIcons() {
   const iconOnly = (id, name) => {
@@ -2400,22 +2401,6 @@ function applyI18n() {
 
 
 
-function showToast(msg, type = "error") {
-
-  const container = document.getElementById("toastContainer");
-
-  const toast = document.createElement("div");
-
-  toast.className = `toast ${type}`;
-
-  toast.textContent = msg;
-
-  container.appendChild(toast);
-
-  setTimeout(() => { toast.style.opacity = "0"; toast.style.transition = "opacity .2s"; setTimeout(() => toast.remove(), 200); }, 3000);
-
-}
-
 // ── Permission notification ──
 
 const _originalTitle = document.title;
@@ -2423,14 +2408,6 @@ let _pendingPermNotify = false;
 
 function isUserAway() {
   return document.visibilityState !== "visible";
-}
-
-function _notify(title, body) {
-  try {
-    if ("Notification" in window && Notification.permission === "granted") {
-      new Notification(title, { body, icon: "code-icon.png" });
-    }
-  } catch (_) {}
 }
 
 function notifyTaskComplete(sessionId) {

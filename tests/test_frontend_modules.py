@@ -16,6 +16,7 @@ class TestFrontendCoreModules(unittest.TestCase):
             "src/core/namespace.js",
             "src/core/icons.js",
             "src/core/utils.js",
+            "src/services/notifications.js",
         ):
             self.assertTrue((ROOT / relative_path).is_file(), relative_path)
 
@@ -24,6 +25,7 @@ class TestFrontendCoreModules(unittest.TestCase):
             "./src/core/namespace.js",
             "./src/core/icons.js",
             "./src/core/utils.js",
+            "./src/services/notifications.js",
             "./agent-runtime.js",
             "./app.js",
         )
@@ -49,9 +51,19 @@ class TestFrontendCoreModules(unittest.TestCase):
         ):
             self.assertIn(name, utils)
 
+    def test_notifications_export_through_code_services(self):
+        source = (ROOT / "src/services/notifications.js").read_text(encoding="utf-8")
+        self.assertIn("services.notifications = Object.freeze", source)
+        self.assertIn("showToast", source)
+        self.assertIn("notify", source)
+
     def test_app_uses_extracted_modules_without_duplicate_definitions(self):
         self.assertIn("const { uiIcon } = window.Code.core.icons", APP_SOURCE)
         self.assertIn("} = window.Code.core.utils", APP_SOURCE)
+        self.assertIn(
+            "const { showToast, notify: _notify } = window.Code.services.notifications",
+            APP_SOURCE,
+        )
         for legacy_definition in (
             "const UI_ICON_PATHS",
             "function uiIcon(",
@@ -60,6 +72,8 @@ class TestFrontendCoreModules(unittest.TestCase):
             "function formatNumber(",
             "function formatElapsed(",
             "function estimateTokens(",
+            "function showToast(",
+            "function _notify(",
         ):
             self.assertNotIn(legacy_definition, APP_SOURCE)
 

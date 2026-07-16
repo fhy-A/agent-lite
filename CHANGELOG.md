@@ -37,7 +37,8 @@
 **测试结果**：前端模块 9/9 + 全量 466 passed + 2 subtests passed
 **改动的文件**：`app.js`、`styles.css`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`
 
-**已知遗留**：工具轮次切换时状态条仍短暂消失——需将状态从”单次 SSE 请求级”提升为”整轮 Agent 任务级”（`setStreaming` / 计时器生命周期解耦）。
+- 工具调用间隙、下一轮模型请求之间，”模型名 + 思考中 + 计时”持续可见不闪烁
+- 测试：全量 466 passed + 2 subtests passed，零回归
 
 ## 2026-07-16 15:22 · Codex
 

@@ -163,6 +163,7 @@ function ensureSessionRun(sessionId) {
       abortController: null,
       messageQueue: [],
       responseStartTime: null,
+      taskStartTime: null,      // persisted across tool rounds; cleared only on task end
       timerInterval: null,
       timerDisplay: null,
       recovery: null,
@@ -4330,7 +4331,8 @@ function formatElapsedMs(ms) {
 
 function getRunTimerDisplay(sessionId = state.sessionId) {
   const run = ensureSessionRun(sessionId);
-  const startedAt = run?.responseStartTime || (sessionId === state.sessionId ? state.responseStartTime : null);
+  // Prefer task-level time so the timer doesn't reset between tool rounds
+  const startedAt = run?.taskStartTime || run?.responseStartTime || (sessionId === state.sessionId ? state.responseStartTime : null);
   if (!startedAt) return state._timerDisplay || "0s";
   return formatElapsedMs(Date.now() - startedAt);
 }
@@ -4355,6 +4357,13 @@ function renderNetworkRecoveryStatus(sessionId = state.sessionId) {
 function renderRunStatus(model, sessionId = state.sessionId) {
   const label = model || getSelectedModel() || "Agent";
   return `<span class="run-status"><span class="run-model">${escapeHtml(label)}</span>${renderThinkingBadge(sessionId)}</span>`;
+}
+
+function renderActiveRunBanner(sessionId = state.sessionId) {
+  const run = ensureSessionRun(sessionId);
+  if (!run?.taskStartTime) return "";
+  const model = run._model || run.model || getSelectedModel() || "Agent";
+  return `<div class="active-run-status">${renderRunStatus(model, sessionId)}${renderNetworkRecoveryStatus(sessionId)}</div>`;
 }
 
 function normalizeResponseUsage(usage) {
@@ -5004,8 +5013,13 @@ function renderMessages() {
   flushThoughts();
   insertBranchMarker();
 
-  // Render queued messages (sent while agent is busy)
+  // Persistent task status banner — visible across tool rounds, not just
+  // during individual SSE requests.
   const run = ensureSessionRun(state.sessionId);
+  const activeBanner = run?.taskStartTime ? renderActiveRunBanner(state.sessionId) : "";
+  if (activeBanner) rows.unshift(activeBanner);
+
+  // Render queued messages (sent while agent is busy)
   if (run && run.messageQueue.length > 0) {
     for (const q of run.messageQueue) {
       rows.push(`<article class="msg queued"><div class="bubble"><em>${escapeHtml(q.text || "").slice(0, 80)}</em></div></article>`);
@@ -7248,6 +7262,9 @@ function setStreaming(active, sessionId = state.sessionId) {
     run.isStreaming = active;
     if (active) {
       run.responseStartTime = Date.now();
+      // taskStartTime anchors the persistent status bar across tool rounds;
+      // set it once per task and only clear on final stop.
+      if (!run.taskStartTime) run.taskStartTime = Date.now();
     } else {
       run.abortController = null;
       run.responseStartTime = null;
@@ -7291,7 +7308,9 @@ function startLiveTimer() {
 
   state._timerInterval = setInterval(() => {
 
-    if (!state.isStreaming) return;
+    const run = ensureSessionRun(state.sessionId);
+    // Timer runs for the whole task, not just individual SSE requests.
+    if (!run?.taskStartTime) return;
 
     const display = getRunTimerDisplay(state.sessionId);
 
@@ -7320,9 +7339,12 @@ function stopLiveTimer() {
 
   if (state._timerInterval) { clearInterval(state._timerInterval); state._timerInterval = null; }
 
-  if (state.responseStartTime) {
+  const run = ensureSessionRun(state.sessionId);
+  const startedAt = run?.taskStartTime || state.responseStartTime;
 
-    const display = formatElapsedMs(Date.now() - state.responseStartTime);
+  if (startedAt) {
+
+    const display = formatElapsedMs(Date.now() - startedAt);
 
     // Attach final status to the latest assistant message, even if tools were the last rendered segment.
 
@@ -7333,6 +7355,7 @@ function stopLiveTimer() {
     els.liveTimer.classList.remove("visible");
 
     state.responseStartTime = null;
+    if (run) run.taskStartTime = null;
 
     if (lastMsg && !lastMsg.streaming) {
 
@@ -11343,6 +11366,8 @@ async function sendMessage(userText) {
 
   await persistRunCheckpoint(ctx, "running", "model").catch(() => {});
 
+  // Anchor the model name on the run so the persistent status banner can show it
+  run._model = ctx.model || getSelectedModel();
   setStreaming(true, sessionId);
 
   let loopError = null;
@@ -11485,6 +11510,8 @@ ${r.result}`,
   if (!loopError && hadQueue && !(parallelSubTasks && parallelSubTasks.length > 1)) {
     ctx.taskUsage = { input: 0, output: 0, cache: 0 };
     ctx.responseUsage = { input: 0, output: 0, cache: 0 };
+    const drainRun = ensureSessionRun(sessionId);
+    if (drainRun) drainRun._model = ctx.model || getSelectedModel();
     setStreaming(true, sessionId);
     let drainError = null;
     try {

@@ -3013,8 +3013,12 @@ input:focus, select:focus, textarea:focus {
 
 .active-run-banner {
   display: none;
+  position: absolute;
+  left: 50%;
+  bottom: 134px;
+  transform: translateX(-50%);
   width: min(600px, 88%);
-  margin: 0 auto 10px;
+  z-index: 7;
 }
 .active-run-banner.visible { display: block; }
 

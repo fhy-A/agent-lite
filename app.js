@@ -4635,17 +4635,26 @@ function showImageOverlay(src) {
 }
 
 function renderThinkingProjection(items, serial) {
-  if (!items.length) return "";
-  const text = items
+  const MAX_LEN = 280; // keep per-round summaries concise; long paragraphs → truncated
+  const summaries = items
     .map((item) => String(item.text || "").replace(/\r\n?/g, "\n").trim())
-    .filter(Boolean)
-    .join("\n\n")
-    .replace(/\n{3,}/g, "\n\n");
-  if (!text) return "";
+    .filter(Boolean);
+  if (!summaries.length) return "";
+
+  const truncate = (text) => {
+    if (text.length <= MAX_LEN) return text;
+    // snap to the nearest word / sentence boundary before the limit
+    const cut = text.lastIndexOf(" ", MAX_LEN);
+    const boundary = cut > MAX_LEN * 0.6 ? cut : MAX_LEN;
+    return text.slice(0, boundary).replace(/[,;，；。\s]+$/, "") + "…";
+  };
+
   return `
     <article class="msg assistant thinking-process" data-thinking-block="${serial}">
       <div class="role">${t("thoughtProcess")}</div>
-      ${renderAssistantContent(text)}
+      <div class="thinking-summary-list">
+        ${summaries.map((text) => `<div class="thinking-summary-item">${renderMarkdownLite(truncate(text))}</div>`).join("")}
+      </div>
     </article>
   `;
 }
@@ -4720,23 +4729,20 @@ function renderAssistantResponseInfo(msg) {
 
 function renderFinalAssistantProjection(msg, index) {
   const model = msg._model || msg.meta?._model || getSelectedModel() || "Agent";
-  const thought = String(msg.thought || "").trim();
   const content = (getMsgText(msg) || "").trim();
   if (msg.streaming) {
     return `
-      <article class="msg assistant is-streaming" data-msg-index="${index}" data-streaming-message="true">
+      <article class="msg assistant is-streaming" data-msg-index="${index}" data-streaming-message="true" data-stream-session="${escapeHtml(state.sessionId || "")}">
         <div class="role">${escapeHtml(model)} ${renderThinkingBadge(state.sessionId)}</div>
-        <div class="streaming-thought-output${thought ? "" : " is-empty"}" data-stream-part="thought">${thought ? renderMarkdownLite(thought) : ""}</div>
         <div class="bubble streaming-answer-output${content && !isToolPlanningPlaceholder(content) ? "" : " is-empty"}" data-stream-part="answer">${content && !isToolPlanningPlaceholder(content) ? renderMarkdownLite(content) : ""}</div>
         ${renderNetworkRecoveryStatus(state.sessionId)}
       </article>
     `;
   }
-  if ((!content || isToolPlanningPlaceholder(content)) && !thought) return "";
+  if (!content || isToolPlanningPlaceholder(content)) return "";
   const responseInfo = renderAssistantResponseInfo(msg);
   const copyBtn = content && !isToolPlanningPlaceholder(content) ? renderCopyBtn(content) : "";
   const timeStr = formatMsgTime(msg._time);
-  // Thought is rendered in the merged thinking block above — don't duplicate here
   return `
     <article class="msg assistant" data-msg-index="${index}">
       <div class="role">${escapeHtml(model)}</div>
@@ -4838,25 +4844,16 @@ function patchStreamingAssistantMessage(sessionId, index) {
   const msg = getSessionMessages(sessionId)?.[index];
   if (!msg?.streaming) return;
 
-  let article = els.messages.querySelector(`.msg.assistant[data-msg-index="${index}"][data-streaming-message="true"]`);
-  if (!article) {
-    resetRenderCache();
-    renderMessages();
-    article = els.messages.querySelector(`.msg.assistant[data-msg-index="${index}"][data-streaming-message="true"]`);
-  }
+  // Streaming patches are incremental — skip this frame if the DOM node is
+  // absent rather than forcing a full renderMessages() which would tear down
+  // and recreate every message, causing the thinking badge & timer to flicker.
+  const article = els.messages.querySelector(`.msg.assistant[data-msg-index="${index}"][data-streaming-message="true"]`);
   if (!article) return;
 
-  const thought = String(msg.thought || "").trim();
   const content = (getMsgText(msg) || "").trim();
   const visibleContent = content && !isToolPlanningPlaceholder(content) ? content : "";
-  const thoughtNode = article.querySelector('[data-stream-part="thought"]');
   const answerNode = article.querySelector('[data-stream-part="answer"]');
 
-  if (thoughtNode) {
-    const nextThoughtHtml = thought ? renderMarkdownLite(thought) : "";
-    if (thoughtNode.innerHTML !== nextThoughtHtml) thoughtNode.innerHTML = nextThoughtHtml;
-    thoughtNode.classList.toggle("is-empty", !thought);
-  }
   if (answerNode) {
     const nextAnswerHtml = visibleContent ? renderMarkdownLite(visibleContent) : "";
     if (answerNode.innerHTML !== nextAnswerHtml) answerNode.innerHTML = nextAnswerHtml;
@@ -4973,17 +4970,17 @@ function renderMessages() {
 
     if (isInternalMessage(msg)) continue;
 
-    // Collect thinking summary from ALL assistant messages (intermediate + final)
-    // so they render as a single merged "思考过程" block
     if (msg.role === "assistant") {
-      const summary = (getMsgText(msg) || "").trim();
-      if (summary && !isToolPlanningPlaceholder(summary)) pendingThoughts.push({ index: j, text: summary });
+      // Only model-authored summaries that accompany a tool round belong in
+      // the thought projection. Final answers must never be duplicated here.
+      if (msg.meta?.toolCalls?.length) {
+        const summary = (getMsgText(msg) || "").trim();
+        if (summary && !isToolPlanningPlaceholder(summary)) {
+          pendingThoughts.push({ index: j, text: summary });
+        }
+        continue;
+      }
 
-      // Intermediate assistant messages (with tool_calls but no real content)
-      // contribute their thought to the merged block but don't render a bubble
-      if (msg.meta?.toolCalls?.length) continue;
-
-      // Final assistant message: flush all collected thoughts, then render content
       flushThoughts();
       const finalHtml = renderFinalAssistantProjection(msg, j);
       rows.push(finalHtml);
@@ -5028,7 +5025,31 @@ function renderMessages() {
     return;
   }
   state._lastRenderedHtml = renderKey;
+
+  // Detach active SSE streaming nodes *before* innerHTML so they are never
+  // destroyed. innerHTML tears down all child nodes, which would restart CSS
+  // animations on the thinking dot and lose the timer text between paints.
+  const preservedNodes = [];
+  els.messages.querySelectorAll('.msg.assistant[data-streaming-message="true"]').forEach((node) => {
+    if (node.dataset.streamSession === String(state.sessionId || "")) {
+      preservedNodes.push({ node, index: node.dataset.msgIndex || "" });
+      node.remove();
+    }
+  });
+
   els.messages.innerHTML = html;
+
+  preservedNodes.forEach(({ node: preservedNode, index }) => {
+    const freshNode = Array.from(els.messages.querySelectorAll('.msg.assistant[data-streaming-message="true"]'))
+      .find((n) => n.dataset.msgIndex === index);
+    if (freshNode) {
+      freshNode.replaceWith(preservedNode);
+    } else {
+      els.messages.appendChild(preservedNode);
+    }
+    patchStreamingAssistantMessage(state.sessionId, Number(index));
+  });
+
   bindCopyButtons();
   bindMessageActions();
   bindClickablePaths();

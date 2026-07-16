@@ -14,6 +14,31 @@
 
 ---
 
+## 2026-07-17 18:00 · Claude Code + Codex
+
+### SSE 渲染修复：思考摘要分离 + 流式节点防闪烁
+
+**问题诊断**：两个根因：
+1. 所有带 `toolCalls` 的 assistant 文本都被收入”思考过程”，导致最终回答可能重复出现在思考区
+2. 状态条（模型名 + 思考中 + 计时）绑定在单次流式消息上，DOM 重建时销毁，导致闪烁
+
+**Codex 改动**（消息投影层）：
+- `renderMessages()`：仅收集带 `meta.toolCalls` 的中间 assistant 消息进入思考投影块，最终回答不再混入
+- `renderFinalAssistantProjection()`：移除 `data-stream-part=”thought”` 独立思考展示区，加 `data-stream-session` 属性
+- `patchStreamingAssistantMessage()`：移除 thought 节点增量更新，去掉全量 render 回退
+- `renderThinkingProjection()`：重构为 `<thinking-summary-list>` + `<thinking-summary-item>` 独立段落结构
+- `styles.css`：删除 `.streaming-thought-output` / `.completed-thought-output` 样式，新增 `.thinking-summary-list` / `.thinking-summary-item` 样式，段落间隙 1.15em
+
+**Claude Code 改动**（DOM 防闪烁层）：
+- `renderMessages()`：innerHTML 前先用 `node.remove()` 将流式节点从 DOM 拆下，innerHTML 后再 `replaceWith` 装回；避免销毁导致 CSS 动画重启和计时文本丢失
+- `renderThinkingProjection()`：增加 280 字符截断，超长摘要以 `…` 收尾，保持每轮摘要简洁
+- 测试变量名 `activeStreamingNodes` → `preservedNodes`，与代码同步
+
+**测试结果**：前端模块 9/9 + 全量 466 passed + 2 subtests passed
+**改动的文件**：`app.js`、`styles.css`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`
+
+**已知遗留**：工具轮次切换时状态条仍短暂消失——需将状态从”单次 SSE 请求级”提升为”整轮 Agent 任务级”（`setStreaming` / 计时器生命周期解耦）。
+
 ## 2026-07-16 15:22 · Codex
 
 ### app.js 模块化：通知服务

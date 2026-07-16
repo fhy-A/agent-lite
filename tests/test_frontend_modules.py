@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parent.parent
 APP_SOURCE = (ROOT / "app.js").read_text(encoding="utf-8")
 INDEX_SOURCE = (ROOT / "index.html").read_text(encoding="utf-8")
 BUILD_SOURCE = (ROOT / "build_exe.py").read_text(encoding="utf-8")
+STYLE_SOURCE = (ROOT / "styles.css").read_text(encoding="utf-8")
 
 
 class TestFrontendCoreModules(unittest.TestCase):
@@ -84,6 +85,32 @@ class TestFrontendCoreModules(unittest.TestCase):
         self.assertIn("APP_DIR / 'agent-runtime.js'", BUILD_SOURCE)
         self.assertIn("APP_DIR / 'src'", BUILD_SOURCE)
         self.assertIn("f\"{APP_DIR / 'src'}{';'}src\"", BUILD_SOURCE)
+
+    def test_thought_projection_only_collects_tool_round_summaries(self):
+        render_start = APP_SOURCE.index("function renderMessages()")
+        assistant_start = APP_SOURCE.index('if (msg.role === "assistant") {', render_start)
+        assistant_end = APP_SOURCE.index('if (msg.role === "user") {', assistant_start)
+        assistant_block = APP_SOURCE[assistant_start:assistant_end]
+
+        self.assertIn("if (msg.meta?.toolCalls?.length) {", assistant_block)
+        self.assertIn("pendingThoughts.push", assistant_block)
+        self.assertLess(
+            assistant_block.index("if (msg.meta?.toolCalls?.length) {"),
+            assistant_block.index("pendingThoughts.push"),
+        )
+        self.assertIn("thinking-summary-list", APP_SOURCE)
+        self.assertIn(".thinking-summary-item + .thinking-summary-item", STYLE_SOURCE)
+
+    def test_streaming_projection_preserves_status_node_and_hides_raw_reasoning(self):
+        projection_start = APP_SOURCE.index("function renderFinalAssistantProjection")
+        projection_end = APP_SOURCE.index("function createCompactSummaryMessage", projection_start)
+        projection = APP_SOURCE[projection_start:projection_end]
+
+        self.assertIn('data-stream-session="${escapeHtml(state.sessionId || "")}"', projection)
+        self.assertNotIn('data-stream-part="thought"', projection)
+        self.assertNotIn("msg.thought", projection)
+        self.assertIn("preservedNodes", APP_SOURCE)
+        self.assertIn("freshNode.replaceWith(preservedNode)", APP_SOURCE)
 
 
 if __name__ == "__main__":

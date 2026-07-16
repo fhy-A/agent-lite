@@ -5451,34 +5451,28 @@ body.theme-dark .chat-pane.empty-chat .composer {
   letter-spacing: .3px;
 }
 
-.thinking-process .bubble {
+.thinking-summary-list {
   color: var(--muted);
   font-size: 13.5px;
   line-height: 1.72;
 }
 
-.thinking-process .bubble p {
-  margin: 0 0 .9em;
+.thinking-summary-item > :first-child {
+  margin-top: 0;
 }
 
-.thinking-process .bubble p:last-child {
+.thinking-summary-item > :last-child {
   margin-bottom: 0;
 }
 
-.streaming-thought-output,
-.completed-thought-output {
-  margin-top: 10px;
-  color: var(--muted);
-  font-size: 13.5px;
-  line-height: 1.72;
+.thinking-summary-item + .thinking-summary-item {
+  margin-top: 1.15em;
 }
 
-.streaming-thought-output > :first-child,
 .streaming-answer-output > :first-child {
   margin-top: 0;
 }
 
-.streaming-thought-output > :last-child,
 .streaming-answer-output > :last-child {
   margin-bottom: 0;
 }
@@ -5487,17 +5481,8 @@ body.theme-dark .chat-pane.empty-chat .composer {
   margin-top: 12px;
 }
 
-.streaming-thought-output.is-empty,
 .streaming-answer-output.is-empty {
   display: none;
-}
-
-.completed-thought-output {
-  margin-bottom: 22px;
-}
-
-.completed-thought-output > .role {
-  margin-bottom: 9px;
 }
 
 /* Diff suggestions: one structural surface instead of nested outlined cards. */

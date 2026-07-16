@@ -164,6 +164,7 @@ function ensureSessionRun(sessionId) {
       messageQueue: [],
       responseStartTime: null,
       taskStartTime: null,      // persisted across tool rounds; cleared only on task end
+      _taskPhase: null,         // { label: 'thinking'|'executing', toolName?: string }
       timerInterval: null,
       timerDisplay: null,
       recovery: null,
@@ -1938,7 +1939,7 @@ const I18N = {
     welcome: "我是 Code，你的本地 AI 编程伙伴。\\n\\n我可以读文件、搜代码、跑命令、改项目。",
     welcomeTagline: "开始对话，用自然语言驱动代码。",
     inputPlaceholder: "描述需求、粘贴代码，或输入 / 调用命令",
-    thinkingLabel: "思考中", networkRecovering: "网络恢复中", networkReconnectStatus: "网络连接已中断，正在自动恢复 · 已尝试 {attempt} 次 · ", networkReconnectSuffix: " 后重试", completedLabel: "完成",
+    thinkingLabel: "思考中", executingTool: "执行工具", networkRecovering: "网络恢复中", networkReconnectStatus: "网络连接已中断，正在自动恢复 · 已尝试 {attempt} 次 · ", networkReconnectSuffix: " 后重试", completedLabel: "完成",
     refreshBtn: "刷新", closePreview: "关闭", filterFiles: "筛选文件…",
     statusDone: "完成", statusFail: "失败", statusRunning: "准备",
     toolExecFailed: "工具执行失败", fetchFailed: "抓取失败",
@@ -2140,7 +2141,7 @@ const I18N = {
     welcome: "I'm Code, your local AI coding partner. I can read files, search code, run commands, and modify projects.",
     welcomeTagline: "Start a conversation, drive code with natural language.",
     inputPlaceholder: "Describe your task, paste code, or type / for commands",
-    thinkingLabel: "Thinking", networkRecovering: "Reconnecting", networkReconnectStatus: "Connection lost. Recovering automatically · Attempt {attempt} · retry in ", networkReconnectSuffix: "", completedLabel: "Completed",
+    thinkingLabel: "Thinking", executingTool: "Running", networkRecovering: "Reconnecting", networkReconnectStatus: "Connection lost. Recovering automatically · Attempt {attempt} · retry in ", networkReconnectSuffix: "", completedLabel: "Completed",
     refreshBtn: "Refresh", closePreview: "Close", filterFiles: "Filter files...",
     statusDone: "Done", statusFail: "Failed", statusRunning: "Preparing",
     toolExecFailed: "Tool execution failed", fetchFailed: "Fetch failed",
@@ -4357,7 +4358,30 @@ function renderNetworkRecoveryStatus(sessionId = state.sessionId) {
 
 function renderRunStatus(model, sessionId = state.sessionId) {
   const label = model || getSelectedModel() || "Agent";
-  return `<span class="run-status"><span class="run-model">${escapeHtml(label)}</span>${renderThinkingBadge(sessionId)}</span>`;
+  const run = ensureSessionRun(sessionId);
+  const phase = run?._taskPhase;
+  let phaseHtml;
+  if (phase?.label === "executing") {
+    const toolLabel = phase.toolName ? ` · ${escapeHtml(phase.toolName)}` : "";
+    phaseHtml = `<span class="streaming-dot executing">${t("executingTool")}${toolLabel} <span class="streaming-timer">${escapeHtml(getRunTimerDisplay(sessionId))}</span></span>`;
+  } else {
+    phaseHtml = renderThinkingBadge(sessionId);
+  }
+  return `<span class="run-status"><span class="run-model">${escapeHtml(label)}</span>${phaseHtml}</span>`;
+}
+
+function setTaskPhase(sessionId, phase) {
+  const run = ensureSessionRun(sessionId);
+  if (!run || sessionId !== state.sessionId) return;
+  run._taskPhase = phase || null;
+  if (!phase) {
+    if (els.activeRunBanner) els.activeRunBanner.classList.remove("visible");
+    return;
+  }
+  if (els.activeRunBanner) {
+    els.activeRunBanner.innerHTML = renderRunStatus(run._model || run.model || getSelectedModel(), sessionId);
+    els.activeRunBanner.classList.add("visible");
+  }
 }
 
 function renderActiveRunBanner(sessionId = state.sessionId) {
@@ -7302,11 +7326,8 @@ function startLiveTimer() {
 
   els.liveTimer.classList.remove("visible");
 
-  // Show persistent status banner between messages and composer
-  if (els.activeRunBanner) {
-    els.activeRunBanner.innerHTML = renderRunStatus(run._model || run.model || getSelectedModel());
-    els.activeRunBanner.classList.add("visible");
-  }
+  // Show persistent status banner with initial "thinking" phase
+  setTaskPhase(state.sessionId, { label: "thinking" });
 
   state._timerInterval = setInterval(() => {
 
@@ -7345,6 +7366,7 @@ function stopLiveTimer() {
   if (els.activeRunBanner) els.activeRunBanner.classList.remove("visible");
 
   const run = ensureSessionRun(state.sessionId);
+  if (run) run._taskPhase = null;
   const startedAt = run?.taskStartTime || state.responseStartTime;
 
   if (startedAt) {
@@ -10455,6 +10477,7 @@ async function runAgentLoop(ctx = null) {
 
     if (!ctx.isSubAgent) renderSessionMessages(ctx.sessionId);
 
+    if (!ctx.isSubAgent) setTaskPhase(ctx.sessionId, { label: "thinking" });
     const modelResult = await callModelOnce(assistantIndex, true, ctx);
 
     const turnUsage = ctx.responseUsage ? { ...ctx.responseUsage } : null;
@@ -10579,6 +10602,7 @@ async function runAgentLoop(ctx = null) {
       for (let callIndex = 0; callIndex < normalizedCalls.length; callIndex += 1) {
 
         const tool = normalizedCalls[callIndex];
+        if (!ctx.isSubAgent) setTaskPhase(ctx.sessionId, { label: "executing", toolName: tool.action || "tool" });
         let result;
         if (questionnaireExclusive && callIndex !== questionnaireCallIndex) {
           result = {

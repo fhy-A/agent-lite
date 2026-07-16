@@ -14,6 +14,17 @@
 
 ---
 
+## 2026-07-16 14:46 · Codex
+
+### app.js 模块化：第一批核心基础模块
+
+- 新增 `src/core/namespace.js`，建立 `window.Code.core/services/features/agent/ui` 统一命名空间。
+- 将图标路径表与 `uiIcon()` 抽离至 `src/core/icons.js`；将 HTML 转义、紧凑数字、数字、耗时格式化及 token 估算抽离至 `src/core/utils.js`。
+- `app.js` 改为从 `window.Code.core` 读取接口并删除对应旧定义；暂时保留两个既有 `formatSize()`，避免在结构拆分提交中混入行为清理。
+- `index.html` 固化 `namespace → icons → utils → agent-runtime → app` 的加载顺序。
+- `build_exe.py` 补充 `agent-runtime.js` 与完整 `src/` 资源，避免正式 EXE 缺少拆分模块。
+- 新增 `tests/test_frontend_modules.py`，覆盖模块文件、加载顺序、命名空间、重复定义与打包资源。
+
 ## 2026-07-16 12:30 · Claude Code
 
 ### 品牌重命名：Agent Lite → Code

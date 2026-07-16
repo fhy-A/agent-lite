@@ -23,6 +23,8 @@ cmd = [
     "--version-file", str(APP_DIR / "file_version_info.txt"),
     "--add-data", f"{APP_DIR / 'VERSION'}{';'}.",
     "--add-data", f"{APP_DIR / 'app.js'}{';'}.",
+    "--add-data", f"{APP_DIR / 'agent-runtime.js'}{';'}.",
+    "--add-data", f"{APP_DIR / 'src'}{';'}src",
     "--add-data", f"{APP_DIR / 'index.html'}{';'}.",
     "--add-data", f"{APP_DIR / 'styles.css'}{';'}.",
     "--add-data", f"{APP_DIR / 'code-icon.ico'}{';'}.",

@@ -14,6 +14,9 @@
   - [ ] **复查 token 优化效果与副作用** — 跑几天后评估截断是否合理、能力有无降级
 - [ ] **app.js 模块化** — 474KB 单文件拆分（state / agent-loop / tools / render / events / session / utils），esbuild 打包
   - [x] 模型运行时传输层拆分为独立 `agent-runtime.js`，负责创建、续接和取消服务端模型流
+  - [x] 建立 `window.Code` 命名空间，抽离 `src/core/icons.js` 与 `src/core/utils.js`
+  - [x] 固化前端模块加载顺序，并将 `agent-runtime.js` 与 `src/` 纳入正式 EXE 资源清单
+  - [x] 增加第一批模块边界、重复定义与打包资源回归测试
   - [ ] 按 [`docs/APP_JS_SPLIT_PLAN.md`](docs/APP_JS_SPLIT_PLAN.md) 分阶段迁移；先保持普通脚本兼容拆分，边界稳定后再接入 esbuild
 - [ ] **macOS / Linux 跨平台** — PowerShell→bash/zsh、进程管理、托盘适配
 - [ ] **API 中转站部署**（阶段 2）— 共享 auth、Key 配置、嵌入中转站页面
@@ -77,4 +80,4 @@
 
 ---
 
-_上次更新：2026-07-16 02:30_
+_上次更新：2026-07-16 14:46_

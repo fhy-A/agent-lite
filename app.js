@@ -639,6 +639,7 @@ const els = {
   tokenContext: document.getElementById("tokenContext"),
 
   liveTimer: document.getElementById("liveTimer"),
+  activeRunBanner: document.getElementById("activeRunBanner"),
 
   authorizationPanel: document.getElementById("authorizationPanel"),
 
@@ -4742,7 +4743,7 @@ function renderFinalAssistantProjection(msg, index) {
   if (msg.streaming) {
     return `
       <article class="msg assistant is-streaming" data-msg-index="${index}" data-streaming-message="true" data-stream-session="${escapeHtml(state.sessionId || "")}">
-        <div class="role">${escapeHtml(model)} ${renderThinkingBadge(state.sessionId)}</div>
+        <div class="role">${escapeHtml(model)}</div>
         <div class="bubble streaming-answer-output${content && !isToolPlanningPlaceholder(content) ? "" : " is-empty"}" data-stream-part="answer">${content && !isToolPlanningPlaceholder(content) ? renderMarkdownLite(content) : ""}</div>
         ${renderNetworkRecoveryStatus(state.sessionId)}
       </article>
@@ -5019,14 +5020,6 @@ function renderMessages() {
     for (const q of run.messageQueue) {
       rows.push(`<article class="msg queued"><div class="bubble"><em>${escapeHtml(q.text || "").slice(0, 80)}</em></div></article>`);
     }
-  }
-
-  // Show a standalone status bar only when the task is running but there is
-  // no streaming assistant message currently being rendered (e.g. between
-  // tool rounds). During SSE the streaming message already carries the badge.
-  if (run?.taskStartTime) {
-    const alreadyHasStreaming = rows.some(function(r) { return r && r.indexOf('data-streaming-message="true"') >= 0; });
-    if (!alreadyHasStreaming) rows.push(renderActiveRunBanner(state.sessionId));
   }
 
   var html = rows.filter(Boolean).join("");
@@ -7309,6 +7302,12 @@ function startLiveTimer() {
 
   els.liveTimer.classList.remove("visible");
 
+  // Show persistent status banner between messages and composer
+  if (els.activeRunBanner) {
+    els.activeRunBanner.innerHTML = renderRunStatus(run._model || run.model || getSelectedModel());
+    els.activeRunBanner.classList.add("visible");
+  }
+
   state._timerInterval = setInterval(() => {
 
     const run = ensureSessionRun(state.sessionId);
@@ -7341,6 +7340,9 @@ function stopLiveTimer() {
   state._timerDisplay = null;
 
   if (state._timerInterval) { clearInterval(state._timerInterval); state._timerInterval = null; }
+
+  // Hide the persistent status banner
+  if (els.activeRunBanner) els.activeRunBanner.classList.remove("visible");
 
   const run = ensureSessionRun(state.sessionId);
   const startedAt = run?.taskStartTime || state.responseStartTime;

@@ -22,7 +22,7 @@ import server as server_mod
 class TestCompactValidation(unittest.TestCase):
 
     def setUp(self):
-        self.handler = object.__new__(server_mod.AgentLiteHandler)
+        self.handler = object.__new__(server_mod.CodeHandler)
         self.handler.send_json = mock.Mock()
         self.handler.read_body_json = mock.Mock()
         self.handler.headers = {}  # simulate HTTP headers
@@ -38,7 +38,7 @@ class TestCompactValidation(unittest.TestCase):
         }
         self.handler.headers["Authorization"] = "Bearer sk-test"
         with self.assertRaises(ValueError):
-            server_mod.AgentLiteHandler.compact(self.handler)
+            server_mod.CodeHandler.compact(self.handler)
 
     def test_rejects_missing_model(self):
         self.handler.read_body_json.return_value = {
@@ -47,7 +47,7 @@ class TestCompactValidation(unittest.TestCase):
         }
         self.handler.headers["Authorization"] = "Bearer sk-test"
         with self.assertRaises(ValueError):
-            server_mod.AgentLiteHandler.compact(self.handler)
+            server_mod.CodeHandler.compact(self.handler)
 
     def test_rejects_missing_api_key(self):
         self.handler.read_body_json.return_value = {
@@ -55,7 +55,7 @@ class TestCompactValidation(unittest.TestCase):
             "messages": [{"role": "user", "content": str(i)} for i in range(10)],
         }
         with self.assertRaises(ValueError):
-            server_mod.AgentLiteHandler.compact(self.handler)
+            server_mod.CodeHandler.compact(self.handler)
 
     def _make_urlopen_mock(self, summary="Summary text"):
         """Create a proper mock for request.urlopen that works as context manager."""
@@ -78,7 +78,7 @@ class TestCompactValidation(unittest.TestCase):
         self.handler.headers["Authorization"] = "Bearer sk-test"
         with mock.patch.object(server_mod.request, "urlopen") as mock_urlopen:
             mock_urlopen.return_value = self._make_urlopen_mock()
-            server_mod.AgentLiteHandler.compact(self.handler)
+            server_mod.CodeHandler.compact(self.handler)
             data = self.handler.send_json.call_args[0][0]
             self.assertTrue(data.get("ok"), f"Expected ok, got: {data}")
             self.assertEqual(data["kept"], 6, "40 messages should keep 6")
@@ -93,7 +93,7 @@ class TestCompactValidation(unittest.TestCase):
         self.handler.headers["Authorization"] = "Bearer sk-test"
         with mock.patch.object(server_mod.request, "urlopen") as mock_urlopen:
             mock_urlopen.return_value = self._make_urlopen_mock()
-            server_mod.AgentLiteHandler.compact(self.handler)
+            server_mod.CodeHandler.compact(self.handler)
             data = self.handler.send_json.call_args[0][0]
             self.assertTrue(data.get("ok"))
             self.assertGreaterEqual(data["kept"], 2)
@@ -117,7 +117,7 @@ class TestCompactValidation(unittest.TestCase):
         # Capture the request body sent to the LLM
         with mock.patch.object(server_mod.request, "urlopen") as mock_urlopen:
             mock_urlopen.return_value = self._make_urlopen_mock()
-            server_mod.AgentLiteHandler.compact(self.handler)
+            server_mod.CodeHandler.compact(self.handler)
             data = self.handler.send_json.call_args[0][0]
             self.assertTrue(data.get("ok"))
             # Verify the request was made
@@ -138,7 +138,7 @@ class TestCompactValidation(unittest.TestCase):
         self.handler.headers["Authorization"] = "Bearer sk-test"
         with mock.patch.object(server_mod.request, "urlopen") as mock_urlopen:
             mock_urlopen.return_value = self._make_urlopen_mock()
-            server_mod.AgentLiteHandler.compact(self.handler)
+            server_mod.CodeHandler.compact(self.handler)
             data = self.handler.send_json.call_args[0][0]
             self.assertTrue(data.get("ok"))
             # Verify truncation: each message truncated to ~800 chars in the prompt
@@ -176,7 +176,7 @@ class TestCompactValidation(unittest.TestCase):
             return mock_resp
 
         with mock.patch.object(server_mod.request, "urlopen", side_effect=capture_request):
-            server_mod.AgentLiteHandler.compact(self.handler)
+            server_mod.CodeHandler.compact(self.handler)
             data = self.handler.send_json.call_args[0][0]
             self.assertTrue(data.get("ok"))
             prompt = captured_prompt[0] if captured_prompt else ""
@@ -210,7 +210,7 @@ class TestCompactValidation(unittest.TestCase):
             return mock_resp
 
         with mock.patch.object(server_mod.request, "urlopen", side_effect=capture_request):
-            server_mod.AgentLiteHandler.compact(self.handler)
+            server_mod.CodeHandler.compact(self.handler)
             data = self.handler.send_json.call_args[0][0]
             self.assertTrue(data.get("ok"))
             prompt = captured_prompt[0] if captured_prompt else ""
@@ -387,7 +387,7 @@ class TestSkillsCRUD(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.tmp_data = Path(tempfile.mkdtemp(prefix="agentlite_skill_"))
+        cls.tmp_data = Path(tempfile.mkdtemp(prefix="code_skill_"))
         cls.tmp_skills = cls.tmp_data / "skills"
         cls.tmp_skills.mkdir(parents=True)
         cls._patcher = mock.patch.object(server_mod, "SKILLS_DIR", cls.tmp_skills)
@@ -473,7 +473,7 @@ class TestMemoryCRUD(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.tmp_data = Path(tempfile.mkdtemp(prefix="agentlite_mem_"))
+        cls.tmp_data = Path(tempfile.mkdtemp(prefix="code_mem_"))
         cls.tmp_memory = cls.tmp_data / "memory"
         cls.tmp_memory.mkdir(parents=True)
         cls._patcher = mock.patch.object(server_mod, "MEMORY_DIR", cls.tmp_memory)

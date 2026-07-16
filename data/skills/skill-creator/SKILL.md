@@ -1,6 +1,6 @@
 ---
 name: skill-creator
-description: 创建、更新、审查和打包 Agent Skill。用于编写 SKILL.md、设计 frontmatter、关键词与触发规则，或为 Agent Lite 扩展专业工作流、工具集成和领域知识。
+description: 创建、更新、审查和打包 Agent Skill。用于编写 SKILL.md、设计 frontmatter、关键词与触发规则，或为 Code 扩展专业工作流、工具集成和领域知识。
 keywords: 创建+skill, 新建+skill, 制作+skill, 编写+skill, 更新+skill, 修改+skill, 审查+skill, skill模板, SKILL.md, skill creator, create+skill, update+skill, agent skill, frontmatter, 技能包, 技能开发
 tools: list_files, glob_files, search_files, read_file, propose_edit, write_file, run_command
 license: Complete terms in LICENSE.txt
@@ -12,9 +12,9 @@ This skill provides guidance for creating effective skills.
 
 ## About Skills
 
-Skills are modular, self-contained packages that extend Agent Lite's capabilities by providing
+Skills are modular, self-contained packages that extend Code's capabilities by providing
 specialized knowledge, workflows, and tools. Think of them as "onboarding guides" for specific
-domains or tasks—they transform Agent Lite from a general-purpose agent into a specialized agent
+domains or tasks—they transform Code from a general-purpose agent into a specialized agent
 equipped with procedural knowledge that no model can fully possess.
 
 ### What Skills Provide
@@ -28,9 +28,9 @@ equipped with procedural knowledge that no model can fully possess.
 
 ### Concise is Key
 
-The context window is a public good. Skills share the context window with everything else Agent Lite needs: system prompt, conversation history, other Skills' metadata, and the actual user request.
+The context window is a public good. Skills share the context window with everything else Code needs: system prompt, conversation history, other Skills' metadata, and the actual user request.
 
-**Default assumption: Agent Lite is already very smart.** Only add context Agent Lite doesn't already have. Challenge each piece of information: "Does Agent Lite really need this explanation?" and "Does this paragraph justify its token cost?"
+**Default assumption: Code is already very smart.** Only add context Code doesn't already have. Challenge each piece of information: "Does Code really need this explanation?" and "Does this paragraph justify its token cost?"
 
 Prefer concise examples over verbose explanations.
 
@@ -44,7 +44,7 @@ Match the level of specificity to the task's fragility and variability:
 
 **Low freedom (specific scripts, few parameters)**: Use when operations are fragile and error-prone, consistency is critical, or a specific sequence must be followed.
 
-Think of Agent Lite as exploring a path: a narrow bridge with cliffs needs specific guardrails (low freedom), while an open field allows many routes (high freedom).
+Think of Code as exploring a path: a narrow bridge with cliffs needs specific guardrails (low freedom), while an open field allows many routes (high freedom).
 
 ### Anatomy of a Skill
 
@@ -69,7 +69,7 @@ skill-name/
 
 Every SKILL.md consists of:
 
-- **Frontmatter** (YAML): Agent Lite requires `name` and `description`, and also reads `keywords` and `tools`. The `name` becomes the stable slash command (`/<name>`), `keywords` improve automatic retrieval, and `tools` document the capabilities the workflow expects.
+- **Frontmatter** (YAML): Code requires `name` and `description`, and also reads `keywords` and `tools`. The `name` becomes the stable slash command (`/<name>`), `keywords` improve automatic retrieval, and `tools` document the capabilities the workflow expects.
 - **Body** (Markdown): Instructions and guidance for using the skill. Only loaded AFTER the skill triggers (if at all).
 
 #### Bundled Resources (optional)
@@ -81,27 +81,27 @@ Executable code (Python/Bash/etc.) for tasks that require deterministic reliabil
 - **When to include**: When the same code is being rewritten repeatedly or deterministic reliability is needed
 - **Example**: `scripts/rotate_pdf.py` for PDF rotation tasks
 - **Benefits**: Token efficient, deterministic, may be executed without loading into context
-- **Note**: Scripts may still need to be read by Agent Lite for patching or environment-specific adjustments
+- **Note**: Scripts may still need to be read by Code for patching or environment-specific adjustments
 
 ##### References (`references/`)
 
-Documentation and reference material intended to be loaded as needed into context to inform Agent Lite's process and thinking.
+Documentation and reference material intended to be loaded as needed into context to inform Code's process and thinking.
 
-- **When to include**: For documentation that Agent Lite should reference while working
+- **When to include**: For documentation that Code should reference while working
 - **Examples**: `references/finance.md` for financial schemas, `references/mnda.md` for company NDA template, `references/policies.md` for company policies, `references/api_docs.md` for API specifications
 - **Use cases**: Database schemas, API documentation, domain knowledge, company policies, detailed workflow guides
-- **Benefits**: Keeps SKILL.md lean, loaded only when Agent Lite determines it's needed
+- **Benefits**: Keeps SKILL.md lean, loaded only when Code determines it's needed
 - **Best practice**: If files are large (>10k words), include grep search patterns in SKILL.md
 - **Avoid duplication**: Information should live in either SKILL.md or references files, not both. Prefer references files for detailed information unless it's truly core to the skill—this keeps SKILL.md lean while making information discoverable without hogging the context window. Keep only essential procedural instructions and workflow guidance in SKILL.md; move detailed reference material, schemas, and examples to references files.
 
 ##### Assets (`assets/`)
 
-Files not intended to be loaded into context, but rather used within the output Agent Lite produces.
+Files not intended to be loaded into context, but rather used within the output Code produces.
 
 - **When to include**: When the skill needs files that will be used in the final output
 - **Examples**: `assets/logo.png` for brand assets, `assets/slides.pptx` for PowerPoint templates, `assets/frontend-template/` for HTML/React boilerplate, `assets/font.ttf` for typography
 - **Use cases**: Templates, images, icons, boilerplate code, fonts, sample documents that get copied or modified
-- **Benefits**: Separates output resources from documentation, enables Agent Lite to use files without loading them into context
+- **Benefits**: Separates output resources from documentation, enables Code to use files without loading them into context
 
 #### What to Not Include in a Skill
 
@@ -121,7 +121,7 @@ Skills use a three-level loading system to manage context efficiently:
 
 1. **Metadata (name + description)** - Always in context (~100 words)
 2. **SKILL.md body** - When skill triggers (<5k words)
-3. **Bundled resources** - As needed by Agent Lite (Unlimited because scripts can be executed without reading into context window)
+3. **Bundled resources** - As needed by Code (Unlimited because scripts can be executed without reading into context window)
 
 #### Progressive Disclosure Patterns
 
@@ -146,7 +146,7 @@ Extract text with pdfplumber:
 - **Examples**: See [EXAMPLES.md](EXAMPLES.md) for common patterns
 ```
 
-Agent Lite loads FORMS.md, REFERENCE.md, or EXAMPLES.md only when needed.
+Code loads FORMS.md, REFERENCE.md, or EXAMPLES.md only when needed.
 
 **Pattern 2: Domain-specific organization**
 
@@ -162,7 +162,7 @@ bigquery-skill/
     └── marketing.md (campaigns, attribution)
 ```
 
-When a user asks about sales metrics, Agent Lite only reads sales.md.
+When a user asks about sales metrics, Code only reads sales.md.
 
 Similarly, for skills supporting multiple frameworks or variants, organize by variant:
 
@@ -175,7 +175,7 @@ cloud-deploy/
     └── azure.md (Azure deployment patterns)
 ```
 
-When the user chooses AWS, Agent Lite only reads aws.md.
+When the user chooses AWS, Code only reads aws.md.
 
 **Pattern 3: Conditional details**
 
@@ -196,12 +196,12 @@ For simple edits, modify the XML directly.
 **For OOXML details**: See [OOXML.md](OOXML.md)
 ```
 
-Agent Lite reads REDLINING.md or OOXML.md only when the user needs those features.
+Code reads REDLINING.md or OOXML.md only when the user needs those features.
 
 **Important guidelines:**
 
 - **Avoid deeply nested references** - Keep references one level deep from SKILL.md. All reference files should link directly from SKILL.md.
-- **Structure longer reference files** - For files longer than 100 lines, include a table of contents at the top so Agent Lite can see the full scope when previewing.
+- **Structure longer reference files** - For files longer than 100 lines, include a table of contents at the top so Code can see the full scope when previewing.
 
 ## Skill Creation Process
 
@@ -282,7 +282,7 @@ After initialization, customize or remove the generated SKILL.md and example fil
 
 ### Step 4: Edit the Skill
 
-When editing the (newly-generated or existing) skill, remember that the skill is being created for another instance of Agent Lite to use. Include information that would be beneficial and non-obvious to Agent Lite. Consider what procedural knowledge, domain-specific details, or reusable assets would help another Agent Lite instance execute these tasks more effectively.
+When editing the (newly-generated or existing) skill, remember that the skill is being created for another instance of Code to use. Include information that would be beneficial and non-obvious to Code. Consider what procedural knowledge, domain-specific details, or reusable assets would help another Code instance execute these tasks more effectively.
 
 #### Learn Proven Design Patterns
 
@@ -310,14 +310,14 @@ Any example files and directories not needed for the skill should be deleted. Th
 Write the YAML frontmatter with `name`, `description`, `keywords`, and `tools`:
 
 - `name`: The skill name
-- `description`: This is the primary triggering mechanism for your skill, and helps Agent Lite understand when to use the skill.
+- `description`: This is the primary triggering mechanism for your skill, and helps Code understand when to use the skill.
   - Include both what the Skill does and specific triggers/contexts for when to use it.
-  - Include all "when to use" information here - Not in the body. The body is only loaded after triggering, so "When to Use This Skill" sections in the body are not helpful to Agent Lite.
-  - Example description for a `docx` skill: "Comprehensive document creation, editing, and analysis with support for tracked changes, comments, formatting preservation, and text extraction. Use when Agent Lite needs to work with professional documents (.docx files) for: (1) Creating new documents, (2) Modifying or editing content, (3) Working with tracked changes, (4) Adding comments, or any other document tasks"
+  - Include all "when to use" information here - Not in the body. The body is only loaded after triggering, so "When to Use This Skill" sections in the body are not helpful to Code.
+  - Example description for a `docx` skill: "Comprehensive document creation, editing, and analysis with support for tracked changes, comments, formatting preservation, and text extraction. Use when Code needs to work with professional documents (.docx files) for: (1) Creating new documents, (2) Modifying or editing content, (3) Working with tracked changes, (4) Adding comments, or any other document tasks"
 - `keywords`: Add concise, comma-separated Chinese and English phrases that users are likely to type. Prefer specific task phrases over generic words. Use `term1+term2` when both terms must appear but may be separated in the request, such as `创建+skill`.
-- `tools`: Add comma-separated Agent Lite tool names that the workflow may require, such as `read_file`, `search_files`, `propose_edit`, or `run_command`.
+- `tools`: Add comma-separated Code tool names that the workflow may require, such as `read_file`, `search_files`, `propose_edit`, or `run_command`.
 
-Optional compatibility fields such as `license`, `allowed-tools`, and `metadata` may be retained when importing an external Skill. Agent Lite's runtime directly consumes the four fields above.
+Optional compatibility fields such as `license`, `allowed-tools`, and `metadata` may be retained when importing an external Skill. Code's runtime directly consumes the four fields above.
 
 ##### Body
 
@@ -344,7 +344,7 @@ The packaging script will:
    - YAML frontmatter format and required fields
    - Skill naming conventions and directory structure
    - Description completeness and quality
-   - Agent Lite `keywords` and `tools` fields
+   - Code `keywords` and `tools` fields
    - Remaining TODO text or unchanged scaffold resources
    - File organization and resource references
 
@@ -365,4 +365,4 @@ After testing the skill, users may request improvements. Often this happens righ
 
 ## What should be noted?
 
-Skills used by Agent Lite must be placed in `data/skills/<skill-name>/SKILL.md`. After creation or installation, verify that `/api/skills` lists the Skill; its slash command is then available automatically as `/<skill-name>` unless the user disables it in Settings.
+Skills used by Code must be placed in `data/skills/<skill-name>/SKILL.md`. After creation or installation, verify that `/api/skills` lists the Skill; its slash command is then available automatically as `/<skill-name>` unless the user disables it in Settings.

@@ -1,8 +1,8 @@
 ---
-description: agent-lite design decisions and architecture
+description: code design decisions and architecture
 ---
 
-Agent Lite is a local web-based coding agent. It uses Python http.server as backend, vanilla JS frontend, and New API as model gateway. The agent loop runs serialize tool calls with safety guards.
+Code is a local web-based coding agent. It uses Python http.server as backend, vanilla JS frontend, and New API as model gateway. The agent loop runs serialize tool calls with safety guards.
 
 ## Architecture
 

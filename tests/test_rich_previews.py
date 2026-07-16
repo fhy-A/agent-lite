@@ -1,4 +1,4 @@
-"""Integration checks for Agent Lite's rich file preview pipeline."""
+"""Integration checks for Code's rich file preview pipeline."""
 
 import json
 import socket
@@ -25,13 +25,13 @@ def free_port():
 class TestRichPreviews(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.temp_root = tempfile.TemporaryDirectory(prefix="agentlite_preview_root_")
-        cls.temp_data = tempfile.TemporaryDirectory(prefix="agentlite_preview_data_")
+        cls.temp_root = tempfile.TemporaryDirectory(prefix="code_preview_root_")
+        cls.temp_data = tempfile.TemporaryDirectory(prefix="code_preview_data_")
         cls.root = Path(cls.temp_root.name)
         cls.data = Path(cls.temp_data.name)
 
         cls.png_bytes = b"\x89PNG\r\n\x1a\n" + (b"preview" * 8)
-        cls.pdf_bytes = b"%PDF-1.4\n% Agent Lite preview fixture\n%%EOF\n"
+        cls.pdf_bytes = b"%PDF-1.4\n% Code preview fixture\n%%EOF\n"
         (cls.root / "sample.png").write_bytes(cls.png_bytes)
         (cls.root / "sample.pdf").write_bytes(cls.pdf_bytes)
         (cls.root / "sample.md").write_text("# Preview\n\n**Rendered** content.\n", encoding="utf-8")
@@ -62,7 +62,7 @@ class TestRichPreviews(unittest.TestCase):
 
         cls.port = free_port()
         cls.httpd = server_mod.ThreadingHTTPServer(
-            ("127.0.0.1", cls.port), server_mod.AgentLiteHandler
+            ("127.0.0.1", cls.port), server_mod.CodeHandler
         )
         cls.httpd.daemon_threads = True
         cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)

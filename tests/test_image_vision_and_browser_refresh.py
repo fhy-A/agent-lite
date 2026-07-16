@@ -48,8 +48,8 @@ class TestExistingBrowserRefresh(unittest.TestCase):
 
     def test_formal_updater_can_force_existing_page_reuse(self):
         with mock.patch.object(launcher, "has_existing_browser", return_value=False):
-            self.assertTrue(launcher.should_reuse_browser(argv=["AgentLite.exe", "--reuse-browser"]))
-            self.assertFalse(launcher.should_reuse_browser(argv=["AgentLite.exe"]))
+            self.assertTrue(launcher.should_reuse_browser(argv=["Code.exe", "--reuse-browser"]))
+            self.assertFalse(launcher.should_reuse_browser(argv=["Code.exe"]))
 
     def test_packaged_process_query_supports_versioned_executables(self):
         process_list = mock.Mock(stdout="101\n202\n", returncode=0)
@@ -59,7 +59,7 @@ class TestExistingBrowserRefresh(unittest.TestCase):
              mock.patch.object(launcher.subprocess, "run", side_effect=[process_list, stopped]) as run:
             self.assertEqual(launcher.kill_existing(), 1)
         query = run.call_args_list[0].args[0][-1]
-        self.assertIn("AgentLite(?:-v[0-9.]+)?", query)
+        self.assertIn("Code(?:-v[0-9.]+)?", query)
         self.assertEqual(run.call_args_list[1].args[0], ["taskkill", "/PID", "202", "/T", "/F"])
 
     def test_frontend_refreshes_when_server_instance_changes(self):
@@ -68,7 +68,7 @@ class TestExistingBrowserRefresh(unittest.TestCase):
         self.assertIn("location.reload()", source)
 
     def test_dev_launcher_opens_browser_for_fresh_or_headless_service(self):
-        source = (ROOT / "启动AgentLite.bat").read_text(encoding="utf-8")
+        source = (ROOT / "启动Code.bat").read_text(encoding="utf-8")
         self.assertIn("/api/has-browser", source)
         self.assertIn("/api/request-browser-refresh", source)
         self.assertEqual(source.count("/api/request-browser-refresh"), 1)

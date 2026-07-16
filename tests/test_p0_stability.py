@@ -73,7 +73,7 @@ class TestFrontendRefreshRecovery(unittest.TestCase):
     def test_recovery_is_locked_per_session(self):
         self.assertIn("async function withSessionRecoveryLock(sessionId, worker)", APP_SOURCE)
         self.assertIn("navigator.locks?.request", APP_SOURCE)
-        self.assertIn("agent-lite-run-recovery-lease", APP_SOURCE)
+        self.assertIn("code-run-recovery-lease", APP_SOURCE)
 
     def test_recovery_reuses_server_runtime_stream_and_guards_side_effects(self):
         self.assertIn("function prepareMessagesForRunRecovery(messages, runState)", APP_SOURCE)
@@ -110,7 +110,7 @@ class TestServerRunStatePersistence(unittest.TestCase):
         self.addCleanup(self.patch_sessions.stop)
 
     def make_handler(self, body):
-        handler = object.__new__(server_mod.AgentLiteHandler)
+        handler = object.__new__(server_mod.CodeHandler)
         handler.read_body_json = mock.Mock(return_value=body)
         handler.send_json = mock.Mock()
         return handler
@@ -123,7 +123,7 @@ class TestServerRunStatePersistence(unittest.TestCase):
             "recoveryCount": 2,
         }
         create_handler = self.make_handler({"title": "P0", "runState": running})
-        server_mod.AgentLiteHandler.create_session(create_handler)
+        server_mod.CodeHandler.create_session(create_handler)
         created = create_handler.send_json.call_args.args[0]
 
         stored = json.loads(server_mod.session_path(created["id"]).read_text(encoding="utf-8"))
@@ -136,7 +136,7 @@ class TestServerRunStatePersistence(unittest.TestCase):
             "stats": {"input": 3},
             "runState": {"status": "resuming", "phase": "tools"},
         })
-        server_mod.AgentLiteHandler.save_session(save_handler, created["id"])
+        server_mod.CodeHandler.save_session(save_handler, created["id"])
         saved = save_handler.send_json.call_args.args[0]
         self.assertEqual(saved["runState"]["status"], "resuming")
         self.assertEqual(saved["runState"]["phase"], "tools")
@@ -150,7 +150,7 @@ class TestServerRunStatePersistence(unittest.TestCase):
             "runState": {"status": "running", "phase": "tools"},
         })
         handler = self.make_handler({"title": "checkpoint", "messages": []})
-        server_mod.AgentLiteHandler.save_session(handler, session_id)
+        server_mod.CodeHandler.save_session(handler, session_id)
         saved = handler.send_json.call_args.args[0]
         self.assertEqual(saved["runState"], {"status": "running", "phase": "tools"})
 
@@ -161,7 +161,7 @@ class TestServerRunStatePersistence(unittest.TestCase):
             "total_tokens": 1330,
         }
         create_handler = self.make_handler({"title": "usage", "lastUsage": initial_usage})
-        server_mod.AgentLiteHandler.create_session(create_handler)
+        server_mod.CodeHandler.create_session(create_handler)
         created = create_handler.send_json.call_args.args[0]
         self.assertEqual(created["lastUsage"], initial_usage)
 
@@ -175,7 +175,7 @@ class TestServerRunStatePersistence(unittest.TestCase):
             "messages": [{"role": "assistant", "content": "done"}],
             "lastUsage": updated_usage,
         })
-        server_mod.AgentLiteHandler.save_session(save_handler, created["id"])
+        server_mod.CodeHandler.save_session(save_handler, created["id"])
 
         stored = json.loads(
             server_mod.session_path(created["id"]).read_text(encoding="utf-8")

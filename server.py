@@ -30,7 +30,7 @@ except ImportError:
 
 
 APP_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path(os.environ.get("AGENT_LITE_DATA_DIR") or (APP_DIR / "data"))
+DATA_DIR = Path(os.environ.get("CODE_DATA_DIR") or (APP_DIR / "data"))
 SESSIONS_DIR = DATA_DIR / "sessions"
 FILE_BACKUP_DIR = DATA_DIR / "file-backups"
 ATTACHMENTS_DIR = DATA_DIR / "attachments"
@@ -39,7 +39,7 @@ MEMORY_INDEX_PATH = MEMORY_DIR / "MEMORY.md"
 SKILLS_DIR = DATA_DIR / "skills"
 CONFIG_PATH = DATA_DIR / "config.json"
 NEW_API_BASE_URL = os.environ.get("NEW_API_BASE_URL", "").rstrip("/")
-PORT = int(os.environ.get("AGENT_LITE_PORT", "3010"))
+PORT = int(os.environ.get("CODE_PORT", "3010"))
 _active_downloads = {}   # downloadId -> {progress, done, error, path, total}
 _tray_thread_ref = None  # tray daemon thread reference
 _browser_heartbeat = 0   # timestamp of last browser ping
@@ -271,8 +271,8 @@ def _read_remote_version():
     Returns (version, download_url) or (None, None)."""
     try:
         req = request.Request(
-            "https://api.github.com/repos/fhy-A/agent-lite/releases/latest",
-            headers={"Accept": "application/vnd.github+json", "User-Agent": "AgentLite"},
+            "https://api.github.com/repos/fhy-A/Code/releases/latest",
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "Code"},
         )
         resp = request.urlopen(req, timeout=10)
         data = json.loads(resp.read())
@@ -294,8 +294,8 @@ def _read_remote_version():
     # versioned installer exists before advertising the update.
     try:
         latest_req = request.Request(
-            "https://github.com/fhy-A/agent-lite/releases/latest",
-            headers={"User-Agent": "AgentLite"},
+            "https://github.com/fhy-A/Code/releases/latest",
+            headers={"User-Agent": "Code"},
         )
         with request.urlopen(latest_req, timeout=10) as latest_resp:
             latest_url = latest_resp.geturl()
@@ -303,13 +303,13 @@ def _read_remote_version():
         tag = match.group(1).lstrip("v") if match else ""
         if tag and re.fullmatch(r"\d+(?:\.\d+)+", tag):
             exe_url = (
-                "https://github.com/fhy-A/agent-lite/releases/download/"
-                f"v{tag}/AgentLite-v{tag}.exe"
+                "https://github.com/fhy-A/Code/releases/download/"
+                f"v{tag}/Code-v{tag}.exe"
             )
             asset_req = request.Request(
                 exe_url,
                 method="HEAD",
-                headers={"User-Agent": "AgentLite"},
+                headers={"User-Agent": "Code"},
             )
             with request.urlopen(asset_req, timeout=10) as asset_resp:
                 if asset_resp.status < 400:
@@ -320,8 +320,8 @@ def _read_remote_version():
 
 
 def _cleanup_old_versions(target_dir):
-    """Delete older versioned AgentLite-v*.exe files, keeping only the latest."""
-    pat = re.compile(r'^AgentLite-v([\d.]+)\.exe$')
+    """Delete older versioned Code-v*.exe files, keeping only the latest."""
+    pat = re.compile(r'^Code-v([\d.]+)\.exe$')
     candidates = []
     try:
         for f in target_dir.iterdir():
@@ -383,14 +383,14 @@ try {{
     Write-UpdateLog "update started: $currentExe -> $newExe"
     Start-Sleep -Seconds 1
 
-    # Stop every packaged Agent Lite instance from this installation folder,
+    # Stop every packaged Code instance from this installation folder,
     # including both PyInstaller parent and child processes.
     $deadline = (Get-Date).AddSeconds(20)
     do {{
         $agents = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {{
             $_.ExecutablePath -and
             ([IO.Path]::GetDirectoryName($_.ExecutablePath) -ieq $targetDir) -and
-            ($_.Name -match '^AgentLite-v[0-9.]+[.]exe$')
+            ($_.Name -match '^Code-v[0-9.]+[.]exe$')
         }})
         foreach ($agent in $agents) {{
             Stop-Process -Id $agent.ProcessId -Force -ErrorAction SilentlyContinue
@@ -404,7 +404,7 @@ try {{
     }}
 
     # Keep the downloaded versioned executable and remove every older build.
-    $oldFiles = @(Get-ChildItem -LiteralPath $targetDir -Filter 'AgentLite-v*.exe' -File | Where-Object {{
+    $oldFiles = @(Get-ChildItem -LiteralPath $targetDir -Filter 'Code-v*.exe' -File | Where-Object {{
         $_.FullName -ine $newExe
     }})
     foreach ($oldFile in $oldFiles) {{
@@ -436,7 +436,7 @@ def _load_tray_icon():
     """Load tray icon image. Try data dir first, then APP_DIR, fall back to generated."""
     # Try data dir first (copied there by launcher on first run — most reliable)
     for base in [DATA_DIR, APP_DIR]:
-        icon_path = base / "agent-lite-icon.ico"
+        icon_path = base / "code-icon.ico"
         if icon_path.exists():
             try:
                 # Fully decode and detach the image from its source file. This is
@@ -459,7 +459,7 @@ def _load_tray_icon():
 
 
 if TRAY_AVAILABLE and os.name == "nt":
-    class AgentLiteTrayIcon(pystray.Icon):
+    class CodeTrayIcon(pystray.Icon):
         """Windows tray icon with a stable notification ID.
 
         pystray 0.19.x passes ``hID`` to NOTIFYICONDATAW, but the structure
@@ -483,7 +483,7 @@ if TRAY_AVAILABLE and os.name == "nt":
             result = win32.Shell_NotifyIcon(code, data)
             return result
 else:
-    AgentLiteTrayIcon = pystray.Icon if TRAY_AVAILABLE else None
+    CodeTrayIcon = pystray.Icon if TRAY_AVAILABLE else None
 
 
 def _create_tray_icon(port, server_ref=None, img=None):
@@ -502,11 +502,11 @@ def _create_tray_icon(port, server_ref=None, img=None):
             icon.stop()
 
     menu = pystray.Menu(
-        pystray.MenuItem("Open Agent Lite", on_open, default=True),
+        pystray.MenuItem("Open Code", on_open, default=True),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Exit", on_exit),
     )
-    return AgentLiteTrayIcon("Agent Lite", img, "Agent Lite", menu)
+    return CodeTrayIcon("Code", img, "Code", menu)
 
 
 def start_tray(port=3010, server_ref=None):
@@ -577,7 +577,7 @@ SKIP_DIRS = {
     "NTUSER.DAT", "ntuser.ini",
     # Agent / AI tool data
     ".claude", ".codex", ".cursor", ".gemini", ".copilot",
-    ".agent-lite", ".agents", ".clawd", ".openclaw",
+    ".code", ".agents", ".clawd", ".openclaw",
     ".qclaw", ".qclaw-backups", ".hi-codex", ".eigent",
     ".minimax-agent-cn", ".hyperframes",
     ".pi", ".duokuai", ".mem0", ".tavily", ".streamlit",
@@ -796,6 +796,280 @@ def write_json(path, data):
                 pass
 
 
+# ── JSONL session storage ──────────────────────────────────────────
+
+def _session_date_dir(session_id):
+    """Return the YYYY/MM/DD subdirectory for a session, derived from its meta JSON or file location."""
+    sid = safe_session_id(session_id)
+    # 1. Check hierarchical dirs first (post-migration)
+    for json_path in SESSIONS_DIR.glob(f"*/*/*/{sid}.json"):
+        try:
+            meta = read_json(json_path, {})
+            created = meta.get("createdAt") or meta.get("updatedAt") or ""
+            if created and "T" in created:
+                y, m, d = created[:10].split("-")
+                return SESSIONS_DIR / y / m / d
+        except Exception:
+            pass
+        # Fallback: derive date from parent dirs
+        rel = json_path.relative_to(SESSIONS_DIR)
+        return SESSIONS_DIR / rel.parent
+    # 2. Check flat legacy path
+    flat = SESSIONS_DIR / f"{sid}.json"
+    if flat.exists():
+        try:
+            meta = read_json(flat, {})
+            created = meta.get("createdAt") or meta.get("updatedAt") or ""
+            if created and "T" in created:
+                y, m, d = created[:10].split("-")
+                return SESSIONS_DIR / y / m / d
+        except Exception:
+            pass
+        try:
+            ts = dt.datetime.fromtimestamp(flat.stat().st_mtime).isoformat()
+            y, m, d = ts[:10].split("-")
+            return SESSIONS_DIR / y / m / d
+        except Exception:
+            pass
+    # 3. Ultimate fallback: today
+    today = now_iso()[:10]
+    y, m, d = today.split("-")
+    return SESSIONS_DIR / y / m / d
+
+
+def messages_path(session_id):
+    return _session_date_dir(session_id) / f"{safe_session_id(session_id)}.jsonl"
+
+
+def _session_flat_path(session_id):
+    """Legacy flat path — used during migration only."""
+    return SESSIONS_DIR / f"{safe_session_id(session_id)}.json"
+
+
+def _session_index_path():
+    """Return the session index path, following SESSIONS_DIR (supports mocking)."""
+    return SESSIONS_DIR / "index.jsonl"
+
+
+def _read_session_index():
+    """Read session_index.jsonl into a dict {id: entry}. Missing/corrupt → {}."""
+    ipath = _session_index_path()
+    if not ipath.exists():
+        return {}
+    index = {}
+    try:
+        for line in ipath.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+                sid = entry.get("id")
+                if sid:
+                    index[sid] = entry
+            except json.JSONDecodeError:
+                pass
+    except Exception:
+        pass
+    return index
+
+
+def _write_session_index_entry(session_id, title, updated_at, message_count, parent_id=None, branch_depth=0):
+    """Upsert an entry in session_index.jsonl (append-only, newest wins)."""
+    entry = json.dumps({
+        "id": session_id,
+        "title": title,
+        "updatedAt": updated_at,
+        "messageCount": message_count,
+        "_parentId": parent_id,
+        "_branchDepth": branch_depth,
+    }, ensure_ascii=False)
+    ipath = _session_index_path()
+    ipath.parent.mkdir(parents=True, exist_ok=True)
+    with _json_write_lock:
+        with open(ipath, "a", encoding="utf-8") as f:
+            f.write(entry + "\n")
+
+
+def _remove_session_index_entry(session_id):
+    """Remove an entry from session_index.jsonl by rewriting the file."""
+    index = _read_session_index()
+    index.pop(session_id, None)
+    entries = list(index.values())
+    entries.sort(key=lambda e: e.get("updatedAt", ""), reverse=True)
+    payload = "\n".join(
+        json.dumps(e, ensure_ascii=False) for e in entries
+    ) + ("\n" if entries else "")
+    ipath = _session_index_path()
+    ipath.parent.mkdir(parents=True, exist_ok=True)
+    with _json_write_lock:
+        ipath.write_text(payload, encoding="utf-8")
+
+
+def _rebuild_index_if_needed():
+    """If the index is empty but session files exist on disk, rebuild it."""
+    ipath = _session_index_path()
+    if ipath.exists() and ipath.stat().st_size > 0:
+        return  # index already exists and non-empty
+    # Scan hierarchical dirs for session files
+    entries = []
+    for json_path in SESSIONS_DIR.glob("*/*/*/*.json"):
+        sid = json_path.stem
+        try:
+            meta = read_json(json_path, {})
+            if meta.get("id"):
+                entries.append({
+                    "id": sid,
+                    "title": meta.get("title", ""),
+                    "updatedAt": meta.get("updatedAt", ""),
+                    "messageCount": meta.get("messageCount", 0),
+                    "_parentId": meta.get("_parentId"),
+                    "_branchDepth": meta.get("_branchDepth", 0),
+                })
+        except Exception:
+            pass
+    if entries:
+        entries.sort(key=lambda e: e.get("updatedAt", ""), reverse=True)
+        payload = "\n".join(
+            json.dumps(e, ensure_ascii=False) for e in entries
+        ) + "\n"
+        ipath.parent.mkdir(parents=True, exist_ok=True)
+        ipath.write_text(payload, encoding="utf-8")
+        print(f"[index] Rebuilt from {len(entries)} session(s) on disk")
+
+
+def _migrate_sessions_to_hierarchy():
+    """One-time migration: move flat .json/.jsonl files to YYYY/MM/DD/ and build index."""
+    _rebuild_index_if_needed()
+    flat_jsons = list(SESSIONS_DIR.glob("*.json"))
+    if not flat_jsons:
+        return  # nothing to migrate or already migrated
+    print(f"[migrate] Moving {len(flat_jsons)} legacy sessions to hierarchical layout...")
+    migrated = 0
+    for json_path in flat_jsons:
+        sid = json_path.stem
+        try:
+            meta = read_json(json_path, None)
+            if meta is None:
+                continue
+            date_str = (meta.get("createdAt") or meta.get("updatedAt") or "")[:10]
+            if not date_str:
+                continue
+            y, m, d = date_str.split("-")
+            target_dir = SESSIONS_DIR / y / m / d
+            target_dir.mkdir(parents=True, exist_ok=True)
+            # Move JSON
+            new_json = target_dir / json_path.name
+            if not new_json.exists():
+                shutil.move(str(json_path), str(new_json))
+            # Move JSONL if present
+            jl_path = SESSIONS_DIR / f"{sid}.jsonl"
+            if jl_path.exists():
+                new_jl = target_dir / jl_path.name
+                if not new_jl.exists():
+                    shutil.move(str(jl_path), str(new_jl))
+            # Index entry
+            _write_session_index_entry(sid, meta.get("title", ""), meta.get("updatedAt", ""), meta.get("messageCount", 0), meta.get("_parentId"), meta.get("_branchDepth", 0))
+            migrated += 1
+        except Exception:
+            pass
+    print(f"[migrate] Moved {migrated} sessions, index built.")
+
+
+def read_jsonl(path):
+    """Read all messages from a JSONL file. Returns [] if missing or empty."""
+    if not path.exists():
+        return []
+    messages = []
+    with open(path, "r", encoding="utf-8-sig") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                messages.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass  # skip corrupted / partial last line
+    return messages
+
+
+def write_jsonl(path, messages):
+    """Atomically overwrite JSONL with a list of messages (temp + os.replace)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    with _json_write_lock:
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                for msg in messages:
+                    f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+            for attempt in range(5):
+                try:
+                    os.replace(temp_path, path)
+                    break
+                except PermissionError:
+                    if attempt >= 4:
+                        raise
+                    time.sleep(0.01 * (2 ** attempt))
+        finally:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def append_jsonl(path, messages):
+    """Append messages to an existing JSONL file (thread-safe)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _json_write_lock:
+        with open(path, "a", encoding="utf-8") as f:
+            for msg in messages:
+                f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+
+
+def count_jsonl_lines(path):
+    """Fast line count without parsing JSON."""
+    if not path.exists():
+        return 0
+    count = 0
+    with open(path, "rb") as f:
+        for _ in f:
+            count += 1
+    return count
+
+
+def read_last_jsonl_line(path):
+    """Read the last non-empty line of a JSONL file and return the parsed JSON, or None."""
+    if not path.exists():
+        return None
+    try:
+        with open(path, "rb") as f:
+            if f.seek(0, 2) == 0:
+                return None  # empty file
+            # Read last ~8 KB and find the last complete line
+            size = f.tell()
+            chunk_size = min(8192, size)
+            f.seek(size - chunk_size)
+            lines = f.read().decode("utf-8").strip().split("\n")
+            for line in reversed(lines):
+                line = line.strip()
+                if line:
+                    return json.loads(line)
+            return None
+    except Exception:
+        return None
+
+
+def _last_msg_time(messages):
+    """Extract the _time from the last message in a list, or ''."""
+    if not messages:
+        return ""
+    for msg in reversed(messages):
+        t = msg.get("_time") or (msg.get("meta") or {}).get("_time")
+        if t:
+            return t
+    return ""
+
+
 def default_project_root():
     return str(Path.home())
 
@@ -844,8 +1118,8 @@ def load_project_context():
 
 # ── Skills ───────────────────────────────────────────
 
-def list_skills():
-    """List all installed skills with their metadata."""
+def list_skills(brief=False):
+    """List all installed skills. brief=True returns metadata only (no body)."""
     skills = []
     if not SKILLS_DIR.exists():
         return skills
@@ -858,22 +1132,25 @@ def list_skills():
         try:
             text = skill_md.read_text(encoding="utf-8-sig")
             meta, body = parse_memory_frontmatter(text)
-            skills.append({
+            item = {
                 "name": meta.get("name", skill_dir.name),
                 "description": meta.get("description", ""),
                 "keywords": [k.strip() for k in meta.get("keywords", "").split(",") if k.strip()],
                 "tools": [t.strip() for t in meta.get("tools", "").split(",") if t.strip()],
-                "body": body.strip(),
                 "dir": skill_dir.name,
-                "path": str(skill_md.resolve()),
-            })
+            }
+            if not brief:
+                item["body"] = body.strip()
+                item["path"] = str(skill_md.resolve())
+                item["resources"] = _list_skill_resources(skill_dir)
+            skills.append(item)
         except Exception:
             pass
     return skills
 
 
-def read_skill(name):
-    """Read a single skill by name."""
+def read_skill(name, brief=False):
+    """Read a single skill by name. brief=True returns metadata only."""
     for skill_dir in SKILLS_DIR.iterdir():
         if not skill_dir.is_dir():
             continue
@@ -884,18 +1161,47 @@ def read_skill(name):
             text = skill_md.read_text(encoding="utf-8-sig")
             meta, body = parse_memory_frontmatter(text)
             if meta.get("name") == name:
-                return {
+                item = {
                     "name": meta.get("name", skill_dir.name),
                     "description": meta.get("description", ""),
                     "keywords": [k.strip() for k in meta.get("keywords", "").split(",") if k.strip()],
                     "tools": [t.strip() for t in meta.get("tools", "").split(",") if t.strip()],
-                    "body": body.strip(),
                     "dir": skill_dir.name,
-                    "path": str(skill_md.resolve()),
                 }
+                if not brief:
+                    item["body"] = body.strip()
+                    item["path"] = str(skill_md.resolve())
+                    item["resources"] = _list_skill_resources(skill_dir)
+                return item
         except Exception:
             pass
     raise ValueError("skill not found")
+
+
+def _list_skill_resources(skill_dir):
+    """List resource files in a skill directory (scripts/, references/, assets/)."""
+    resources = {"scripts": [], "references": [], "assets": []}
+    for folder in ("scripts", "references", "assets"):
+        sub = skill_dir / folder
+        if not sub.is_dir():
+            continue
+        for f in sorted(sub.rglob("*")):
+            if f.is_file():
+                resources[folder].append(str(f.relative_to(skill_dir)).replace("\\", "/"))
+    return {k: v for k, v in resources.items() if v}  # omit empty folders
+
+
+def read_skill_file(name, rel_path):
+    """Read a resource file within a skill directory (sandboxed)."""
+    skill_dir = SKILLS_DIR / name
+    if not skill_dir.is_dir():
+        raise ValueError("skill not found")
+    safe_path = (skill_dir / rel_path).resolve()
+    if not str(safe_path).startswith(str(skill_dir.resolve()) + os.sep):
+        raise ValueError("path traversal rejected")
+    if not safe_path.is_file():
+        raise ValueError("file not found")
+    return safe_path.read_text(encoding="utf-8-sig")
 
 
 def match_skills(user_message):
@@ -1092,28 +1398,29 @@ def safe_session_id(session_id):
 
 
 def session_path(session_id):
-    return SESSIONS_DIR / f"{safe_session_id(session_id)}.json"
+    # Check the hierarchical path first; fall back to flat for legacy files
+    hier = _session_date_dir(session_id) / f"{safe_session_id(session_id)}.json"
+    flat = _session_flat_path(session_id)
+    if hier.exists() or not flat.exists():
+        return hier
+    return flat
 
 
 def session_summary(session):
     if not session.get("id"):
         return None  # corrupted session, skip
-    messages = session.get("messages") or []
-    last_time = ""
-    for msg in reversed(messages):
-        t = msg.get("_time") or (msg.get("meta") or {}).get("_time")
-        if t:
-            last_time = t
-            break
+    sid = session["id"]
+    message_count = session.get("messageCount", 0)
+    last_time = session.get("lastMessageTime") or ""
     if not last_time:
         last_time = session.get("updatedAt") or session.get("createdAt") or ""
     return {
-        "id": session["id"],
+        "id": sid,
         "title": session.get("title") or "未命名会话",
         "createdAt": session.get("createdAt"),
         "updatedAt": session.get("updatedAt"),
         "lastMessageTime": last_time,
-        "messageCount": len(messages),
+        "messageCount": message_count,
         "_parentId": session.get("_parentId"),
         "_branchDepth": session.get("_branchDepth", 0),
         "_branches": session.get("_branches", []),
@@ -1645,8 +1952,8 @@ def run_subagent(task_prompt, system_prompt, model, api_key):
     }
 
 
-class AgentLiteHandler(BaseHTTPRequestHandler):
-    server_version = "AgentLite/0.4"
+class CodeHandler(BaseHTTPRequestHandler):
+    server_version = "Code/0.4"
     protocol_version = "HTTP/1.1"
 
     def handle(self):
@@ -1691,12 +1998,28 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             if route == "/api/memory-context":
                 self.send_json(load_memory_context())
                 return
+            if route.startswith("/api/skills/") and route.endswith("/file"):
+                # GET /api/skills/{name}/file?path=references/xxx.md
+                parts = route[len("/api/skills/"):].rsplit("/file", 1)
+                skill_name = parts[0]
+                rel_path = query.get("path", [""])[0]
+                try:
+                    self.send_json({"content": read_skill_file(skill_name, rel_path)})
+                except ValueError as e:
+                    self.send_json({"error": str(e)}, 404)
+                return
+            if route.startswith("/api/skills/"):
+                # GET /api/skills/{name}
+                self.send_json(read_skill(route.rsplit("/", 1)[-1]))
+                return
             if route == "/api/skills":
                 file_name = query.get("name", [None])[0]
                 if file_name:
-                    self.send_json(read_skill(file_name))
+                    brief = query.get("brief", ["0"])[0] == "1"
+                    self.send_json(read_skill(file_name, brief=brief))
                 else:
-                    self.send_json({"data": list_skills()})
+                    brief = query.get("brief", ["0"])[0] == "1"
+                    self.send_json({"data": list_skills(brief=brief)})
                 return
             if route == "/api/memory":
                 file_name = query.get("file", [None])[0]
@@ -1726,7 +2049,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
                 return
             if route == "/api/version":
                 self.send_json({
-                    "name": "Agent Lite",
+                    "name": "Code",
                     "serverVersion": self.server_version,
                     "localVersion": _read_version_file(),
                     "appDir": str(APP_DIR),
@@ -1829,6 +2152,12 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             if self.path == "/api/tools/use_skill":
                 self.tool_use_skill()
                 return
+            if self.path == "/api/tools/read_skill_resource":
+                self.tool_read_skill_resource()
+                return
+            if self.path.startswith("/api/sessions/") and self.path.endswith("/messages"):
+                self.append_messages(self.path.rsplit("/", 2)[-2])
+                return
             if self.path.startswith("/api/sessions/") and self.path.endswith("/branch"):
                 self.branch_session(self.path.rsplit("/", 2)[-2])
                 return
@@ -1892,7 +2221,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             if self.path == "/api/restart":
                 self._handle_restart()
                 return
-            if self.path == "/api/agent-lite/sync-keys":
+            if self.path == "/api/code/sync-keys":
                 self._handle_sync_keys()
                 return
         except Exception as exc:
@@ -1999,14 +2328,59 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
                 "error": f"Skill '{skill_name}' not found. Available: {', '.join(available) or 'none'}",
             }, 400)
 
+    def tool_read_skill_resource(self):
+        body = self.read_body_json()
+        skill_name = (body.get("skill") or "").strip()
+        rel_path = (body.get("file") or "").strip()
+        if not skill_name or not rel_path:
+            raise ValueError("skill and file are required")
+        try:
+            content = read_skill_file(skill_name, rel_path)
+            self.send_json({
+                "ok": True,
+                "action": "read_skill_resource",
+                "skill": skill_name,
+                "file": rel_path,
+                "content": content,
+            })
+        except ValueError as e:
+            self.send_json({
+                "ok": False,
+                "action": "read_skill_resource",
+                "error": str(e),
+            }, 404)
+
     def get_sessions(self):
+        index = _read_session_index()
         sessions = []
-        for path in SESSIONS_DIR.glob("*.json"):
-            session = read_json(path, None)
-            if session:
-                summary = session_summary(session)
-                if summary:
-                    sessions.append(summary)
+        orphans = []
+        for sid, entry in index.items():
+            meta_path = session_path(sid)
+            if meta_path.exists():
+                sessions.append({
+                    "id": sid,
+                    "title": entry.get("title", ""),
+                    "createdAt": "",
+                    "updatedAt": entry.get("updatedAt", ""),
+                    "lastMessageTime": entry.get("updatedAt", ""),
+                    "messageCount": entry.get("messageCount", 0),
+                    "_parentId": entry.get("_parentId"),
+                    "_branchDepth": entry.get("_branchDepth", 0),
+                    "_branches": [],
+                    "_branchMsgCount": None,
+                    "runState": {},
+                })
+            else:
+                orphans.append(sid)
+        # Purge orphan entries to keep index clean
+        if orphans:
+            for sid in orphans:
+                index.pop(sid, None)
+            entries = list(index.values())
+            entries.sort(key=lambda e: e.get("updatedAt", ""), reverse=True)
+            payload = "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + ("\n" if entries else "")
+            with _json_write_lock:
+                _session_index_path().write_text(payload, encoding="utf-8")
         sessions.sort(key=lambda item: item.get("updatedAt") or "", reverse=True)
         self.send_json({"data": sessions})
 
@@ -2016,29 +2390,35 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "session not found"}, 404)
             return
         session = read_json(path, {})
+        session["messages"] = read_jsonl(messages_path(session_id))
         session["_filePath"] = str(path.resolve())
         self.send_json(session)
 
     def create_session(self):
         body = self.read_body_json()
         session_id = uuid.uuid4().hex[:16]
-        session = {
+        messages = body.get("messages") or []
+        meta = {
             "id": session_id,
             "title": body.get("title") or "新会话",
-            "messages": body.get("messages") or [],
             "createdAt": now_iso(),
             "updatedAt": now_iso(),
             "stats": body.get("stats") or {},
             "lastUsage": body.get("lastUsage"),
             "runState": body.get("runState") or {},
+            "messageCount": len(messages),
+            "lastMessageTime": _last_msg_time(messages),
         }
         parent_id = body.get("_parentId")
         if parent_id:
-            session["_parentId"] = parent_id
-            session["_branchDepth"] = body.get("_branchDepth", 1)
-        write_json(session_path(session_id), session)
-        session["_filePath"] = str(session_path(session_id).resolve())
-        self.send_json(session, 201)
+            meta["_parentId"] = parent_id
+            meta["_branchDepth"] = body.get("_branchDepth", 1)
+        write_json(session_path(session_id), meta)
+        write_jsonl(messages_path(session_id), messages)
+        _write_session_index_entry(session_id, meta["title"], meta["updatedAt"], len(messages), parent_id, body.get("_branchDepth", 0))
+        meta["_filePath"] = str(session_path(session_id).resolve())
+        meta["messages"] = messages
+        self.send_json(meta, 201)
 
     def save_session(self, session_id):
         body = self.read_body_json()
@@ -2052,15 +2432,22 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             else:
                 session = {"id": safe_session_id(session_id), "createdAt": now_iso()}
             session["title"] = body.get("title") or session.get("title") or "未命名会话"
-            session["messages"] = body.get("messages") or []
             session["stats"] = body.get("stats") or session.get("stats") or {}
             if "lastUsage" in body:
                 session["lastUsage"] = body.get("lastUsage")
             if "runState" in body:
                 session["runState"] = body.get("runState") or {}
             session["updatedAt"] = now_iso()
+            # Messages → JSONL (full overwrite for Phase 1)
+            messages = body.get("messages")
+            if messages is not None:
+                write_jsonl(messages_path(session_id), messages)
+                session["messageCount"] = len(messages)
+                session["lastMessageTime"] = _last_msg_time(messages)
             write_json(path, session)
+            _write_session_index_entry(session_id, session["title"], session["updatedAt"], session.get("messageCount", 0), session.get("_parentId"), session.get("_branchDepth", 0))
         session["_filePath"] = str(path.resolve())
+        session["messages"] = read_jsonl(messages_path(session_id))
         self.send_json(session)
 
     def archive_session(self, session_id):
@@ -2075,10 +2462,15 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         ts = now_iso().replace(":", "-")
         path = archive_dir / f"{safe_session_id(session_id)}_{ts}.json"
         write_json(path, {"id": session_id, "archivedAt": now_iso(), "messageCount": len(messages), "messages": messages})
+        # Also copy the JSONL as a raw backup
+        jpath = messages_path(session_id)
+        if jpath.exists():
+            shutil.copy2(jpath, archive_dir / f"{safe_session_id(session_id)}_{ts}.jsonl")
         self.send_json({"ok": True, "path": str(path)})
 
     def delete_session(self, session_id):
         path = session_path(session_id)
+        jpath = messages_path(session_id)
         if path.exists():
             session = read_json(path, {})
             parent_id = session.get("_parentId")
@@ -2114,7 +2506,9 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
                         child["_branchDepth"] = 0
                         write_json(child_path, child)
 
-            path.unlink()
+            path.unlink(missing_ok=True)
+            jpath.unlink(missing_ok=True)
+            _remove_session_index_entry(session_id)
         self.send_json({"ok": True})
 
     def branch_session(self, parent_id):
@@ -2128,25 +2522,59 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
         child_id = uuid.uuid4().hex[:16]
         child_title = body.get("title") or parent.get("title", "Untitled")
         child_depth = (parent.get("_branchDepth") or 0) + 1
-        child = {
+        parent_msg_count = parent.get("messageCount", 0)
+        child_meta = {
             "id": child_id,
             "title": child_title,
-            "messages": list(parent.get("messages", [])),
             "createdAt": now_iso(),
             "updatedAt": now_iso(),
             "stats": parent.get("stats") or {},
+            "lastMessageTime": parent.get("lastMessageTime") or "",
+            "messageCount": parent_msg_count,
             "_parentId": parent_id,
             "_branchDepth": child_depth,
-            "_branchMsgCount": len(parent.get("messages", [])),
+            "_branchMsgCount": parent_msg_count,
         }
-        write_json(session_path(child_id), child)
+        write_json(session_path(child_id), child_meta)
+        # Copy messages JSONL
+        parent_jpath = messages_path(parent_id)
+        child_jpath = messages_path(child_id)
+        if parent_jpath.exists():
+            shutil.copy2(parent_jpath, child_jpath)
+        else:
+            child_jpath.write_text("", encoding="utf-8")
         # Update parent's _branches
         branches = parent.get("_branches") or []
         branches.append(child_id)
         parent["_branches"] = branches
         write_json(parent_path, parent)
-        child["_filePath"] = str(session_path(child_id).resolve())
-        self.send_json(child, 201)
+        # Sync index for both child and parent
+        _write_session_index_entry(child_id, child_title, child_meta["updatedAt"], parent_msg_count, parent_id, child_depth)
+        _write_session_index_entry(parent_id, parent.get("title", ""), now_iso(), parent.get("messageCount", 0), parent.get("_parentId"), parent.get("_branchDepth", 0))
+        child_meta["_filePath"] = str(session_path(child_id).resolve())
+        # Include messages in response for frontend
+        child_meta["messages"] = read_jsonl(child_jpath)
+        self.send_json(child_meta, 201)
+
+    def append_messages(self, session_id):
+        """Append messages to an existing session's JSONL (incremental save)."""
+        body = self.read_body_json()
+        new_msgs = body.get("messages") or []
+        if not new_msgs:
+            self.send_json({"ok": True, "appended": 0})
+            return
+        append_jsonl(messages_path(session_id), new_msgs)
+        # Update metadata
+        meta_path = session_path(session_id)
+        if meta_path.exists():
+            meta = read_json(meta_path, {})
+            total = meta.get("messageCount", 0) + len(new_msgs)
+            meta["messageCount"] = total
+            meta["updatedAt"] = now_iso()
+            meta["lastMessageTime"] = _last_msg_time(new_msgs) or meta.get("lastMessageTime", "")
+            write_json(meta_path, meta)
+            _write_session_index_entry(session_id, meta.get("title", ""), meta["updatedAt"], total, meta.get("_parentId"), meta.get("_branchDepth", 0))
+        self.send_json({"ok": True, "appended": len(new_msgs)})
 
     def save_memory(self):
         body = self.read_body_json()
@@ -3072,7 +3500,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
 
         try:
             req = request.Request(url, method="GET", headers={
-                "User-Agent": "AgentLite/0.4",
+                "User-Agent": "Code/0.4",
                 "Accept": "text/html,text/plain,application/json",
             })
             with request.urlopen(req, timeout=30) as resp:
@@ -3373,12 +3801,12 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             return
         target_dir = Path(sys.executable).parent if getattr(sys, 'frozen', False) else (APP_DIR / "dist")
         target_dir.mkdir(parents=True, exist_ok=True)
-        # Use versioned filename: AgentLite-v1.2.3.exe
+        # Use versioned filename: Code-v1.2.3.exe
         ver_tag = "update"
-        m = re.search(r'AgentLite-v([\d.]+)\.exe', url)
+        m = re.search(r'Code-v([\d.]+)\.exe', url)
         if m:
             ver_tag = m.group(1)
-        new_exe = target_dir / f"AgentLite-v{ver_tag}.exe"
+        new_exe = target_dir / f"Code-v{ver_tag}.exe"
         partial_exe = new_exe.with_suffix(new_exe.suffix + ".part")
         download_id = str(uuid.uuid4())
         state = {"progress": 0, "done": False, "error": None, "path": str(new_exe), "total": 0}
@@ -3438,9 +3866,9 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
             return
         current_exe = Path(sys.executable).resolve()
         new_exe = Path(new_exe_path).resolve()
-        expected_name = re.compile(r'^AgentLite-v[0-9]+(?:[.][0-9]+)*[.]exe$', re.IGNORECASE)
+        expected_name = re.compile(r'^Code-v[0-9]+(?:[.][0-9]+)*[.]exe$', re.IGNORECASE)
         if new_exe.parent != current_exe.parent or not expected_name.match(new_exe.name):
-            self.send_json({"error": "Update executable must be a versioned Agent Lite file in the installation directory"}, 400)
+            self.send_json({"error": "Update executable must be a versioned Code file in the installation directory"}, 400)
             return
         if new_exe == current_exe:
             self.send_json({"error": "Downloaded version is already running"}, 400)
@@ -3495,7 +3923,7 @@ class AgentLiteHandler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     os.chdir(APP_DIR)
 
-    # Kill any existing agent-lite process using our port
+    # Kill any existing Code process using our port
     import subprocess as _sp
     try:
         result = _sp.run(["netstat","-ano","-p","TCP"], capture_output=True, text=True, timeout=5)
@@ -3511,10 +3939,11 @@ if __name__ == "__main__":
         pass
 
     ThreadingHTTPServer.daemon_threads = True
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), AgentLiteHandler)
+    _migrate_sessions_to_hierarchy()
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), CodeHandler)
     server.socket.settimeout(2.0)
     start_tray(PORT, server)
-    print(f"Agent Lite is running: http://127.0.0.1:{PORT}")
+    print(f"Code is running: http://127.0.0.1:{PORT}")
     print(f"Proxy upstream: {NEW_API_BASE_URL}")
     print(f"Project root: {load_config()['projectRoot']}")
     try:

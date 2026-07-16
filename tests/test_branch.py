@@ -45,8 +45,8 @@ class TestSessionBranching(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.tmp_root = Path(tempfile.mkdtemp(prefix="agentlite_br_"))
-        cls.tmp_data = Path(tempfile.mkdtemp(prefix="agentlite_brd_"))
+        cls.tmp_root = Path(tempfile.mkdtemp(prefix="code_br_"))
+        cls.tmp_data = Path(tempfile.mkdtemp(prefix="code_brd_"))
         for sub in ["sessions", "memory", "skills", "attachments", "file-backups"]:
             (cls.tmp_data / sub).mkdir(parents=True, exist_ok=True)
 
@@ -72,7 +72,7 @@ class TestSessionBranching(unittest.TestCase):
 
         server_mod.ThreadingHTTPServer.daemon_threads = True
         cls._server = server_mod.ThreadingHTTPServer(
-            ("127.0.0.1", _PORT), server_mod.AgentLiteHandler
+            ("127.0.0.1", _PORT), server_mod.CodeHandler
         )
         cls._server.socket.settimeout(2.0)
         cls._thread = threading.Thread(target=cls._server.serve_forever, daemon=True)
@@ -116,6 +116,20 @@ class TestSessionBranching(unittest.TestCase):
         status, data = _req("GET", f"/api/sessions/{self._parent_id}")
         self.assertEqual(status, 200)
         self.assertIn(TestSessionBranching._branch_id, data.get("_branches", []))
+
+    def test_02b_branch_jsonl_copy(self):
+        """Branching copies parent's JSONL file, not just in-memory messages."""
+        import server as server_mod
+        self.assertIsNotNone(self._parent_id)
+        self.assertIsNotNone(self._branch_id)
+        parent_jpath = server_mod.messages_path(self._parent_id)
+        child_jpath = server_mod.messages_path(self._branch_id)
+        self.assertTrue(parent_jpath.exists(), "Parent JSONL should exist")
+        self.assertTrue(child_jpath.exists(), "Child JSONL should be a copy of parent")
+        parent_msgs = server_mod.read_jsonl(parent_jpath)
+        child_msgs = server_mod.read_jsonl(child_jpath)
+        self.assertEqual(len(parent_msgs), len(child_msgs))
+        self.assertEqual(parent_msgs[0]["content"], child_msgs[0]["content"])
 
     def test_03_list_includes_metadata(self):
         self.assertIsNotNone(self._branch_id)

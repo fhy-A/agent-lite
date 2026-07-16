@@ -13,13 +13,13 @@ VSVersionInfo(
     StringFileInfo([
       StringTable(
         '040904B0',
-        [StringStruct('CompanyName', 'Agent Lite'),
-         StringStruct('FileDescription', 'Agent Lite - AI Coding Assistant'),
+        [StringStruct('CompanyName', 'Code'),
+         StringStruct('FileDescription', 'Code - AI Coding Assistant'),
          StringStruct('FileVersion', '0.5.3'),
-         StringStruct('InternalName', 'AgentLite'),
+         StringStruct('InternalName', 'Code'),
          StringStruct('LegalCopyright', ''),
-         StringStruct('OriginalFilename', 'AgentLite-v0.5.3.exe'),
-         StringStruct('ProductName', 'Agent Lite'),
+         StringStruct('OriginalFilename', 'Code-v0.5.3.exe'),
+         StringStruct('ProductName', 'Code'),
          StringStruct('ProductVersion', '0.5.3')])
     ]),
     VarFileInfo([VarStruct('Translation', [0x0409, 1200])])

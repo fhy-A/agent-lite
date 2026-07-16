@@ -9,7 +9,7 @@ tools: list_files, glob_files, search_files, read_file, propose_edit, write_file
 
 HTML is the source of truth for video. A composition is an HTML file with `data-*` attributes for timing, a GSAP timeline for animation, and CSS for appearance. The framework handles clip visibility, media playback, and timeline sync.
 
-## Agent Lite compatibility
+## Code compatibility
 
 - This package includes the HyperFrames composition guidance, references, templates, and helper scripts needed for authoring HTML video compositions.
 - `hyperframes-cli` and `hyperframes-media` are companion skills, not bundled dependencies. Before using `init`, `lint`, `inspect`, `preview`, `render`, `tts`, `transcribe`, or `remove-background`, first verify that the corresponding command or package is available in the current project.

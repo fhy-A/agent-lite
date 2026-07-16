@@ -1,4 +1,4 @@
-# Agent Lite 开发日志
+# Code 开发日志
 
 > 记录 Claude Code、Codex 以及其他协作方的重要改动，按时间倒序。
 
@@ -13,6 +13,94 @@
 - 如果两份文档、实际代码和测试结果不一致，应在当前任务内核实并同步修正，不能让冲突状态继续保留。
 
 ---
+
+## 2026-07-16 12:30 · Claude Code
+
+### 品牌重命名：Agent Lite → Code
+
+- **Code 项目**（53 文件，398 处）：
+  - 核心源码：`server.py`、`app.js`、`launcher.py`、`build_exe.py`、`index.html`
+  - class 名：`AgentLiteHandler` → `CodeHandler`、`AgentLiteTrayIcon` → `CodeTrayIcon`
+  - env var：`AGENT_LITE_*` → `CODE_*`
+  - 数据目录：`~/.agent-lite/` → `~/.code/`
+  - EXE 名：`AgentLite-v*.exe` → `Code-v*.exe`
+  - localStorage：40 个 key 从 `agent-lite-*` → `code-*`，含自动迁移函数
+  - 图标：`agent-lite-icon.ico` → `code-icon.ico`
+  - 桌面快捷方式：`AgentLite.lnk` → `Code.lnk`
+  - 批处理文件：`启动AgentLite.bat` → `启动Code.bat`
+- **老用户数据迁移**：`launcher.py` 新增 `migrate_old_data_dir()`，启动时自动将 `~/.agent-lite/` 数据迁移到 `~/.code/`；`app.js` 新增 localStorage 迁移函数，自动拷贝旧 key 值到新 key。
+- **New API 中转站**（8 源文件 + 3 目录）：
+  - Go 后端：`controller/agent_lite.go` → `controller/code.go`，函数 `AgentLiteAuthorize` → `CodeAuthorize`，路由 `/agent-lite/authorize` → `/code/authorize`，参数 `agent_lite_token` → `code_token`
+  - React 前端：路由 `/agent-lite` → `/code`，页面组件 `AgentLite` → `Code`，导航标题更新
+  - `routeTree.gen.ts` 自动生成路由树全部更新
+- **Claude Code memory**：24 文件重命名，内部引用路径全部更新到新项目路径。
+- **Docker**：`new-api-custom:dev` 镜像重建（`docker commit`），Compose 接管容器管理，`new-api-custom-dev` 正常启动。
+- **教训**：已有 Dockerfile/Compose 配置时应先用 `docker build --pull=false`，不应绕过直接装本地工具。见 [[docker-build-rules]]。
+- **测试结果**：457 passed, 2 subtests passed，零回归。
+
+## 2026-07-16 02:30 · Claude Code
+
+### 思考合并 + 消息持久化简化 + tool_calls 防御 + read_skill_resource
+
+- **思考过程合并**：`renderMessages` 中所有轮次 assistant 的思考合并为一个块，中间轮次（带 tool_calls 无实质内容）只贡献思考不渲染独立气泡，最终回复 thought 从 `renderFinalAssistantProjection` 移除（流式期间仍实时显示）。
+- **消息持久化简化**：移除 delta 增量追加（`_persistedMsgCount` 等），改为流结束/切会话/关页面时全量写入 JSONL。流式期间 `saveSessionState` 只写 meta JSON。彻底消除最后一条消息丢失。
+- **tool_calls 防御**：`buildMessages` 中任何非 tool 消息跟在带 tool_calls 的 assistant 后时自动剥离未匹配 tool_calls，遍历结束最终 pass 清理。历史消息不配对也不会 API 400。
+- **`read_skill_resource` tool**：原生工具让模型按需读取 skill 内 scripts/references/assets。Server handler + tool definition + permission + i18n。
+- **已知问题**：流式 UI 思考中/模型名/计时偶尔消失，刷新恢复，记入 TODO.md。
+
+## 2026-07-16 01:00 · Claude Code
+
+### Skills 渐进式加载 + 会话索引分层
+
+- **Skills**：`list_skills(brief=True)` 只返回元数据；`GET /api/skills/{name}` 按需加载 body；`GET /api/skills/{name}/file` 读取资源文件。
+- **会话分层**：`YYYY/MM/DD/{id}.json` 分层；`index.jsonl` 独立索引；`get_sessions()` O(1)；全 CRUD 自动同步索引；启动迁移 + 孤儿清理。`SESSION_INDEX_PATH` 改为函数支持 mock。
+
+## 2026-07-15 22:30 · Claude Code
+
+### 会话存储 JSON → JSONL 迁移
+
+- **双文件存储**：每个会话拆为 `{id}.json`（元数据：title、stats、runState、messageCount、lastMessageTime）和 `{id}.jsonl`（消息逐行追加，7 字段：role、content、thought、meta、_images、_model、_time）。
+- **Server 端**：新增 `read_jsonl`、`write_jsonl`（atomic temp+replace）、`append_jsonl`（受 `_json_write_lock` 保护）、`count_jsonl_lines`、`read_last_jsonl_line`、`messages_path` 六个函数；新增 `POST /api/sessions/{id}/messages` 增量追加端点；改造 8 个 session CRUD 函数（create/save/get/list/delete/branch/archive/summary）适配双文件。
+- **前端 delta 持久化**：`saveSessionState` 只将新消息增量追加到 JSONL（`slice(persisted, -1)`，排除正在流式输出的最后一条）；`clearRunCheckpoint` 流结束时 flush 最后一条完整消息；`cacheActiveSessionState` 切会话前 flush 剩余；`beforeunload` + `sendBeacon` 兜底；`loadSession` 重置 `_persistedMsgCount` 追踪。
+- **compaction 兼容**：compaction 只插 `meta.kind: "compact-summary"` 标记，不缩减消息数组。delta 追加模式天然兼容，无需全量覆写。
+- **消息不丢失**：流式期间最后一条 assistant 消息不在 delta 中落地（因内容原地增长），流结束由 `clearRunCheckpoint` 一次性写入完整内容。
+- **旧数据清理**：147 个旧测试会话 JSON 全部删除，新格式零兼容负担。
+- **额外修复**：`renderMessages()` 两个 return 路径末尾补 `scheduleMessagesScrollToBottom`，修复用户发新消息后不自动滚到底的已有 bug。
+- **测试结果**：全量 **457 passed, 2 subtests passed**（新增 11 项 JSONL 专项测试，更新 1 项并发测试适配新格式）。
+- **改动的文件**：`server.py` +170 行，`app.js` +100 行，`tests/test_session_persistence.py` +80 行，`tests/test_routes.py` +20 行，`tests/test_branch.py` +12 行，`tests/test_concurrency.py` ~5 行修改，`docs/session-jsonl-migration.md` 方案文档新增。
+
+## 2026-07-16 01:00 · Claude Code
+
+### Skills 渐进式加载 + 会话索引分层
+
+**Skills 三层渐进式加载（对标 Codex）**：
+- `list_skills(brief=True)` 只返回 name、description、keywords、tools、dir，不含 body（Level 1）
+- 新增 `GET /api/skills/{name}` — 按需加载单个 skill 完整 body + 资源列表（Level 2）
+- 新增 `GET /api/skills/{name}/file?path=...` — 按需加载 skill 内资源文件 scripts/references/assets（Level 3）
+- 前端 `loadSkills()` 用 `?brief=1` 只取元数据；`ensureSkillBody(skill)` 懒加载 body
+- `getMatchedSkillPrompts()` 改为 async，匹配后按需拉取 body；`getSystemPrompt()` 改为 async
+- 系统提示词不再包含全部 15 个 skill body，仅 name + description 列表
+- `showSkillDetail` / `showSkillDetailInSettings` 点击时懒加载完整 body
+- token 估算路径（calcStats）使用 `briefSkills=true` 跳过 body 加载
+
+**会话索引 + 目录分层（对标 Codex）**：
+- `session_path` / `messages_path` 改为 `YYYY/MM/DD/{id}.json` 分层存储
+- 新增 `data/sessions/index.jsonl` 独立会话索引（id、title、updatedAt、messageCount、_parentId、_branchDepth）
+- `get_sessions()` 读索引 O(1) 列表，不再 glob 扫描
+- create/save/delete/branch/append_messages 全自动同步索引
+- 启动时 `_migrate_sessions_to_hierarchy()` 将旧扁平文件迁移到分层目录并重建索引
+- archive_dir 保持扁平不变
+
+**测试结果**：全量 457 passed, 2 subtests passed
+
+## 2026-07-15 22:30 · Claude Code
+
+### 会话存储 JSON → JSONL 迁移
+
+- 双文件存储：`{id}.json`（元数据）+ `{id}.jsonl`（消息逐行追加）
+- 前端 delta 持久化：流式期间排除最后一条、流结束 flush、beforeunload sendBeacon 兜底
+- compaction 兼容：只插 marker 不缩数组，delta 模式天然兼容
+- 滚动修复：renderMessages 末尾补 scheduleMessagesScrollToBottom
 
 ## 2026-07-15 19:29 · Codex
 
@@ -153,7 +241,7 @@
 ### 其他修复
 
 - 流式输出降级 bug：`rfile.read(n)` 不保证完整读取 → 循环读满
-- 默认记忆清理：只保留 `agent-lite-architecture.md`
+- 默认记忆清理：只保留 `code-architecture.md`
 - 记忆写入由"静默写入"改为"先询问用户确认"（提示词约束）
 
 ---
@@ -205,7 +293,7 @@
 ### Skill 系统
 
 - 3 个内置 Skill：skill-creator、find-skills、hyperframes
-- 补齐 Agent Lite 所需的 name/description/keywords/tools frontmatter
+- 补齐 Code 所需的 name/description/keywords/tools frontmatter
 - 中英文关键词 + 组合关键词匹配
 - `/` 命令由 Skill 名称动态生成
 
@@ -230,7 +318,7 @@
 
 - README.md 创建
 - TODO.md 创建
-- 默认记忆清理为 agent-lite-architecture 唯一项
+- 默认记忆清理为 code-architecture 唯一项
 
 ---
 

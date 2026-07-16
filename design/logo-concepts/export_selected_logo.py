@@ -1,12 +1,12 @@
-"""Export the selected Agent Lite Ribbon A mark to PNG and multi-size ICO."""
+"""Export the selected Code Ribbon A mark to PNG and multi-size ICO."""
 
 from pathlib import Path
 from PIL import Image, ImageDraw
 
 
 ROOT = Path(__file__).resolve().parents[2]
-ASSET_PNG = ROOT / "assets" / "agent-lite-icon.png"
-ROOT_ICO = ROOT / "agent-lite-icon.ico"
+ASSET_PNG = ROOT / "assets" / "code-icon.png"
+ROOT_ICO = ROOT / "code-icon.ico"
 SCALE = 8
 CANVAS = 64 * SCALE
 

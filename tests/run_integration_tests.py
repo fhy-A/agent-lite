@@ -1,8 +1,8 @@
 """
-Agent Lite 集成测试 — 验证 2026-07-07 安全策略 + STDOUT 修复后的模型行为
+Code 集成测试 — 验证 2026-07-07 安全策略 + STDOUT 修复后的模型行为
 
 用法：
-  1. 确保 Agent Lite 服务已启动
+  1. 确保 Code 服务已启动
   2. python tests/run_integration_tests.py --model deepseek-v4-pro
 
 测试内容：
@@ -40,7 +40,7 @@ def call_model(question, model, api_key="", base_url=""):
     now = datetime.now()
     date_str = now.strftime("%Y/%m/%d %A %H:%M") + " (Beijing Time)"
 
-    system = f"""你是 Agent Lite，一个运行在本地 Windows 环境中的 AI 编程助手。
+    system = f"""你是 Code，一个运行在本地 Windows 环境中的 AI 编程助手。
 当前时间：{date_str}
 项目根目录：C:\\Users\\Admin
 
@@ -321,14 +321,14 @@ def print_summary(direct_results, model_results):
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Agent Lite 集成测试 — 安全策略 + STDOUT")
+    parser = argparse.ArgumentParser(description="Code 集成测试 — 安全策略 + STDOUT")
     parser.add_argument("--model", default="", help="模型 ID（P2 模型测试需要）")
     parser.add_argument("--api-key", default="", help="API Key")
     parser.add_argument("--base-url", default="", help="LLM Base URL")
     parser.add_argument("--quick", action="store_true", help="只跑直接 API 测试（不经过模型，更快）")
     args = parser.parse_args()
 
-    print("Agent Lite 集成测试 — 2026-07-07 改动验证")
+    print("Code 集成测试 — 2026-07-07 改动验证")
     print(f"服务地址: {BASE_URL}")
 
     # 检查服务是否在线
@@ -336,7 +336,7 @@ if __name__ == "__main__":
         requests.get(CONFIG_URL, timeout=5)
         print("[PASS] 服务在线\n")
     except Exception:
-        print("[FAIL] 服务未启动，请先启动 Agent Lite\n")
+        print("[FAIL] 服务未启动，请先启动 Code\n")
         sys.exit(1)
 
     # P0 + P1: Direct API tests

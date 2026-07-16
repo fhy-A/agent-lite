@@ -79,4 +79,4 @@ Use UTC timestamps consistently across report generation
 Follow this style: type(scope): brief description, then detailed explanation.
 ```
 
-Examples help Agent Lite understand the desired style and level of detail more clearly than descriptions alone.
+Examples help Code understand the desired style and level of detail more clearly than descriptions alone.

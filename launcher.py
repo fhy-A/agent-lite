@@ -1,5 +1,5 @@
 """
-Agent Lite launcher — entry point for PyInstaller bundle.
+Code launcher — entry point for PyInstaller bundle.
 """
 import json
 import os
@@ -30,12 +30,12 @@ def kill_existing():
     protected_pids = {os.getpid(), os.getppid()}
     killed = 0
     try:
-        # Formal builds are versioned (AgentLite-v0.4.12.exe), so querying only
-        # AgentLite.exe misses the processes that users actually run. CIM also
+        # Formal builds are versioned (Code-v0.4.12.exe), so querying only
+        # Code.exe misses the processes that users actually run. CIM also
         # gives us a stable PID-only output that is easier to parse than WMIC.
         script = r"""
 Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-    ($_.Name -match '^AgentLite(?:-v[0-9.]+)?[.]exe$') -or
+    ($_.Name -match '^Code(?:-v[0-9.]+)?[.]exe$') -or
     (($_.Name -match '^pythonw?(?:[0-9.]+)?[.]exe$') -and
      ($_.CommandLine -match '(?i)(^|[\\/\s])server[.]py([\s\"]|$)'))
 } | ForEach-Object { $_.ProcessId }
@@ -74,9 +74,25 @@ def get_base_dir():
     return Path(__file__).resolve().parent
 
 
+def migrate_old_data_dir():
+    """Migrate legacy ~/.agent-lite/ to ~/.code/ (brand rename)."""
+    old_home = Path.home() / ".agent-lite"
+    new_home = Path.home() / ".code"
+    if not old_home.exists() or new_home.exists():
+        return new_home
+    try:
+        import shutil
+        shutil.copytree(str(old_home), str(new_home), dirs_exist_ok=True)
+        shutil.rmtree(str(old_home), ignore_errors=True)
+        print(f"Migrated data: {old_home} -> {new_home}")
+    except Exception as e:
+        print(f"Data migration failed (non-fatal): {e}")
+    return new_home
+
+
 def ensure_dirs():
     """Create required directories if they don't exist."""
-    data_home = Path.home() / ".agent-lite"
+    data_home = Path.home() / ".code"
     for sub in ["sessions", "memory", "skills", "attachments", "file-backups"]:
         (data_home / sub).mkdir(parents=True, exist_ok=True)
     return data_home
@@ -101,7 +117,7 @@ def main():
         _main()
     except Exception as e:
         import traceback
-        crash_log = Path.home() / ".agent-lite" / "crash.log"
+        crash_log = Path.home() / ".code" / "crash.log"
         crash_log.parent.mkdir(parents=True, exist_ok=True)
         with open(crash_log, "w", encoding="utf-8") as f:
             traceback.print_exc(file=f)
@@ -112,19 +128,20 @@ def _main():
     port = 3010
     had_browser = should_reuse_browser(port)
 
-    # Kill any existing agent-lite processes before starting
+    # Kill any existing Code processes before starting
     killed = kill_existing()
     if killed:
         import time
         time.sleep(0.5)  # Wait for port to be released
 
     base = get_base_dir()
+    migrate_old_data_dir()
     data_dir = ensure_dirs()
 
     # Copy tray icon to data dir so pystray can load it reliably (PyInstaller
     # extraction can corrupt binary files in the temp directory)
-    _ico_src = base / "agent-lite-icon.ico"
-    _ico_dst = data_dir / "agent-lite-icon.ico"
+    _ico_src = base / "code-icon.ico"
+    _ico_dst = data_dir / "code-icon.ico"
     if _ico_src.exists():
         import shutil as _shutil
         _shutil.copy2(_ico_src, _ico_dst)
@@ -144,8 +161,8 @@ def _main():
                         _shutil.copytree(item, dst / item.name)
 
     # Set environment for server
-    os.environ["AGENT_LITE_PORT"] = "3010"
-    os.environ["AGENT_LITE_DATA_DIR"] = str(data_dir)
+    os.environ["CODE_PORT"] = "3010"
+    os.environ["CODE_DATA_DIR"] = str(data_dir)
 
     # Import and start server
     os.chdir(str(base))
@@ -165,18 +182,18 @@ def _main():
               server.SKILLS_DIR, server.ATTACHMENTS_DIR, server.FILE_BACKUP_DIR]:
         d.mkdir(exist_ok=True)
 
-    port = int(os.environ.get("AGENT_LITE_PORT", "3010"))
-    server_obj = ThreadingHTTPServer(("127.0.0.1", port), server.AgentLiteHandler)
+    port = int(os.environ.get("CODE_PORT", "3010"))
+    server_obj = ThreadingHTTPServer(("127.0.0.1", port), server.CodeHandler)
 
     # pystray's Windows backend requires its message loop on the main thread.
     # Keep the HTTP server in a worker so the packaged app gets a reliable tray.
     server_thread = threading.Thread(
         target=server_obj.serve_forever,
         daemon=False,
-        name="agent-lite-http",
+        name="code-http",
     )
     server_thread.start()
-    print(f"Agent Lite running at http://127.0.0.1:{port}")
+    print(f"Code running at http://127.0.0.1:{port}")
     # Existing pages detect the new server instance and refresh themselves.
     # Open a browser only when no page was connected before the restart.
     if not had_browser:

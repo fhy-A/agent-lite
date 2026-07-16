@@ -372,7 +372,7 @@ class TestRestartSafety(unittest.TestCase):
     """_handle_restart must only accept a legitimate versioned exe from same directory."""
 
     def setUp(self):
-        self.handler = object.__new__(server.AgentLiteHandler)
+        self.handler = object.__new__(server.CodeHandler)
         self.handler.send_json = mock.Mock()
         self.handler.read_body_json = mock.Mock()
         # Ensure sys.frozen attribute exists so mock.patch.object can target it
@@ -381,11 +381,11 @@ class TestRestartSafety(unittest.TestCase):
 
     # ── Dev mode rejection ──
     def test_rejects_dev_mode(self):
-        self.handler.read_body_json.return_value = {"path": "/some/AgentLite-v0.5.2.exe"}
+        self.handler.read_body_json.return_value = {"path": "/some/Code-v0.5.2.exe"}
         with mock.patch.object(server, 'getattr', wraps=getattr) as mock_ga:
             mock_ga.side_effect = lambda obj, name, default=None: \
                 False if (obj is server.sys and name == 'frozen') else getattr(obj, name, default)
-            server.AgentLiteHandler._handle_restart(self.handler)
+            server.CodeHandler._handle_restart(self.handler)
         call_args = self.handler.send_json.call_args[0][0]
         self.assertIn("error", call_args)
         self.assertTrue(call_args.get("devMode"), "Should indicate dev mode")
@@ -394,7 +394,7 @@ class TestRestartSafety(unittest.TestCase):
     def test_rejects_empty_path(self):
         self.handler.read_body_json.return_value = {"path": ""}
         with mock.patch.object(server.sys, 'frozen', True):
-            server.AgentLiteHandler._handle_restart(self.handler)
+            server.CodeHandler._handle_restart(self.handler)
         self.handler.send_json.assert_called_once()
         status_code = self.handler.send_json.call_args[1].get('status', 200)
         self.assertLess(status_code, 500)
@@ -402,46 +402,46 @@ class TestRestartSafety(unittest.TestCase):
     def test_rejects_non_exe_name(self):
         self.handler.read_body_json.return_value = {"path": "/app/evil.bat"}
         with mock.patch.object(server.sys, 'frozen', True), \
-             mock.patch.object(server.sys, 'executable', '/app/AgentLite-v0.5.0.exe'):
-            server.AgentLiteHandler._handle_restart(self.handler)
+             mock.patch.object(server.sys, 'executable', '/app/Code-v0.5.0.exe'):
+            server.CodeHandler._handle_restart(self.handler)
         call_args = self.handler.send_json.call_args[0][0]
         self.assertIn("error", call_args)
 
     def test_rejects_exe_from_wrong_directory(self):
-        self.handler.read_body_json.return_value = {"path": "C:/Downloads/AgentLite-v0.5.2.exe"}
+        self.handler.read_body_json.return_value = {"path": "C:/Downloads/Code-v0.5.2.exe"}
         with mock.patch.object(server.sys, 'frozen', True), \
-             mock.patch.object(server.sys, 'executable', 'C:/AgentLite/AgentLite-v0.5.0.exe'):
-            server.AgentLiteHandler._handle_restart(self.handler)
+             mock.patch.object(server.sys, 'executable', 'C:/Code/Code-v0.5.0.exe'):
+            server.CodeHandler._handle_restart(self.handler)
         call_args = self.handler.send_json.call_args[0][0]
         self.assertIn("error", call_args)
 
     def test_rejects_same_version_already_running(self):
-        current = Path("C:/AgentLite/AgentLite-v0.5.0.exe").resolve()
-        new_exe = Path("C:/AgentLite/AgentLite-v0.5.0.exe").resolve()
+        current = Path("C:/Code/Code-v0.5.0.exe").resolve()
+        new_exe = Path("C:/Code/Code-v0.5.0.exe").resolve()
         self.handler.read_body_json.return_value = {"path": str(new_exe)}
         with mock.patch.object(server.sys, 'frozen', True), \
              mock.patch.object(server.sys, 'executable', str(current)):
-            server.AgentLiteHandler._handle_restart(self.handler)
+            server.CodeHandler._handle_restart(self.handler)
         call_args = self.handler.send_json.call_args[0][0]
         self.assertIn("error", call_args)
 
     def test_rejects_non_versioned_exe_name(self):
-        """e.g. AgentLite.exe without version suffix."""
-        self.handler.read_body_json.return_value = {"path": "C:/AgentLite/AgentLite.exe"}
+        """e.g. Code.exe without version suffix."""
+        self.handler.read_body_json.return_value = {"path": "C:/Code/Code.exe"}
         with mock.patch.object(server.sys, 'frozen', True), \
-             mock.patch.object(server.sys, 'executable', 'C:/AgentLite/AgentLite-v0.5.0.exe'):
-            server.AgentLiteHandler._handle_restart(self.handler)
+             mock.patch.object(server.sys, 'executable', 'C:/Code/Code-v0.5.0.exe'):
+            server.CodeHandler._handle_restart(self.handler)
         call_args = self.handler.send_json.call_args[0][0]
         self.assertIn("error", call_args)
 
     def test_rejects_path_traversal_in_exe_name(self):
-        self.handler.read_body_json.return_value = {"path": "C:/AgentLite/../Windows/AgentLite-v0.5.2.exe"}
+        self.handler.read_body_json.return_value = {"path": "C:/Code/../Windows/Code-v0.5.2.exe"}
         with mock.patch.object(server.sys, 'frozen', True), \
-             mock.patch.object(server.sys, 'executable', 'C:/AgentLite/AgentLite-v0.5.0.exe'):
-            server.AgentLiteHandler._handle_restart(self.handler)
+             mock.patch.object(server.sys, 'executable', 'C:/Code/Code-v0.5.0.exe'):
+            server.CodeHandler._handle_restart(self.handler)
         call_args = self.handler.send_json.call_args[0][0]
-        # After resolve(), the path would be C:/Windows/AgentLite-v0.5.2.exe
-        # which won't match the current exe's parent C:/AgentLite
+        # After resolve(), the path would be C:/Windows/Code-v0.5.2.exe
+        # which won't match the current exe's parent C:/Code
         self.assertIn("error", call_args)
 
 
@@ -453,14 +453,14 @@ class TestWebFetchSSRF(unittest.TestCase):
     """tool_web_fetch must block internal/private IPs."""
 
     def setUp(self):
-        self.handler = object.__new__(server.AgentLiteHandler)
+        self.handler = object.__new__(server.CodeHandler)
         self.handler.send_json = mock.Mock()
         self.handler.read_body_json = mock.Mock()
 
     def _call_fetch(self, url):
         self.handler.read_body_json.return_value = {"url": url}
         try:
-            server.AgentLiteHandler.tool_web_fetch(self.handler)
+            server.CodeHandler.tool_web_fetch(self.handler)
         except ValueError:
             pass  # URL blocked
         except Exception:
@@ -482,42 +482,42 @@ class TestWebFetchSSRF(unittest.TestCase):
     def test_block_ipv4_loopback(self):
         self.handler.read_body_json.return_value = {"url": "http://127.0.0.1/admin"}
         with self.assertRaises(ValueError):
-            server.AgentLiteHandler.tool_web_fetch(self.handler)
+            server.CodeHandler.tool_web_fetch(self.handler)
 
     def test_block_ipv4_loopback_alt(self):
         self.handler.read_body_json.return_value = {"url": "http://127.0.0.2/"}
         with self.assertRaises(ValueError):
-            server.AgentLiteHandler.tool_web_fetch(self.handler)
+            server.CodeHandler.tool_web_fetch(self.handler)
 
     def test_block_class_a_private(self):
         self.handler.read_body_json.return_value = {"url": "http://10.0.0.1/api"}
         with self.assertRaises(ValueError):
-            server.AgentLiteHandler.tool_web_fetch(self.handler)
+            server.CodeHandler.tool_web_fetch(self.handler)
 
     def test_block_class_b_private(self):
         self.handler.read_body_json.return_value = {"url": "http://172.16.0.1/api"}
         with self.assertRaises(ValueError):
-            server.AgentLiteHandler.tool_web_fetch(self.handler)
+            server.CodeHandler.tool_web_fetch(self.handler)
 
     def test_block_class_c_private(self):
         self.handler.read_body_json.return_value = {"url": "http://192.168.1.1/api"}
         with self.assertRaises(ValueError):
-            server.AgentLiteHandler.tool_web_fetch(self.handler)
+            server.CodeHandler.tool_web_fetch(self.handler)
 
     def test_block_link_local(self):
         self.handler.read_body_json.return_value = {"url": "http://169.254.169.254/latest/meta-data"}
         with self.assertRaises(ValueError):
-            server.AgentLiteHandler.tool_web_fetch(self.handler)
+            server.CodeHandler.tool_web_fetch(self.handler)
 
     def test_block_ipv6_loopback(self):
         self.handler.read_body_json.return_value = {"url": "http://[::1]:8080/admin"}
         with self.assertRaises(ValueError):
-            server.AgentLiteHandler.tool_web_fetch(self.handler)
+            server.CodeHandler.tool_web_fetch(self.handler)
 
     def test_block_reserved_range(self):
         self.handler.read_body_json.return_value = {"url": "http://240.0.0.1/"}
         with self.assertRaises(ValueError):
-            server.AgentLiteHandler.tool_web_fetch(self.handler)
+            server.CodeHandler.tool_web_fetch(self.handler)
 
     # ── Public IPs should NOT be blocked by the address check ──
     def test_allows_public_ip(self):
@@ -525,7 +525,7 @@ class TestWebFetchSSRF(unittest.TestCase):
         self.handler.read_body_json.return_value = {"url": "http://8.8.8.8/"}
         # Will likely raise URLError or TimeoutError, NOT ValueError for internal IP
         try:
-            server.AgentLiteHandler.tool_web_fetch(self.handler)
+            server.CodeHandler.tool_web_fetch(self.handler)
             # If it reached here without ValueError, SSRF check passed
         except ValueError as e:
             self.assertNotIn("内网地址", str(e),
@@ -534,7 +534,7 @@ class TestWebFetchSSRF(unittest.TestCase):
     def test_allows_public_ip_cloudflare(self):
         self.handler.read_body_json.return_value = {"url": "http://1.1.1.1/"}
         try:
-            server.AgentLiteHandler.tool_web_fetch(self.handler)
+            server.CodeHandler.tool_web_fetch(self.handler)
         except ValueError as e:
             self.assertNotIn("内网地址", str(e))
 
@@ -542,7 +542,7 @@ class TestWebFetchSSRF(unittest.TestCase):
     def test_empty_url_raises(self):
         self.handler.read_body_json.return_value = {"url": ""}
         with self.assertRaises(ValueError):
-            server.AgentLiteHandler.tool_web_fetch(self.handler)
+            server.CodeHandler.tool_web_fetch(self.handler)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -558,7 +558,7 @@ class TestFileWritePathSafety(unittest.TestCase):
         self.root = Path(self.tmp.name) / "project"
         self.root.mkdir(parents=True)
         (self.root / "subdir").mkdir()
-        self.handler = object.__new__(server.AgentLiteHandler)
+        self.handler = object.__new__(server.CodeHandler)
         self.handler.send_json = mock.Mock()
         self.handler.read_body_json = mock.Mock()
         patcher = mock.patch.object(server, "load_config", return_value={
@@ -574,20 +574,20 @@ class TestFileWritePathSafety(unittest.TestCase):
 
     def test_create_dir_inside_project_succeeds(self):
         self.handler.read_body_json.return_value = {"name": "newdir", "parent": "subdir"}
-        server.AgentLiteHandler.create_directory(self.handler)
+        server.CodeHandler.create_directory(self.handler)
         self.assertTrue((self.root / "subdir" / "newdir").exists())
 
     def test_create_dir_with_traversal_blocked(self):
         """Creating a folder with ../ in name should be blocked."""
         self.handler.read_body_json.return_value = {"name": "../escape", "parent": ""}
         with self.assertRaises(Exception):
-            server.AgentLiteHandler.create_directory(self.handler)
+            server.CodeHandler.create_directory(self.handler)
 
     def test_create_dir_with_absolute_path_blocked(self):
         """Absolute path as folder name should be blocked."""
         self.handler.read_body_json.return_value = {"name": str(Path("C:/Windows")), "parent": ""}
         with self.assertRaises(Exception):
-            server.AgentLiteHandler.create_directory(self.handler)
+            server.CodeHandler.create_directory(self.handler)
 
 
 # ═══════════════════════════════════════════════════════════════════

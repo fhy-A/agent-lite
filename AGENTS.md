@@ -1,4 +1,4 @@
-# Agent Lite Codex 协作入口
+# Code Codex 协作入口
 
 开始任何开发、测试或评审任务前，先阅读：
 

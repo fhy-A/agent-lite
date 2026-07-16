@@ -115,8 +115,8 @@ class TestConcurrentFileOps(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.tmp_root = Path(tempfile.mkdtemp(prefix="agentlite_conc_root_"))
-        cls.tmp_data = Path(tempfile.mkdtemp(prefix="agentlite_conc_data_"))
+        cls.tmp_root = Path(tempfile.mkdtemp(prefix="code_conc_root_"))
+        cls.tmp_data = Path(tempfile.mkdtemp(prefix="code_conc_data_"))
 
         cls.tmp_data_subdirs = ["sessions", "memory", "skills", "attachments", "file-backups"]
         for sub in cls.tmp_data_subdirs:
@@ -153,7 +153,7 @@ class TestConcurrentFileOps(unittest.TestCase):
             p.stop()
 
     def _make_handler(self):
-        h = object.__new__(server_mod.AgentLiteHandler)
+        h = object.__new__(server_mod.CodeHandler)
         h.send_json = mock.Mock()
         h.read_body_json = mock.Mock()
         return h
@@ -166,7 +166,7 @@ class TestConcurrentFileOps(unittest.TestCase):
             try:
                 h = self._make_handler()
                 h.read_body_json.return_value = {"path": f"file_{i}.txt"}
-                server_mod.AgentLiteHandler.tool_read_file(h)
+                server_mod.CodeHandler.tool_read_file(h)
                 data = h.send_json.call_args[0][0]
                 if not data.get("ok"):
                     errors.append(f"Reader {i} failed: {data}")
@@ -189,7 +189,7 @@ class TestConcurrentFileOps(unittest.TestCase):
             try:
                 h = self._make_handler()
                 h.read_body_json.return_value = {"path": f"written_{i}.txt", "content": f"thread-{i}"}
-                server_mod.AgentLiteHandler.tool_write_file(h)
+                server_mod.CodeHandler.tool_write_file(h)
                 data = h.send_json.call_args[0][0]
                 if not data.get("ok"):
                     errors.append(f"Writer {i} failed: {data}")
@@ -219,11 +219,11 @@ class TestConcurrentFileOps(unittest.TestCase):
                 if i % 2 == 0:
                     h = self._make_handler()
                     h.read_body_json.return_value = {"path": f"file_{i % 5}.txt"}
-                    server_mod.AgentLiteHandler.tool_read_file(h)
+                    server_mod.CodeHandler.tool_read_file(h)
                 else:
                     h = self._make_handler()
                     h.read_body_json.return_value = {"path": f"mixed_{i}.txt", "content": f"mixed-{i}"}
-                    server_mod.AgentLiteHandler.tool_write_file(h)
+                    server_mod.CodeHandler.tool_write_file(h)
             except Exception as e:
                 errors.append(f"Worker {i} crashed: {e}")
 
@@ -243,7 +243,7 @@ class TestConcurrentFileOps(unittest.TestCase):
             try:
                 h = self._make_handler()
                 h.read_body_json.return_value = {"name": f"shared_dir_{i % 3}", "parent": ""}
-                server_mod.AgentLiteHandler.create_directory(h)
+                server_mod.CodeHandler.create_directory(h)
             except Exception as e:
                 errors.append(str(e))
 
@@ -265,8 +265,8 @@ class TestConcurrentSessionSaves(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.tmp_root = Path(tempfile.mkdtemp(prefix="agentlite_sess_"))
-        cls.tmp_data = Path(tempfile.mkdtemp(prefix="agentlite_sessd_"))
+        cls.tmp_root = Path(tempfile.mkdtemp(prefix="code_sess_"))
+        cls.tmp_data = Path(tempfile.mkdtemp(prefix="code_sessd_"))
         (cls.tmp_data / "sessions").mkdir(parents=True)
         (cls.tmp_data / "file-backups").mkdir(parents=True)
         config = {
@@ -292,7 +292,7 @@ class TestConcurrentSessionSaves(unittest.TestCase):
             p.stop()
 
     def _make_handler(self):
-        h = object.__new__(server_mod.AgentLiteHandler)
+        h = object.__new__(server_mod.CodeHandler)
         h.send_json = mock.Mock()
         h.read_body_json = mock.Mock()
         return h
@@ -308,7 +308,7 @@ class TestConcurrentSessionSaves(unittest.TestCase):
                 "title": "concurrent session",
                 "messages": [{"role": "user", "content": "test"}],
             }
-            server_mod.AgentLiteHandler.create_session(h)
+            server_mod.CodeHandler.create_session(h)
             data = h.send_json.call_args[0][0]
             with lock:
                 session_ids.append(data.get("id"))
@@ -331,7 +331,7 @@ class TestConcurrentSessionSaves(unittest.TestCase):
             "title": "single session",
             "messages": [{"role": "user", "content": "initial"}],
         }
-        server_mod.AgentLiteHandler.create_session(h)
+        server_mod.CodeHandler.create_session(h)
         sid = h.send_json.call_args[0][0]["id"]
         written_counts = []
         errors = []
@@ -349,7 +349,7 @@ class TestConcurrentSessionSaves(unittest.TestCase):
                         for i in range(msg_count)
                     ],
                 }
-                server_mod.AgentLiteHandler.save_session(h2, sid)
+                server_mod.CodeHandler.save_session(h2, sid)
                 with lock:
                     written_counts.append(msg_count)
             except Exception as exc:
@@ -368,11 +368,16 @@ class TestConcurrentSessionSaves(unittest.TestCase):
 
         # The last save wins — but crucially, no corruption
         session_file = server_mod.session_path(sid)
+        jsonl_file = server_mod.messages_path(sid)
         self.assertTrue(session_file.exists())
-        loaded = json.loads(session_file.read_text(encoding="utf-8"))
-        self.assertIsInstance(loaded.get("messages"), list)
+        self.assertTrue(jsonl_file.exists())
+        # Messages are now in JSONL, not in the JSON metadata
+        loaded_meta = json.loads(session_file.read_text(encoding="utf-8"))
+        self.assertNotIn("messages", loaded_meta, "messages should be in JSONL, not meta JSON")
+        messages = server_mod.read_jsonl(jsonl_file)
+        self.assertIsInstance(messages, list)
         # Total messages should be one of the thread counts (the winner)
-        msg_len = len(loaded["messages"])
+        msg_len = len(messages)
         self.assertIn(msg_len, thread_counts,
                       f"Message count {msg_len} should be one of {thread_counts}")
 

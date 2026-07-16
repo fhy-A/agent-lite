@@ -1,4 +1,4 @@
-# Agent Lite TODO
+# Code TODO
 
 > 本文件只记录未完成事项、当前优先级和后续计划；已完成的重要工作移入 `CHANGELOG.md`。Claude Code、Codex 及人工开发者开始任务前应先阅读两份文档，任务结束前按实际结果同步更新，避免完成状态与开发日志冲突。
 
@@ -12,8 +12,9 @@
   - [x] 图片 base64 编码优化（已有 compressImage：最大 1024px + JPEG q=0.7）
   - [x] 历史消息裁剪策略（旧工具结果自动折叠为一行摘要）
   - [ ] **复查 token 优化效果与副作用** — 跑几天后评估截断是否合理、能力有无降级
-- [ ] **app.js 模块化** — 399KB 单文件拆分（state / agent-loop / tools / render / events / session / utils），esbuild 打包
+- [ ] **app.js 模块化** — 474KB 单文件拆分（state / agent-loop / tools / render / events / session / utils），esbuild 打包
   - [x] 模型运行时传输层拆分为独立 `agent-runtime.js`，负责创建、续接和取消服务端模型流
+  - [ ] 按 [`docs/APP_JS_SPLIT_PLAN.md`](docs/APP_JS_SPLIT_PLAN.md) 分阶段迁移；先保持普通脚本兼容拆分，边界稳定后再接入 esbuild
 - [ ] **macOS / Linux 跨平台** — PowerShell→bash/zsh、进程管理、托盘适配
 - [ ] **API 中转站部署**（阶段 2）— 共享 auth、Key 配置、嵌入中转站页面
 - [x] **网络异常重试机制** — 网络断开、超时和 SSE 半途断开时自动等待并进行有上限的退避重试
@@ -60,10 +61,14 @@
 - [ ] **i18n 架构统一** — HTML `data-i18n` / JS `t()` / server `_serverErrorMap` 三层合并
 - [ ] **LANG 与 I18N 字典合并** — 两套字典去重
 
+## 已知问题
+
+- [ ] **流式输出 UI 瞬态闪烁** — 流式输出期间"思考中"标记、模型名、计时器等元素偶尔消失，刷新后恢复。数据层完整（JSONL 消息无误），问题在流式渲染管线（`patchStreamingAssistantContent` / `scheduleStreamingAssistantPatch`），可能为增量 DOM 更新与某些全量重渲染竞态导致。
+
 ## 产品与运营待办
 
 - [ ] **Agent 规划任务能力** — 复杂任务自动拆解为子任务并逐步执行
-- [ ] **品牌改名：Code** — Agent Lite 更名为 Code，重新设计 logo
+- [ ] **品牌改名：Code** — Code 更名为 Code，重新设计 logo
 - [ ] **中转站注册邮箱通知模版**
 - [ ] **充值系统** — 接入 https://epay.580ai.net
 - [ ] **部署上线准备资料** — 服务器、域名、文档、合规等
@@ -72,4 +77,4 @@
 
 ---
 
-_上次更新：2026-07-15 12:23_
+_上次更新：2026-07-16 02:30_

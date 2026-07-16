@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="agent-lite-icon.ico" width="80" alt="Agent Lite" />
+  <img src="code-icon.ico" width="80" alt="Code" />
 </p>
 
-<h1 align="center">Agent Lite</h1>
+<h1 align="center">Code</h1>
 <p align="center">轻量级本地 AI 编程助手 · 浏览器即界面 · API 中转站驱动</p>
 
 <p align="center">
@@ -16,9 +16,9 @@
 
 ## 这是什么
 
-Agent Lite 是一个**运行在你本机的 AI 编程助手**。打开浏览器就能用，拥有完整的文件读写、命令执行、Git 操作能力。通过 New API 聚合网关接入各类大模型。
+Code 是一个**运行在你本机的 AI 编程助手**。打开浏览器就能用，拥有完整的文件读写、命令执行、Git 操作能力。通过 New API 聚合网关接入各类大模型。
 
-**核心理念**：你只需要一个浏览器。不需要安装 IDE 插件，不需要终端，不需要记住命令行。用自然语言描述需求，Agent Lite 帮你完成。
+**核心理念**：你只需要一个浏览器。不需要安装 IDE 插件，不需要终端，不需要记住命令行。用自然语言描述需求，Code 帮你完成。
 
 ## 快速开始
 
@@ -32,7 +32,7 @@ python server.py
 
 ### 方式二：下载 EXE（Windows）
 
-从 [Releases](https://github.com/fhy-A/agent-lite/releases) 下载 `AgentLite-v0.5.3.exe`，双击运行，托盘图标常驻。
+从 [Releases](https://github.com/fhy-A/Code/releases) 下载 `Code-v0.5.3.exe`，双击运行，托盘图标常驻。
 
 ## 功能
 

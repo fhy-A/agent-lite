@@ -1,8 +1,8 @@
 """
-Agent Lite 提示词效果自动化测试
+Code 提示词效果自动化测试
 
 用法：
-  1. 确保 Agent Lite 服务已启动（默认 http://127.0.0.1:3010）
+  1. 确保 Code 服务已启动（默认 http://127.0.0.1:3010）
   2. python tests/run_prompt_tests.py
 
 每道题发送给模型，观察：
@@ -22,7 +22,7 @@ PROXY_URL = f"{BASE_URL}/proxy/chat"
 
 # ── 系统提示词（与 app.js defaultSystemPrompt 保持一致） ──
 SYSTEM_PROMPT = """\
-你是 Agent Lite，一个运行在本地 Web 服务中的 AI 编程助手。
+你是 Code，一个运行在本地 Web 服务中的 AI 编程助手。
 
 ## 何时使用工具
 
@@ -71,7 +71,7 @@ list_files | read_file | search_files | glob_files | propose_edit | write_file |
 
 不支持原生工具调用时，退回到文本协议：
 ```agent-tool
-{"action":"read_file","path":"agent-lite/app.js"}
+{"action":"read_file","path":"code/app.js"}
 ```"""
 
 
@@ -484,7 +484,7 @@ def run_tests(config=None):
             print(f"{icon} {note}{tool_info} | 回复 {text_len} 字 {emoji_mark}")
 
         except requests.exceptions.ConnectionError:
-            print("❌ 连接失败：Agent Lite 服务未启动")
+            print("❌ 连接失败：Code 服务未启动")
             results.append({
                 "question": question,
                 "expected": expected,
@@ -713,7 +713,7 @@ def print_report(results):
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Agent Lite 提示词效果测试")
+    parser = argparse.ArgumentParser(description="Code 提示词效果测试")
     parser.add_argument("--api-key", default="", help="API Key（被测模型和 Judge 共用，如在同一代理下）")
     parser.add_argument("--judge-api-key", default="", help="Judge 模型专用 Key（不填则复用 --api-key）")
     parser.add_argument("--base-url", default="", help="覆盖 LLM Base URL")

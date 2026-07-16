@@ -1,4 +1,4 @@
-# Agent Lite Claude Code 协作入口
+# Code Claude Code 协作入口
 
 开始任何开发、测试或评审任务前，先阅读：
 

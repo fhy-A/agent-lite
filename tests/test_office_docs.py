@@ -1,7 +1,7 @@
 """
 Office Document Integration Tests — Word/Excel/PPT/PDF read & write.
 
-Creates test documents, then verifies agent-lite can process them correctly.
+Creates test documents, then verifies code can process them correctly.
 
 Run: python tests/test_office_docs.py
   or: python -m pytest tests/test_office_docs.py -v
@@ -31,7 +31,7 @@ def _create_test_docx(path: Path):
     from docx import Document
     doc = Document()
     doc.add_heading("测试报告", level=1)
-    doc.add_paragraph("这是一份自动生成的测试文档，用于验证 Agent Lite 的文档处理能力。")
+    doc.add_paragraph("这是一份自动生成的测试文档，用于验证 Code 的文档处理能力。")
     doc.add_heading("核心指标", level=2)
     table = doc.add_table(rows=4, cols=3, style="Table Grid")
     headers = ["指标", "Q1", "Q2"]
@@ -134,8 +134,8 @@ class TestOfficeDocuments(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Create temp project with test documents
-        cls.tmp_root = Path(tempfile.mkdtemp(prefix="agentlite_office_"))
-        cls.tmp_data = Path(tempfile.mkdtemp(prefix="agentlite_offdat_"))
+        cls.tmp_root = Path(tempfile.mkdtemp(prefix="code_office_"))
+        cls.tmp_data = Path(tempfile.mkdtemp(prefix="code_offdat_"))
 
         # Create test documents
         cls.docx_path = cls.tmp_root / "test_report.docx"
@@ -177,7 +177,7 @@ class TestOfficeDocuments(unittest.TestCase):
 
         server_mod.ThreadingHTTPServer.daemon_threads = True
         cls._server = server_mod.ThreadingHTTPServer(
-            ("127.0.0.1", _PORT), server_mod.AgentLiteHandler
+            ("127.0.0.1", _PORT), server_mod.CodeHandler
         )
         cls._server.socket.settimeout(2.0)
         cls._thread = threading.Thread(target=cls._server.serve_forever, daemon=True)

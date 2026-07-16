@@ -1,6 +1,6 @@
 ---
 name: find-skills
-description: 搜索、比较和安装可复用的 Agent Skill。用于用户明确要求寻找 Skill、查询是否存在某种扩展能力，或希望从 skills.sh、GitHub 等来源扩充 Agent Lite 能力时。
+description: 搜索、比较和安装可复用的 Agent Skill。用于用户明确要求寻找 Skill、查询是否存在某种扩展能力，或希望从 skills.sh、GitHub 等来源扩充 Code 能力时。
 keywords: 找+skill, 查找+skill, 搜索+skill, 推荐+skill, 安装+skill, 扩充+skill, 有没有+skill, skill市场, 技能市场, skills.sh, find+skill, search+skill, install+skill, agent skills, 技能扩展, 能力扩展
 tools: web_fetch, run_command, read_file
 ---
@@ -96,7 +96,7 @@ npx skills add <owner/repo@skill> -g -y
 
 The `-g` flag installs globally (user-level) and `-y` skips confirmation prompts.
 
-For Agent Lite, a successful `npx skills add` is only the download step. Locate the installed Skill directory, copy the complete directory into `data/skills/<skill-name>/`, and verify that `GET /api/skills` returns it. Do not report the Skill as available in Agent Lite until that verification succeeds. Once loaded, Agent Lite automatically exposes `/<skill-name>` as its slash command.
+For Code, a successful `npx skills add` is only the download step. Locate the installed Skill directory, copy the complete directory into `data/skills/<skill-name>/`, and verify that `GET /api/skills` returns it. Do not report the Skill as available in Code until that verification succeeds. Once loaded, Code automatically exposes `/<skill-name>` as its slash command.
 
 ## Common Skill Categories
 
@@ -138,4 +138,4 @@ npx skills init my-xyz-skill
 
 ## What should be noted?
 
-When the user does not specify the installation location, prefer Agent Lite's `data/skills/` directory. Preserve all bundled `scripts/`, `references/`, and `assets/` instead of copying only `SKILL.md`.
+When the user does not specify the installation location, prefer Code's `data/skills/` directory. Preserve all bundled `scripts/`, `references/`, and `assets/` instead of copying only `SKILL.md`.

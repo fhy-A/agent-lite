@@ -60,8 +60,8 @@ class TestServerFixture(unittest.TestCase):
             return
 
         # Temp project root with test files
-        cls._tmp_root = Path(tempfile.mkdtemp(prefix="agentlite_test_root_"))
-        cls._tmp_data = Path(tempfile.mkdtemp(prefix="agentlite_test_data_"))
+        cls._tmp_root = Path(tempfile.mkdtemp(prefix="code_test_root_"))
+        cls._tmp_data = Path(tempfile.mkdtemp(prefix="code_test_data_"))
 
         # Create test project structure
         (cls._tmp_root / "src").mkdir(parents=True)
@@ -98,7 +98,7 @@ class TestServerFixture(unittest.TestCase):
         # Start server
         server_mod.ThreadingHTTPServer.daemon_threads = True
         cls._server_instance = server_mod.ThreadingHTTPServer(
-            ("127.0.0.1", _PORT), server_mod.AgentLiteHandler
+            ("127.0.0.1", _PORT), server_mod.CodeHandler
         )
         cls._server_instance.socket.settimeout(2.0)
         cls._server_thread = threading.Thread(
@@ -130,7 +130,7 @@ class TestHealthAndConfig(TestServerFixture):
         self.assertEqual(status, 200)
         self.assertIn("localVersion", data)
         self.assertIn("serverVersion", data)
-        self.assertEqual(data["name"], "Agent Lite")
+        self.assertEqual(data["name"], "Code")
 
     def test_config_get(self):
         status, data = _req("GET", "/api/config")
@@ -399,6 +399,33 @@ class TestSessionLifecycle(TestServerFixture):
         })
         self.assertEqual(status, 200)
         self.assertTrue(data.get("ok"))
+
+    def test_055_append_messages(self):
+        """POST /api/sessions/{id}/messages — incremental append."""
+        sid = TestSessionLifecycle._session_id
+        self.assertIsNotNone(sid, "Session not created yet")
+        status, data = _req("POST", f"/api/sessions/{sid}/messages", json={
+            "messages": [
+                {"role": "assistant", "content": "appended 1"},
+                {"role": "assistant", "content": "appended 2"},
+            ],
+        })
+        self.assertEqual(status, 200)
+        self.assertTrue(data.get("ok"))
+        self.assertEqual(data.get("appended"), 2)
+        # Verify messages are there
+        _, full = _req("GET", f"/api/sessions/{sid}")
+        self.assertGreaterEqual(len(full.get("messages", [])), 4)  # 2 original + 2 appended
+
+    def test_055b_append_messages_empty(self):
+        """POST /api/sessions/{id}/messages with empty messages is a no-op."""
+        sid = TestSessionLifecycle._session_id
+        self.assertIsNotNone(sid, "Session not created yet")
+        status, data = _req("POST", f"/api/sessions/{sid}/messages", json={
+            "messages": [],
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(data.get("appended"), 0)
 
     def test_06_delete_session(self):
         sid = TestSessionLifecycle._session_id

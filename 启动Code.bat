@@ -2,11 +2,11 @@
 cd /d "%~dp0"
 
 REM Replace exe if update was downloaded
-if exist "dist\AgentLite.exe.new" (
+if exist "dist\Code.exe.new" (
   echo Applying update...
-  del /f "dist\AgentLite.exe.old" 2>nul
-  move /y "dist\AgentLite.exe" "dist\AgentLite.exe.old" 2>nul
-  move /y "dist\AgentLite.exe.new" "dist\AgentLite.exe"
+  del /f "dist\Code.exe.old" 2>nul
+  move /y "dist\Code.exe" "dist\Code.exe.old" 2>nul
+  move /y "dist\Code.exe.new" "dist\Code.exe"
   echo Update applied.
 )
 
@@ -14,7 +14,7 @@ REM Check if port 3010 already in use.
 netstat -ano 2>nul | find ":3010 " | find "LISTENING" >nul
 if errorlevel 1 goto :start_server
 
-REM Reuse an active Agent Lite page. If the service is running without an
+REM Reuse an active Code page. If the service is running without an
 REM active browser page, open one explicitly instead of refreshing nothing.
 powershell -NoProfile -Command "try {$r=Invoke-RestMethod -Uri 'http://127.0.0.1:3010/api/has-browser' -TimeoutSec 2; if ($r.hasBrowser) {exit 0} else {exit 1}} catch {exit 1}" >nul 2>&1
 if errorlevel 1 goto :open_existing_service
@@ -39,7 +39,7 @@ if not defined PY (
 )
 
 REM Start server and wait until it is ready.
-start "Agent Lite" /B %PY% server.py
+start "Code" /B %PY% server.py
 
 set RETRY=0
 :wait

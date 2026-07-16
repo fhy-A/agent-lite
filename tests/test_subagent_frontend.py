@@ -51,7 +51,7 @@ class TestSubAgentFrontend(unittest.TestCase):
         self.assertIn('label: `${t("subAgentLabel")} · ${ctx.authorizationLabel || t("subTaskLabel")}`', self.source)
 
     def test_plan_mode_can_delegate_without_mutation_tools(self):
-        self.assertIn('plan: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "task", "use_skill"])', self.source)
+        self.assertIn('plan: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "task", "use_skill", "read_skill_resource"])', self.source)
         self.assertIn('.filter((tool) => !["task", "request_user_input"].includes(tool.function?.name))', self.source)
 
     def test_subagent_edits_wait_for_accept_mode_authorization(self):

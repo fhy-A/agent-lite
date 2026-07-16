@@ -77,7 +77,7 @@ const state = {
 
   mode: "build",
 
-  permissionProfile: localStorage.getItem("agent-lite-permission-profile") || "accept",
+  permissionProfile: localStorage.getItem("code-permission-profile") || "accept",
 
   currentDir: "",
 
@@ -93,11 +93,11 @@ const state = {
 
   previewImageScale: null,
 
-  previewWidth: Number(localStorage.getItem("agent-lite-preview-width") || 420),
+  previewWidth: Number(localStorage.getItem("code-preview-width") || 420),
 
-  sidebarSessionHeight: Number(localStorage.getItem("agent-lite-session-height") || 0),
+  sidebarSessionHeight: Number(localStorage.getItem("code-session-height") || 0),
 
-  sidebarWidth: Number(localStorage.getItem("agent-lite-sidebar-width") || 264),
+  sidebarWidth: Number(localStorage.getItem("code-sidebar-width") || 264),
 
   lastUsage: null,
 
@@ -148,14 +148,14 @@ const state = {
 
   explicitSkill: null,
 
-  disabledSkills: new Set(JSON.parse(localStorage.getItem("agent-lite-disabled-skills") || "[]")),
+  disabledSkills: new Set(JSON.parse(localStorage.getItem("code-disabled-skills") || "[]")),
 
   attachedImages: [],
 
   responseStartTime: null,
   messageQueue: [],
 
-  lang: localStorage.getItem("agent-lite-lang") || "zh",
+  lang: localStorage.getItem("code-lang") || "zh",
 
   modelKeyMap: {},
 
@@ -235,7 +235,29 @@ async function persistRunCheckpoint(ctx, status = "running", phase = "model", ex
 async function clearRunCheckpoint(ctx) {
   if (!ctx?.sessionId || ctx.isSubAgent) return;
   setSessionRunState(ctx.sessionId, {});
-  await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats);
+  // Write all messages to JSONL in one shot (stream is complete)
+  const msgs = ctx.messages || [];
+  if (msgs.length > 0) {
+    const serialized = msgs.map((msg) => ({
+      role: msg.role,
+      content: msg.content || "",
+      thought: msg.thought || "",
+      meta: msg.meta || {},
+      _images: msg._images || undefined,
+      _model: msg._model || undefined,
+      _time: msg._time || undefined,
+    }));
+    await apiJson(`/api/sessions/${encodeURIComponent(ctx.sessionId)}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        title: els.sessionTitle.value.trim() || "Untitled",
+        messages: serialized,
+        stats: { ...(ctx.stats || getSessionStats(ctx.sessionId) || {}) },
+        lastUsage: getSessionLastUsage(ctx.sessionId),
+        runState: {},
+      }),
+    }).catch(() => {});
+  }
 }
 
 function getSessionMessages(sessionId) {
@@ -323,9 +345,28 @@ function resetRenderCache() {
 function cacheActiveSessionState() {
   const prevId = state.sessionId;
   if (!prevId) return;
-  state._sessionMsgs[prevId] = state.messages || [];
+  const msgs = state.messages || [];
+  state._sessionMsgs[prevId] = msgs;
   state._sessionStats[prevId] = state.stats || { input: 0, output: 0, cache: 0, cost: 0 };
   if (state.lastUsage) state._sessionLastUsage[prevId] = state.lastUsage;
+  // Full write of all messages before switching away (fire-and-forget)
+  if (msgs.length > 0) {
+    const serialized = msgs.map((msg) => ({
+      role: msg.role, content: msg.content || "", thought: msg.thought || "",
+      meta: msg.meta || {}, _images: msg._images || undefined,
+      _model: msg._model || undefined, _time: msg._time || undefined,
+    }));
+    apiJson(`/api/sessions/${encodeURIComponent(prevId)}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        title: els.sessionTitle.value.trim() || "Untitled",
+        messages: serialized,
+        stats: { ...(state.stats || {}) },
+        lastUsage: state.lastUsage,
+        runState: {},
+      }),
+    }).catch(() => {});
+  }
 }
 
 function isSessionStreaming(sessionId) {
@@ -632,11 +673,11 @@ const MAX_TOOL_ROUNDS = 200;
 
 const toolPolicy = {
 
-  plan: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "task", "use_skill"]),
+  plan: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "task", "use_skill", "read_skill_resource"]),
 
-  accept: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "run_command", "task", "use_skill", "write_file", "delete_file", "save_memory"]),
+  accept: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "run_command", "task", "use_skill", "write_file", "delete_file", "save_memory", "read_skill_resource"]),
 
-  bypass: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "run_command", "task", "use_skill", "write_file", "delete_file", "save_memory"]),
+  bypass: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "run_command", "task", "use_skill", "write_file", "delete_file", "save_memory", "read_skill_resource"]),
 
 };
 
@@ -800,7 +841,7 @@ const nativeTools = [
 
             type: "string",
 
-            description: "相对项目根目录的文件路径，例如 agent-lite/app.js",
+            description: "相对项目根目录的文件路径，例如 code/app.js",
 
           },
 
@@ -1120,6 +1161,38 @@ const nativeTools = [
 
     function: {
 
+      name: "read_skill_resource",
+
+      description: "读取已安装 Skill 目录内的打包资源文件（scripts/references/assets）。当 Skill 正文指引你查阅某个引用文件时，用这个工具按需加载。传入 skill 名称和文件相对路径（如 references/api.md、scripts/validate.py）。",
+
+      parameters: {
+
+        type: "object",
+
+        properties: {
+
+          skill: { type: "string", description: "Skill 名称，如 hyperframes。" },
+
+          file: { type: "string", description: "Skill 目录内的相对路径，如 references/transitions/catalog.md 或 scripts/validate.py。" },
+
+        },
+
+        required: ["skill", "file"],
+
+        additionalProperties: false,
+
+      },
+
+    },
+
+  },
+
+  {
+
+    type: "function",
+
+    function: {
+
       name: "write_file",
 
       description: "创建新文件或覆盖已有文件。会自动备份原文件到 data/file-backups/。需要用户确认后才会执行。",
@@ -1325,13 +1398,13 @@ const permissionInstructions = {
 
 function loadKeyConfig() {
 
-  try { return JSON.parse(localStorage.getItem("agent-lite-key-config") || "[]"); } catch { return []; }
+  try { return JSON.parse(localStorage.getItem("code-key-config") || "[]"); } catch { return []; }
 
 }
 
 function saveKeyConfig(cfg) {
 
-  localStorage.setItem("agent-lite-key-config", JSON.stringify(cfg));
+  localStorage.setItem("code-key-config", JSON.stringify(cfg));
 
 }
 
@@ -1862,7 +1935,7 @@ const I18N = {
     toolListFiles: "列出文件", toolReadFile: "读取文件", toolSearchFiles: "搜索文件",
     toolGlobFiles: "匹配文件", toolProposeEdit: "生成修改方案", toolApplyEdit: "应用修改",
     toolRunCommand: "执行命令", toolWriteFile: "写入文件", toolDeleteFile: "删除文件",
-    toolWebFetch: "抓取网页", toolTask: "子任务", toolUseSkill: "加载 Skill", toolSaveMemory: "保存记忆",
+    toolWebFetch: "抓取网页", toolTask: "子任务", toolUseSkill: "加载 Skill", toolReadSkill: "读取 Skill 资源", toolSaveMemory: "保存记忆",
     newSession: "+ 新建会话", newSkill: "+ 新建 Skill", sessionTitleDefault: "新会话", untitledSession: "未命名会话",
     skillDesc: "描述", skillKeywords: "关键词", skillTools: "工具", skillPathLabel: "文件路径",
     skillExplicitHint: "此 Skill 可以通过 /{name} 命令手动触发", skillEmptyHint: "点击 + 新建 Skill，或在左侧选择 Skill",
@@ -1880,7 +1953,7 @@ const I18N = {
     previewBtn: "预览", noFileOpen: "未打开文件", selectFileToPreview: "选择文件以预览",
     exportBtn: "导出", tools: "工具", toolLog: "工具日志", settingsBtn: "设置",
     files: "文件", chooseFolder: "选择文件夹", recentLabel: "最近使用",
-    welcome: "我是 Agent Lite，你的本地 AI 编程伙伴。\\n\\n我可以读文件、搜代码、跑命令、改项目。",
+    welcome: "我是 Code，你的本地 AI 编程伙伴。\\n\\n我可以读文件、搜代码、跑命令、改项目。",
     welcomeTagline: "开始对话，用自然语言驱动代码。",
     inputPlaceholder: "描述需求、粘贴代码，或输入 / 调用命令",
     thinkingLabel: "思考中", networkRecovering: "网络恢复中", networkReconnectStatus: "网络连接已中断，正在自动恢复 · 已尝试 {attempt} 次 · ", networkReconnectSuffix: " 后重试", completedLabel: "完成",
@@ -1972,11 +2045,11 @@ const I18N = {
     updateFailed: "更新失败", openDownloadPage: "打开下载页面",
     devModeUpdate: "开发模式下请手动更新", versionLabel: "版本",
     readyToInstall: "就绪，点击安装",
-    oboWelcome: "欢迎使用 Agent Lite",
+    oboWelcome: "欢迎使用 Code",
     oboWelcomeDesc: "一个运行在你电脑上的 AI 编程助手。像聊天一样让它读代码、改 bug、搜文件、执行命令，所有操作都在你的电脑上完成。",
     oboFeat1: "读代码、搜文件", oboFeat2: "改 bug、写功能", oboFeat3: "执行命令、运行测试", oboFeat4: "数据不出本地、操作可控",
     oboStart: "开始配置", oboNext: "下一步", oboBack: "上一步", oboSkip: "跳过", oboDone: "开始使用",
-    oboStep1: "配置 API Key", oboStep1Desc: "Agent Lite 不内置模型，需要连接你的 API 服务：",
+    oboStep1: "配置 API Key", oboStep1Desc: "Code 不内置模型，需要连接你的 API 服务：",
     oboStep1Item1: "点击左下角设置 → Models → + 添加 Key",
     oboStep1Item2: "输入 Base URL 和 API Key（名称可选），保存",
     oboStep1Item3: "点击刷新模型，列表中会出现所有可用模型",
@@ -1992,7 +2065,7 @@ const I18N = {
     oboStep4Item2: "修改操作需要你确认（推荐新手使用）",
     oboStep4Item3: "所有操作自动执行（谨慎使用）",
     oboStep4Tip: "Agent 改代码会先生成 Diff 供你审查，确认后才写入。修改前自动备份到 data/file-backups/",
-    appTitle: "Agent Lite",
+    appTitle: "Code",
     apiKeysMultiline: "API Key（一行一个，支持多个）", rememberCredentials: "本机记住 API Key 和 Base URL",
     create: "创建", createInCurrentDir: "在当前目录下创建", folderNamePlaceholder: "文件夹名称",
     confirmCompact: "确认压缩", confirmDeleteTitle: "确认删除", confirmDeleteAction: "确认删除",
@@ -2064,7 +2137,7 @@ const I18N = {
     toolListFiles: "List Files", toolReadFile: "Read File", toolSearchFiles: "Search Files",
     toolGlobFiles: "Glob Files", toolProposeEdit: "Propose Edit", toolApplyEdit: "Apply Edit",
     toolRunCommand: "Run Command", toolWriteFile: "Write File", toolDeleteFile: "Delete File",
-    toolWebFetch: "Web Fetch", toolTask: "Sub Task", toolUseSkill: "Use Skill", toolSaveMemory: "Save Memory",
+    toolWebFetch: "Web Fetch", toolTask: "Sub Task", toolUseSkill: "Use Skill", toolReadSkill: "Read Skill Resource", toolSaveMemory: "Save Memory",
     newSession: "+ New Session", newSkill: "+ New Skill", sessionTitleDefault: "New Session", untitledSession: "Untitled",
     skillDesc: "Description", skillKeywords: "Keywords", skillTools: "Tools", skillPathLabel: "File Path",
     skillExplicitHint: "Can be invoked via /{name}", skillEmptyHint: "Click + New Skill or select one from the left",
@@ -2082,7 +2155,7 @@ const I18N = {
     previewBtn: "Preview", noFileOpen: "No file open", selectFileToPreview: "Select a file to preview",
     exportBtn: "Export", tools: "Tools", toolLog: "Tool Log", settingsBtn: "Settings",
     files: "Files", chooseFolder: "Choose Folder", recentLabel: "Recent",
-    welcome: "I'm Agent Lite, your local AI coding partner. I can read files, search code, run commands, and modify projects.",
+    welcome: "I'm Code, your local AI coding partner. I can read files, search code, run commands, and modify projects.",
     welcomeTagline: "Start a conversation, drive code with natural language.",
     inputPlaceholder: "Describe your task, paste code, or type / for commands",
     thinkingLabel: "Thinking", networkRecovering: "Reconnecting", networkReconnectStatus: "Connection lost. Recovering automatically · Attempt {attempt} · retry in ", networkReconnectSuffix: "", completedLabel: "Completed",
@@ -2173,11 +2246,11 @@ const I18N = {
     updateFailed: "Update failed", openDownloadPage: "Open download page",
     devModeUpdate: "Dev mode: update manually", versionLabel: "Version",
     readyToInstall: "Ready to install",
-    oboWelcome: "Welcome to Agent Lite",
+    oboWelcome: "Welcome to Code",
     oboWelcomeDesc: "An AI coding assistant running on your computer. Chat naturally to read code, fix bugs, search files, and run commands - all operations stay local.",
     oboFeat1: "Read code, search files", oboFeat2: "Fix bugs, write features", oboFeat3: "Run commands and tests", oboFeat4: "Local data, controllable ops",
     oboStart: "Get Started", oboNext: "Next", oboBack: "Back", oboSkip: "Skip", oboDone: "Start Using",
-    oboStep1: "Configure API Key", oboStep1Desc: "Agent Lite needs an API service to work:",
+    oboStep1: "Configure API Key", oboStep1Desc: "Code needs an API service to work:",
     oboStep1Item1: "Click the gear icon, Settings, Models, then Add Key",
     oboStep1Item2: "Enter the Base URL and API Key (name optional), then save",
     oboStep1Item3: "Click Refresh Models to see all available models",
@@ -2193,7 +2266,7 @@ const I18N = {
     oboStep4Item2: "Edits require your confirmation (recommended)",
     oboStep4Item3: "All operations run automatically (use with caution)",
     oboStep4Tip: "Agent generates a diff for review before writing. All changes are backed up to data/file-backups/",
-    appTitle: "Agent Lite",
+    appTitle: "Code",
     apiKeysMultiline: "API Keys (one per line)", rememberCredentials: "Remember API Keys and Base URL on this device",
     create: "Create", createInCurrentDir: "Create in the current directory", folderNamePlaceholder: "Folder name",
     confirmCompact: "Compact", confirmDeleteTitle: "Confirm Delete", confirmDeleteAction: "Delete",
@@ -2277,7 +2350,7 @@ function setLang(lang) {
 
   state.lang = lang;
 
-  localStorage.setItem("agent-lite-lang", lang);
+  localStorage.setItem("code-lang", lang);
 
   applyI18n();
 
@@ -2376,7 +2449,7 @@ function isUserAway() {
 function _notify(title, body) {
   try {
     if ("Notification" in window && Notification.permission === "granted") {
-      new Notification(title, { body, icon: "agent-lite-icon.png" });
+      new Notification(title, { body, icon: "code-icon.png" });
     }
   } catch (_) {}
 }
@@ -2385,7 +2458,7 @@ function notifyTaskComplete(sessionId) {
   if (!isUserAway()) return;
   const title = els.sessionTitle.value || t("sessionTitleDefault");
   document.title = `[${t("permNotifyDone") || "Done"}] ${title}`;
-  _notify("Agent Lite - " + (t("notifyTaskDoneBody") || "已完成"), title);
+  _notify("Code - " + (t("notifyTaskDoneBody") || "已完成"), title);
 }
 
 function notifyPermissionNeeded(action, path) {
@@ -2588,9 +2661,9 @@ function detectLanguage(input) {
 
 // Hardcoded security layer — never user-editable
 const SYSTEM_SECURITY_LAYER = `
-你是 Agent Lite，一个本地运行的 AI 编程助手。你运行在用户自己电脑上的 Web 服务中（127.0.0.1:3010），通过用户配置的 API 中转站连接模型服务。
+你是 Code，一个本地运行的 AI 编程助手。你运行在用户自己电脑上的 Web 服务中（127.0.0.1:3010），通过用户配置的 API 中转站连接模型服务。
 
-当用户问"你是谁"或类似问题时，直接说你是 Agent Lite，不要提 Claude 或其他底层模型名。
+当用户问"你是谁"或类似问题时，直接说你是 Code，不要提 Claude 或其他底层模型名。
 
 ## 思考规范
 思考聚焦需求拆解、方案对比、代码推演。不写"用户问了xxx""这是简单问题""不需要工具""我来回答"等元描述——直接进入分析。
@@ -2605,7 +2678,10 @@ const SYSTEM_SECURITY_LAYER = `
 - 提醒时重点强调数据传输隐患，顺带提及会话记录本地明文存储。
 `.trim();
 
-function getSystemPrompt(options = {}) {
+async function getSystemPrompt(options = {}) {
+  // When briefSkills is set (e.g. for token estimation), skip async skill
+  // body loading and use only name+description metadata.
+  const _loadSkills = !options.briefSkills;
 
   const customPrompt = els.systemPromptText.value.trim() || defaultSystemPrompt;
 
@@ -2647,30 +2723,32 @@ function getSystemPrompt(options = {}) {
 
   // Inject explicit skill first, then auto-matched
 
-  if (explicitSkill) {
+  if (_loadSkills) {
+    if (explicitSkill) {
 
-    const skill = state.skills.find((s) => s.name === explicitSkill);
+      const skill = await ensureSkillBody(state.skills.find((s) => s.name === explicitSkill));
 
-    if (skill) {
+      if (skill && skill.body) {
 
-      parts.push(`=== 已激活 Skill: ${skill.name} ===\n${skill.body}`);
+        parts.push(`=== 已激活 Skill: ${skill.name} ===\n${skill.body}`);
 
-    }
+      }
 
-  } else {
+    } else {
 
-    if (lastUserMsg) {
+      if (lastUserMsg) {
 
-      const skillPrompt = getMatchedSkillPrompts(lastUserMsg.content || "");
+        const skillPrompt = await getMatchedSkillPrompts(lastUserMsg.content || "");
 
-      if (skillPrompt) {
+        if (skillPrompt) {
 
-        parts.push(`=== 匹配的 Skill（自动加载） ===\n${skillPrompt}`);
+          parts.push(`=== 匹配的 Skill（自动加载） ===\n${skillPrompt}`);
+
+        }
 
       }
 
     }
-
   }
 
   parts.push(
@@ -2735,7 +2813,7 @@ async function loadSkills() {
 
   try {
 
-    const data = await apiJson("/api/skills");
+    const data = await apiJson("/api/skills?brief=1");
 
     state.skills = data.data || [];
 
@@ -2743,9 +2821,26 @@ async function loadSkills() {
 
 }
 
+async function ensureSkillBody(skill) {
+  /** Fetch full skill body if not already loaded (progressive loading: L2). */
+  if (!skill || skill.body != null) return skill;
+  try {
+    const full = await apiJson(`/api/skills/${encodeURIComponent(skill.name)}`);
+    // Merge full data into the cached skill object
+    skill.body = full.body || "";
+    skill.path = full.path || "";
+    skill.resources = full.resources || {};
+  } catch {
+    skill.body = "";
+    skill.path = "";
+    skill.resources = {};
+  }
+  return skill;
+}
 
 
-function getMatchedSkillPrompts(userMessage) {
+
+async function getMatchedSkillPrompts(userMessage) {
 
   if (!userMessage || state.skills.length === 0) return "";
 
@@ -2797,15 +2892,19 @@ function getMatchedSkillPrompts(userMessage) {
 
   // Use only the strongest match tier so broad description words cannot override
   // explicit keywords or names. Within that tier, shorter bodies are more targeted.
-
   const bestScore = Math.max(...candidates.map((item) => item.score));
-  const sorted = candidates
+  const topSkills = candidates
     .filter((item) => item.score === bestScore)
     .map((item) => item.skill)
-    .sort((a, b) => (a.body || "").length - (b.body || "").length)
     .slice(0, 3);
 
-  return sorted.map((s) => `[Skill: ${s.name}]\n${s.body}`).join("\n\n---\n\n");
+  // Lazy-load full bodies for matched skills (Level 2 progressive loading)
+  await Promise.all(topSkills.map(ensureSkillBody));
+
+  // Sort by body length (shorter = more targeted first)
+  topSkills.sort((a, b) => (a.body || "").length - (b.body || "").length);
+
+  return topSkills.map((s) => `[Skill: ${s.name}]\n${s.body}`).join("\n\n---\n\n");
 
 }
 
@@ -2897,7 +2996,7 @@ function renderSkillsList() {
 
 
 
-function showSkillDetail(skill) {
+async function showSkillDetail(skill) {
 
   const panel = document.getElementById("skillsDetail");
 
@@ -2908,6 +3007,9 @@ function showSkillDetail(skill) {
     return;
 
   }
+
+  // Lazy-load full body if not yet loaded
+  await ensureSkillBody(skill);
 
   const isOn = !state.disabledSkills.has(skill.name);
 
@@ -3072,7 +3174,7 @@ function toggleSkill(name) {
 
   }
 
-  localStorage.setItem("agent-lite-disabled-skills", JSON.stringify([...state.disabledSkills]));
+  localStorage.setItem("code-disabled-skills", JSON.stringify([...state.disabledSkills]));
 
 }
 
@@ -3315,11 +3417,11 @@ function saveSystemPrompt() {
 
   if (value && value !== defaultSystemPrompt) {
 
-    localStorage.setItem("agent-lite-system-prompt", value);
+    localStorage.setItem("code-system-prompt", value);
 
   } else {
 
-    localStorage.removeItem("agent-lite-system-prompt");
+    localStorage.removeItem("code-system-prompt");
 
   }
 
@@ -3516,7 +3618,7 @@ function sessionFilePath(session) {
   const id = state.sessionId || (session && session.id);
   if (!id) return "-";
   if (state._sessionFilePath && state._sessionFilePath.endsWith(id + ".json")) return state._sessionFilePath;
-  return `agent-lite/data/sessions/${id}.json`;
+  return `code/data/sessions/${id}.json`;
 }
 
 
@@ -3561,7 +3663,7 @@ function calcStats(messages = state.messages, stats = state.stats, sessionId = s
     contextTokens = getModelContextMessages(messages)
       .filter((msg) => !msg.streaming)
       .reduce((sum, msg) => sum + estimateTokens(getMsgText(msg)), 0)
-      + estimateTokens(getSystemPrompt());
+      + estimateTokens(getSystemPrompt({briefSkills: true}));
   }
 
 
@@ -4194,6 +4296,7 @@ const TOOL_DISPLAY = {
   web_fetch:    { label: "抓取网页" },
   task:         { label: "子任务" },
   use_skill:    { label: "加载 Skill" },
+  read_skill_resource: { label: "读取 Skill 资源" },
   save_memory:  { label: "保存记忆" },
 }
 
@@ -4203,7 +4306,7 @@ function _toolActionLabel(action) {
   const map = { list_files:"toolListFiles", read_file:"toolReadFile", search_files:"toolSearchFiles",
     glob_files:"toolGlobFiles", propose_edit:"toolProposeEdit", apply_edit:"toolApplyEdit",
     run_command:"toolRunCommand", write_file:"toolWriteFile", delete_file:"toolDeleteFile",
-    web_fetch:"toolWebFetch", task:"toolTask", use_skill:"toolUseSkill", save_memory:"toolSaveMemory" };
+    web_fetch:"toolWebFetch", task:"toolTask", use_skill:"toolUseSkill", read_skill_resource:"toolReadSkill", save_memory:"toolSaveMemory" };
   return map[action] ? t(map[action]) : action;
 }
 
@@ -4731,9 +4834,9 @@ function renderFinalAssistantProjection(msg, index) {
   const responseInfo = renderAssistantResponseInfo(msg);
   const copyBtn = content && !isToolPlanningPlaceholder(content) ? renderCopyBtn(content) : "";
   const timeStr = formatMsgTime(msg._time);
+  // Thought is rendered in the merged thinking block above — don't duplicate here
   return `
     <article class="msg assistant" data-msg-index="${index}">
-      ${thought ? `<div class="completed-thought-output"><div class="role">${t("thoughtProcess")}</div>${renderAssistantContent(thought)}</div>` : ""}
       <div class="role">${escapeHtml(model)}</div>
       ${content && !isToolPlanningPlaceholder(content) ? renderAssistantContent(content) : ""}
       <div class="msg-footer">${responseInfo}<span class="msg-footer-hover">${copyBtn}${timeStr ? `<span class="msg-time">${timeStr}</span>` : ""}</span></div>
@@ -4891,9 +4994,9 @@ function renderMessages() {
       <div class="welcome-screen">
         <div class="welcome-kicker"><span class="welcome-status-dot"></span>LOCAL WORKSPACE</div>
         <div class="welcome-header">
-          <div class="welcome-mark" aria-hidden="true"><span>A</span><span>L</span></div>
+          <div class="welcome-mark" aria-hidden="true"><span>C</span></div>
           <div class="welcome-brand">
-            <h1 class="welcome-title">Agent Lite</h1>
+            <h1 class="welcome-title">Code</h1>
             <p class="welcome-desc" data-i18n="welcomeTagline">开始对话，用自然语言驱动代码。</p>
           </div>
         </div>
@@ -4968,9 +5071,20 @@ function renderMessages() {
 
     if (isInternalMessage(msg)) continue;
 
-    if (isAssistantThinkingMessage(msg)) {
-      const text = (getMsgText(msg) || "").trim();
-      if (!isToolPlanningPlaceholder(text)) pendingThoughts.push({ index: j, text });
+    // Collect thinking summary from ALL assistant messages (intermediate + final)
+    // so they render as a single merged "思考过程" block
+    if (msg.role === "assistant") {
+      const summary = (getMsgText(msg) || "").trim();
+      if (summary && !isToolPlanningPlaceholder(summary)) pendingThoughts.push({ index: j, text: summary });
+
+      // Intermediate assistant messages (with tool_calls but no real content)
+      // contribute their thought to the merged block but don't render a bubble
+      if (msg.meta?.toolCalls?.length) continue;
+
+      // Final assistant message: flush all collected thoughts, then render content
+      flushThoughts();
+      const finalHtml = renderFinalAssistantProjection(msg, j);
+      rows.push(finalHtml);
       continue;
     }
 
@@ -4983,13 +5097,6 @@ function renderMessages() {
     if (isEditSuggestionMessage(msg)) {
       flushThoughts();
       rows.push(renderEditSuggestionProjection(msg, j));
-      continue;
-    }
-
-    if (msg.role === "assistant") {
-      flushThoughts();
-      const finalHtml = renderFinalAssistantProjection(msg, j);
-      rows.push(finalHtml);
       continue;
     }
 
@@ -5015,6 +5122,7 @@ function renderMessages() {
     renderToolLog();
     updateStatsPanel();
     renderTimeline();
+    scheduleMessagesScrollToBottom(state.sessionId);
     return;
   }
   state._lastRenderedHtml = renderKey;
@@ -5025,6 +5133,7 @@ function renderMessages() {
   renderToolLog();
   updateStatsPanel();
   renderTimeline();
+  scheduleMessagesScrollToBottom(state.sessionId);
   return;
 
 
@@ -5376,7 +5485,7 @@ function showDeleteConfirm(sessionId, title) {
       state.stats = { input: 0, output: 0, cache: 0 };
       state.responseUsage = null;
       els.sessionTitle.value = "";
-      localStorage.removeItem("agent-lite-last-session");
+      localStorage.removeItem("code-last-session");
       syncActiveStreamingState();
       renderMessages();
       updateSendButtonState();
@@ -5393,7 +5502,7 @@ function showDeleteConfirm(sessionId, title) {
 
 function getPinnedSessions() {
 
-  try { return JSON.parse(localStorage.getItem("agent-lite-pinned") || "[]"); } catch { return []; }
+  try { return JSON.parse(localStorage.getItem("code-pinned") || "[]"); } catch { return []; }
 
 }
 
@@ -5405,7 +5514,7 @@ function togglePinSession(id) {
 
   if (idx >= 0) pinned.splice(idx, 1); else pinned.unshift(id);
 
-  localStorage.setItem("agent-lite-pinned", JSON.stringify(pinned));
+  localStorage.setItem("code-pinned", JSON.stringify(pinned));
 
   renderSessions();
 
@@ -5695,7 +5804,7 @@ async function createSession(title = t("sessionTitleDefault")) {
 
   els.sessionTitle.value = session.title || t("sessionTitleDefault");
 
-  localStorage.setItem("agent-lite-last-session", session.id);
+  localStorage.setItem("code-last-session", session.id);
 
   await refreshSessions();
 
@@ -5804,7 +5913,7 @@ async function loadSession(sessionId) {
 
   els.sessionTitle.value = session.title || t("untitledSession");
 
-  localStorage.setItem("agent-lite-last-session", session.id);
+  localStorage.setItem("code-last-session", session.id);
 
   renderSessions();
 
@@ -5826,24 +5935,15 @@ async function saveSessionState(sessionId, messages, stats, title) {
     || (sessionId === state.sessionId ? els.sessionTitle.value.trim() : local?.title)
     || "Untitled";
 
+  // Metadata-only: title, stats, runState → meta JSON.
+  // Messages are persisted all at once at stream end / session switch / page close.
   const payload = {
     title: sessionTitle,
-    messages: (messages || []).map((msg) => ({
-        role: msg.role,
-        content: msg.content || "",
-        thought: msg.thought || "",
-        meta: msg.meta || {},
-        _images: msg._images || undefined,
-        _model: msg._model || undefined,
-        _time: msg._time || undefined,
-      })),
     stats: { ...(stats || getSessionStats(sessionId) || {}) },
     lastUsage: getSessionLastUsage(sessionId),
     runState: { ...getSessionRunState(sessionId) },
   };
 
-  // Serialize saves per session so a slower, older request cannot overwrite
-  // messages written by a background task that finished later.
   const previous = state._sessionSaveChains[sessionId] || Promise.resolve();
   const savePromise = previous
     .catch(() => {})
@@ -6154,7 +6254,7 @@ function applyPreviewWidth(width = state.previewWidth, persist = true) {
 
   document.documentElement.style.setProperty("--preview-width", `${next}px`);
 
-  if (persist) localStorage.setItem("agent-lite-preview-width", String(next));
+  if (persist) localStorage.setItem("code-preview-width", String(next));
 
 }
 
@@ -6168,7 +6268,7 @@ function applySidebarWidth(width = state.sidebarWidth) {
 
   document.documentElement.style.setProperty("--sidebar-width", `${next}px`);
 
-  localStorage.setItem("agent-lite-sidebar-width", String(next));
+  localStorage.setItem("code-sidebar-width", String(next));
 
 }
 
@@ -6192,7 +6292,7 @@ function applySidebarSessionHeight(height = state.sidebarSessionHeight) {
 
   document.documentElement.style.setProperty("--explorer-height", `${next}px`);
 
-  localStorage.setItem("agent-lite-session-height", String(next));
+  localStorage.setItem("code-session-height", String(next));
 
 }
 
@@ -6876,9 +6976,9 @@ async function loadFile(path, mtime) {
 
   els.workbench.classList.add("preview-open");
 
-  localStorage.setItem("agent-lite-preview-open", "1");
+  localStorage.setItem("code-preview-open", "1");
 
-  localStorage.setItem("agent-lite-preview-path", path);
+  localStorage.setItem("code-preview-path", path);
 
   state.previewPath = data.path || path;
 
@@ -7187,7 +7287,7 @@ async function refreshModels() {
 
 
 
-    const savedModel = localStorage.getItem("agent-lite-model");
+    const savedModel = localStorage.getItem("code-model");
 
     if (savedModel && models.includes(savedModel)) {
 
@@ -8076,7 +8176,7 @@ function _safeParseJSON(raw) {
 }
 
 const RUN_RECOVERY_OWNER = (() => {
-  const key = "agent-lite-run-recovery-owner";
+  const key = "code-run-recovery-owner";
   let value = sessionStorage.getItem(key);
   if (!value) {
     value = typeof crypto?.randomUUID === "function"
@@ -8088,7 +8188,7 @@ const RUN_RECOVERY_OWNER = (() => {
 })();
 
 async function withSessionRecoveryLock(sessionId, worker) {
-  const lockName = `agent-lite-run-recovery:${sessionId}`;
+  const lockName = `code-run-recovery:${sessionId}`;
   if (navigator.locks?.request) {
     return navigator.locks.request(lockName, { ifAvailable: true }, async (lock) => {
       if (!lock) return false;
@@ -8097,7 +8197,7 @@ async function withSessionRecoveryLock(sessionId, worker) {
     });
   }
 
-  const leaseKey = `agent-lite-run-recovery-lease:${sessionId}`;
+  const leaseKey = `code-run-recovery-lease:${sessionId}`;
   const now = Date.now();
   try {
     const current = JSON.parse(localStorage.getItem(leaseKey) || "null");
@@ -8387,7 +8487,7 @@ async function requestUserInput(tool, ctx = null) {
   if (request.sessionId === state.sessionId) renderMessages();
   if (isUserAway()) {
     document.title = `[${t("questionnaireTitle")}] ${els.sessionTitle?.value || t("sessionTitleDefault")}`;
-    _notify(`Agent Lite - ${t("questionnaireTitle")}`, request.title);
+    _notify(`Code - ${t("questionnaireTitle")}`, request.title);
   }
   return new Promise((resolve) => {
     state._userInputResolvers.set(request.id, resolve);
@@ -8807,7 +8907,7 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
       // Sub-agent already has its own system prompt in ctx.messages[0]; don't double-inject
       ...(ctx?.isSubAgent ? [] : [{
         role: "system",
-        content: getSystemPrompt({
+        content: await getSystemPrompt({
           messages: _modelMsgs,
           explicitSkill: ctx?.explicitSkill,
           toolPreset: ctx?.toolPreset,
@@ -8820,7 +8920,8 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
 
         const result = [];
 
-        let lastAssistantToolCallIds = new Set();
+        let pendingToolCallIds = new Set();
+        let lastAssistantWithCallsIdx = -1;
 
         for (const msg of _modelMsgs) {
 
@@ -8834,7 +8935,7 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
 
             if (msg.role === "tool-call" && msg.meta?.toolCallId) {
 
-              lastAssistantToolCallIds.add(msg.meta.toolCallId);
+              pendingToolCallIds.add(msg.meta.toolCallId);
 
             }
 
@@ -8844,13 +8945,46 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
 
           // Validate: if this is a tool message, it must follow an assistant with matching tool_calls
 
-          if (mapped.role === "tool" && !lastAssistantToolCallIds.has(mapped.tool_call_id)) {
+          if (mapped.role === "tool") {
 
-            // Downgrade to user text — orphaned tool result
+            if (pendingToolCallIds.has(mapped.tool_call_id)) {
 
-            result.push({ role: "user", content: `[Tool result]\n${mapped.content || ""}` });
+              pendingToolCallIds.delete(mapped.tool_call_id);
 
-            continue;
+            } else {
+
+              // Downgrade to user text — orphaned tool result
+
+              result.push({ role: "user", content: `[Tool result]\n${mapped.content || ""}` });
+
+              continue;
+
+            }
+
+          }
+
+          // When any non-tool message follows an assistant with tool_calls,
+          // strip unmatched tool_calls to avoid API 400 errors
+
+          if (lastAssistantWithCallsIdx >= 0 && pendingToolCallIds.size > 0 && mapped.role !== "tool") {
+
+            const prev = result[lastAssistantWithCallsIdx];
+
+            if (prev && prev.tool_calls) {
+
+              prev.tool_calls = prev.tool_calls.filter((tc) => !pendingToolCallIds.has(tc.id));
+
+              if (prev.tool_calls.length === 0) {
+
+                delete prev.tool_calls;
+
+              }
+
+            }
+
+            lastAssistantWithCallsIdx = -1;
+
+            pendingToolCallIds.clear();
 
           }
 
@@ -8858,13 +8992,37 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
 
           // Track tool_calls from assistant messages
 
-          if (mapped.role === "assistant" && mapped.tool_calls) {
+          if (mapped.role === "assistant" && mapped.tool_calls && mapped.tool_calls.length > 0) {
 
-            lastAssistantToolCallIds = new Set(mapped.tool_calls.map((tc) => tc.id));
+            lastAssistantWithCallsIdx = result.length - 1;
+
+            pendingToolCallIds = new Set(mapped.tool_calls.map((tc) => tc.id));
 
           } else if (mapped.role === "assistant") {
 
-            lastAssistantToolCallIds = new Set();
+            lastAssistantWithCallsIdx = -1;
+
+            pendingToolCallIds.clear();
+
+          }
+
+        }
+
+        // Final pass: strip unmatched tool_calls from the last assistant
+
+        if (lastAssistantWithCallsIdx >= 0 && pendingToolCallIds.size > 0) {
+
+          const prev = result[lastAssistantWithCallsIdx];
+
+          if (prev && prev.tool_calls) {
+
+            prev.tool_calls = prev.tool_calls.filter((tc) => !pendingToolCallIds.has(tc.id));
+
+            if (prev.tool_calls.length === 0) {
+
+              delete prev.tool_calls;
+
+            }
 
           }
 
@@ -10150,7 +10308,7 @@ async function executeToolWithDelegation(tool, parentCtx, options = {}) {
         .filter(([key]) => !key.startsWith("_") && key !== "action")
         .sort(([left], [right]) => left.localeCompare(right)),
     );
-    const readOnlyAction = ["list_files", "read_file", "search_files", "glob_files", "web_fetch", "use_skill"].includes(tool.action);
+    const readOnlyAction = ["list_files", "read_file", "search_files", "glob_files", "web_fetch", "use_skill", "read_skill_resource"].includes(tool.action);
     signature = `${tool.action}:${JSON.stringify(args)}${readOnlyAction ? `:epoch-${parentCtx.toolMutationEpoch || 0}` : ""}`;
     if (parentCtx.successfulToolSignatures?.has(signature)) {
       return {
@@ -11517,23 +11675,23 @@ function setPermLevel(value) {
 
 function saveLocalSettings() {
 
-  localStorage.setItem("agent-lite-key", els.apiKey.value.trim());
+  localStorage.setItem("code-key", els.apiKey.value.trim());
 
-  localStorage.setItem("agent-lite-base-url", els.baseUrl.value.trim());
+  localStorage.setItem("code-base-url", els.baseUrl.value.trim());
 
-  localStorage.setItem("agent-lite-model", getSelectedModel());
+  localStorage.setItem("code-model", getSelectedModel());
 
-  localStorage.setItem("agent-lite-temperature", els.temperature.value);
+  localStorage.setItem("code-temperature", els.temperature.value);
 
-  localStorage.setItem("agent-lite-max-tokens", els.maxTokens.value);
+  localStorage.setItem("code-max-tokens", els.maxTokens.value);
 
-  localStorage.setItem("agent-lite-thinking", getThinkingLevel());
+  localStorage.setItem("code-thinking", getThinkingLevel());
 
-  localStorage.setItem("agent-lite-tool-preset", els.toolPreset.value);
+  localStorage.setItem("code-tool-preset", els.toolPreset.value);
 
   state.permissionProfile = getPermissionProfile();
 
-  localStorage.setItem("agent-lite-permission-profile", state.permissionProfile);
+  localStorage.setItem("code-permission-profile", state.permissionProfile);
 
   updateModePromptPreview();
 
@@ -12237,7 +12395,7 @@ function toggleCwdDropdown() {
 
 function renderRecentFolders() {
 
-  const recents = JSON.parse(localStorage.getItem("agent-lite-recent-folders") || "[]");
+  const recents = JSON.parse(localStorage.getItem("code-recent-folders") || "[]");
 
   if (recents.length === 0) {
 
@@ -12287,13 +12445,13 @@ function addRecentFolder(p) {
 
   if (!p) return;
 
-  const recents = JSON.parse(localStorage.getItem("agent-lite-recent-folders") || "[]");
+  const recents = JSON.parse(localStorage.getItem("code-recent-folders") || "[]");
 
   const filtered = recents.filter((r) => r !== p);
 
   filtered.unshift(p);
 
-  localStorage.setItem("agent-lite-recent-folders", JSON.stringify(filtered.slice(0, 8)));
+  localStorage.setItem("code-recent-folders", JSON.stringify(filtered.slice(0, 8)));
 
 }
 
@@ -12301,9 +12459,9 @@ function removeRecentFolder(p) {
 
   if (!p) return;
 
-  const recents = JSON.parse(localStorage.getItem("agent-lite-recent-folders") || "[]");
+  const recents = JSON.parse(localStorage.getItem("code-recent-folders") || "[]");
 
-  localStorage.setItem("agent-lite-recent-folders", JSON.stringify(recents.filter((r) => r !== p)));
+  localStorage.setItem("code-recent-folders", JSON.stringify(recents.filter((r) => r !== p)));
 
 }
 
@@ -12409,12 +12567,12 @@ els.newFolderBtn.addEventListener("click", (e) => { e.stopPropagation(); cwdNewF
 
 els.fileSearch.addEventListener("input", () => renderFileTree());
 // Sort button: left click toggles direction, right click cycles mode. Persisted.
-state._fileSortMode = localStorage.getItem("agent-lite-sort-mode") || "default";
-state._fileSortAsc = localStorage.getItem("agent-lite-sort-asc") !== "false";
+state._fileSortMode = localStorage.getItem("code-sort-mode") || "default";
+state._fileSortAsc = localStorage.getItem("code-sort-asc") !== "false";
 if (els.fileSortBtn) {
   els.fileSortBtn.addEventListener("click", () => {
     state._fileSortAsc = !state._fileSortAsc;
-    localStorage.setItem("agent-lite-sort-asc", state._fileSortAsc);
+    localStorage.setItem("code-sort-asc", state._fileSortAsc);
     renderFileTree();
   });
   els.fileSortBtn.addEventListener("contextmenu", (e) => {
@@ -12424,8 +12582,8 @@ if (els.fileSortBtn) {
     const idx = modes.indexOf(cur);
     state._fileSortMode = modes[(idx + 1) % 3];
     state._fileSortAsc = true;
-    localStorage.setItem("agent-lite-sort-mode", state._fileSortMode);
-    localStorage.setItem("agent-lite-sort-asc", "true");
+    localStorage.setItem("code-sort-mode", state._fileSortMode);
+    localStorage.setItem("code-sort-asc", "true");
     renderFileTree();
   });
 }
@@ -12459,7 +12617,7 @@ els.copySessionPath.addEventListener("click", async () => {
 els.toggleSidebar.addEventListener("click", () => {
   const hidden = els.shell.classList.toggle("sidebar-hidden");
   els.shell.classList.remove("peek");
-  localStorage.setItem("agent-lite-sidebar-hidden", hidden ? "1" : "0");
+  localStorage.setItem("code-sidebar-hidden", hidden ? "1" : "0");
 });
 
 // Peek behavior: hover on left edge temporarily shows sidebar
@@ -12497,9 +12655,9 @@ els.togglePreview.addEventListener("click", () => {
 
     state.previewPath = ""; state.previewContent = "";
 
-    localStorage.removeItem("agent-lite-preview-open");
+    localStorage.removeItem("code-preview-open");
 
-    localStorage.removeItem("agent-lite-preview-path");
+    localStorage.removeItem("code-preview-path");
 
   }
 
@@ -12668,7 +12826,7 @@ function applyTheme(mode) {
 
   document.body.classList.toggle("theme-dark", isDark);
 
-  localStorage.setItem("agent-lite-theme", mode);
+  localStorage.setItem("code-theme", mode);
 
   updateThemeButtons();
 
@@ -12680,7 +12838,7 @@ function applyTheme(mode) {
 
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
 
-  if ((localStorage.getItem("agent-lite-theme") || "light") === "system") {
+  if ((localStorage.getItem("code-theme") || "light") === "system") {
 
     applyTheme("system");
 
@@ -13119,7 +13277,7 @@ function renderSettingsSkillsSidebar() {
 
 
 
-function showSkillDetailInSettings(skill) {
+async function showSkillDetailInSettings(skill) {
 
   const panel = document.getElementById("settingsSkillsDetail");
 
@@ -13138,6 +13296,9 @@ function showSkillDetailInSettings(skill) {
     }
     return;
   }
+
+  // Lazy-load full body if not yet loaded
+  await ensureSkillBody(skill);
 
   const isOn = !state.disabledSkills.has(skill.name);
 
@@ -13223,7 +13384,7 @@ function renderLanguagePanel(container) {
 
 function renderThemePanel(container) {
 
-  const current = localStorage.getItem("agent-lite-theme") || "light";
+  const current = localStorage.getItem("code-theme") || "light";
 
   const themes = [{ v: "light", l: t("light") }, { v: "dark", l: t("dark") }, { v: "system", l: t("followSystem") }];
 
@@ -13258,7 +13419,7 @@ function renderAccountPanel(container) {
         <button id="accountLogout" class="mini-btn" type="button">${t("logout")}</button>
       </div>`;
     document.getElementById("settingsPlatformUrl").addEventListener("change", function () {
-      localStorage.setItem("agent-lite-platform-url", this.value.trim());
+      localStorage.setItem("code-platform-url", this.value.trim());
     });
     document.getElementById("accountLogout").addEventListener("click", () => {
       clearPlatformAuth();
@@ -13273,18 +13434,18 @@ function renderAccountPanel(container) {
         <button id="accountLoginNow" class="mini-btn primary" type="button" style="margin-top:8px">${t("loginPlatform")}</button>
       </div>`;
     document.getElementById("settingsPlatformUrl").addEventListener("change", function () {
-      localStorage.setItem("agent-lite-platform-url", this.value.trim());
+      localStorage.setItem("code-platform-url", this.value.trim());
     });
     document.getElementById("accountLoginNow").addEventListener("click", () => {
       const platformUrl = getPlatformUrl();
-      window.open(`${platformUrl}/agent-lite/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
+      window.open(`${platformUrl}/code/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
     });
   }
 }
 
 const UPDATE_NOTICE_STORAGE_KEYS = {
-  settings: "agent-lite-update-seen-settings",
-  page: "agent-lite-update-seen-page",
+  settings: "code-update-seen-settings",
+  page: "code-update-seen-page",
 };
 
 function isUpdateNoticeUnread(target, version) {
@@ -13377,7 +13538,7 @@ function renderUpdatePanel(container) {
           actions(`<button id="updateDlBtn" class="mini-btn primary-btn" type="button">${t("downloadUpdate")} v${remoteVer}</button>`);
           document.getElementById("updateDlBtn").addEventListener("click", () => startDownload());
         } else {
-          actions(`<a href="https://github.com/fhy-A/agent-lite/releases/latest" target="_blank" class="mini-btn">${t("openDownloadPage")}</a>`);
+          actions(`<a href="https://github.com/fhy-A/Code/releases/latest" target="_blank" class="mini-btn">${t("openDownloadPage")}</a>`);
         }
       } else {
         status(t("upToDate"));
@@ -13417,7 +13578,7 @@ function renderUpdatePanel(container) {
           document.getElementById("updateRestartBtn").addEventListener("click", async () => {
             status(t("restarting")); actions("");
             try { await apiJson("/api/restart", { method: "POST", body: JSON.stringify({ path: newExePath }) }); } catch (_) {}
-            showToast("Agent Lite is restarting...", "success");
+            showToast("Code is restarting...", "success");
             // Wait until the expected version is serving requests, then use a
             // cache-busting URL so the browser cannot retain the old bundle.
             setTimeout(() => {
@@ -13444,11 +13605,11 @@ function renderUpdatePanel(container) {
 // ── Onboarding ──
 
 function shouldShowOnboarding() {
-  return !localStorage.getItem("agent-lite-onboarding");
+  return !localStorage.getItem("code-onboarding");
 }
 
 function markOnboardingDone() {
-  localStorage.setItem("agent-lite-onboarding", "1");
+  localStorage.setItem("code-onboarding", "1");
 }
 
 function showOnboarding() {
@@ -13683,7 +13844,7 @@ document.querySelectorAll(".theme-opt").forEach((btn) => {
 
 function updateThemeButtons() {
 
-  const current = localStorage.getItem("agent-lite-theme") || "light";
+  const current = localStorage.getItem("code-theme") || "light";
 
   document.querySelectorAll(".theme-opt").forEach((btn) => {
 
@@ -13780,7 +13941,7 @@ document.getElementById("explorerHead").addEventListener("click", () => {
 
   explorer.classList.toggle("collapsed");
 
-  localStorage.setItem("agent-lite-explorer-collapsed", explorer.classList.contains("collapsed") ? "1" : "0");
+  localStorage.setItem("code-explorer-collapsed", explorer.classList.contains("collapsed") ? "1" : "0");
 
 });
 
@@ -13826,7 +13987,7 @@ els.permPillDropdown.addEventListener("click", (e) => {
 
   state.permissionProfile = val;
 
-  localStorage.setItem("agent-lite-permission-profile", val);
+  localStorage.setItem("code-permission-profile", val);
 
   els.permPillWrap.classList.remove("open");
 
@@ -13980,7 +14141,7 @@ els.newChat.addEventListener("click", () => {
 
   els.sessionTitle.value = "";
 
-  localStorage.removeItem("agent-lite-last-session");
+  localStorage.removeItem("code-last-session");
 
   syncActiveStreamingState();
 
@@ -13998,20 +14159,20 @@ els.newChat.addEventListener("click", () => {
 
 els.exportChat.addEventListener("click", exportMarkdown);
 
-// ── Agent Lite × New API Platform Auth ──
+// ── Code × New API Platform Auth ──
 
 function getPlatformUrl() {
-  return localStorage.getItem("agent-lite-platform-url") || "http://localhost:3001";
+  return localStorage.getItem("code-platform-url") || "http://localhost:3001";
 }
 function getPlatformAuth() {
-  try { return JSON.parse(localStorage.getItem("agent-lite-platform-auth") || "null"); } catch (_) { return null; }
+  try { return JSON.parse(localStorage.getItem("code-platform-auth") || "null"); } catch (_) { return null; }
 }
-function savePlatformAuth(data) { localStorage.setItem("agent-lite-platform-auth", JSON.stringify(data)); }
-function clearPlatformAuth() { localStorage.removeItem("agent-lite-platform-auth"); }
+function savePlatformAuth(data) { localStorage.setItem("code-platform-auth", JSON.stringify(data)); }
+function clearPlatformAuth() { localStorage.removeItem("code-platform-auth"); }
 
-async function checkAgentLiteCallback() {
+async function checkCodeCallback() {
   const params = new URLSearchParams(window.location.search);
-  const token = params.get("agent_lite_token");
+  const token = params.get("code_token");
   const userId = params.get("user_id");
   const username = params.get("username");
   if (!token || !userId) return;
@@ -14028,7 +14189,7 @@ async function syncKeysFromPlatform() {
   const connectBtn = document.getElementById("settingsConnectPlatform");
   if (connectBtn) { connectBtn.disabled = true; connectBtn.textContent = t("syncing"); }
   try {
-    const resp = await fetch("/api/agent-lite/sync-keys", {
+    const resp = await fetch("/api/code/sync-keys", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: auth.token, userId: auth.userId, platformUrl: getPlatformUrl() })
@@ -14048,7 +14209,7 @@ async function syncKeysFromPlatform() {
       showToast(t("loginExpired"), "error");
       // Re-open connect page after a short delay
       setTimeout(() => {
-        window.open(`${getPlatformUrl()}/agent-lite/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
+        window.open(`${getPlatformUrl()}/code/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
       }, 1000);
     } else {
       showToast(t("syncFailed", { message: msg }), "error");
@@ -14110,6 +14271,29 @@ function showKeySyncModal(tokens, fullKeys) {
 
 async function init() {
 
+  // Migrate old agent-lite-* localStorage keys to code-* (brand rename)
+  (function migrateAgentLiteKeys() {
+    const keyMap = [
+      "permission-profile", "preview-width", "preview-open", "preview-path",
+      "session-height", "sidebar-width", "sidebar-hidden", "explorer-collapsed",
+      "disabled-skills", "lang", "key-config", "system-prompt", "last-session",
+      "pinned", "model", "key", "base-url", "temperature", "max-tokens",
+      "thinking", "tool-preset", "recent-folders", "sort-mode", "sort-asc",
+      "theme", "platform-url", "platform-auth", "update-seen-settings",
+      "update-seen-page", "onboarding"
+    ];
+    let migrated = 0;
+    for (const k of keyMap) {
+      const oldKey = "agent-lite-" + k;
+      const newKey = "code-" + k;
+      if (localStorage.getItem(oldKey) !== null && localStorage.getItem(newKey) === null) {
+        localStorage.setItem(newKey, localStorage.getItem(oldKey));
+        migrated++;
+      }
+    }
+    if (migrated) console.log("Migrated " + migrated + " localStorage keys from agent-lite-* to code-*");
+  })();
+
   bindAuthorizationPanel();
   bindUserInputPanel();
 
@@ -14130,14 +14314,14 @@ async function init() {
     setInterval(sendBrowserHeartbeat, 3000);
     sendBrowserHeartbeat();
 
-    applyTheme(localStorage.getItem("agent-lite-theme") || "light");
+    applyTheme(localStorage.getItem("code-theme") || "light");
 
     applyPreviewWidth();
 
     applySidebarSessionHeight();
 
     // Restore sidebar collapsed state
-    if (localStorage.getItem("agent-lite-sidebar-hidden") === "1") {
+    if (localStorage.getItem("code-sidebar-hidden") === "1") {
       els.shell.classList.add("sidebar-hidden");
     }
 
@@ -14145,33 +14329,33 @@ async function init() {
 
     // Restore explorer collapsed state
 
-    if (localStorage.getItem("agent-lite-explorer-collapsed") === "1") {
+    if (localStorage.getItem("code-explorer-collapsed") === "1") {
 
       document.querySelector(".explorer").classList.add("collapsed");
 
     }
 
-    els.apiKey.value = localStorage.getItem("agent-lite-key") || "";
+    els.apiKey.value = localStorage.getItem("code-key") || "";
 
-    els.baseUrl.value = localStorage.getItem("agent-lite-base-url") || "http://localhost:3000";
+    els.baseUrl.value = localStorage.getItem("code-base-url") || "http://localhost:3000";
 
-  els.temperature.value = localStorage.getItem("agent-lite-temperature") || "0.2";
+  els.temperature.value = localStorage.getItem("code-temperature") || "0.2";
 
-  const savedMax = localStorage.getItem("agent-lite-max-tokens") || "auto";
+  const savedMax = localStorage.getItem("code-max-tokens") || "auto";
 
   els.maxTokens.value = savedMax;
 
-  setThinkingLevel(localStorage.getItem("agent-lite-thinking") || "auto");
+  setThinkingLevel(localStorage.getItem("code-thinking") || "auto");
 
-  els.toolPreset.value = localStorage.getItem("agent-lite-tool-preset") || "default";
+  els.toolPreset.value = localStorage.getItem("code-tool-preset") || "default";
 
-  const savedPerm = localStorage.getItem("agent-lite-permission-profile") || "accept";
+  const savedPerm = localStorage.getItem("code-permission-profile") || "accept";
 
   state.permissionProfile = savedPerm;
 
   setPermLevel(savedPerm);
 
-  els.systemPromptText.value = localStorage.getItem("agent-lite-system-prompt") || defaultSystemPrompt;
+  els.systemPromptText.value = localStorage.getItem("code-system-prompt") || defaultSystemPrompt;
 
   applyI18n(); // run early, before async ops, to prevent flicker
   setSelectedModel(getSelectedModel()); // sync model pill (excluded from applyI18n)
@@ -14204,14 +14388,14 @@ async function init() {
   // Show onboarding if first launch or version changed
   if (shouldShowOnboarding()) { showOnboarding(); }
 
-  // Check for Agent Lite callback from New API
-  checkAgentLiteCallback();
+  // Check for Code callback from New API
+  checkCodeCallback();
 
   await refreshSessions();
 
   // Restore last active session if any, otherwise stay on welcome page
 
-  const lastId = localStorage.getItem("agent-lite-last-session");
+  const lastId = localStorage.getItem("code-last-session");
 
   if (lastId && state.sessions.some((s) => s.id === lastId)) {
 
@@ -14231,9 +14415,9 @@ async function init() {
   // Restore preview state
 
   // Restore preview pane state — must be after config/session load
-  if (localStorage.getItem("agent-lite-preview-open") === "1") {
+  if (localStorage.getItem("code-preview-open") === "1") {
 
-    const savedPath = localStorage.getItem("agent-lite-preview-path");
+    const savedPath = localStorage.getItem("code-preview-path");
 
     if (savedPath) {
 
@@ -14241,8 +14425,8 @@ async function init() {
         await loadFile(savedPath);
       } catch (_) {
         // File may no longer exist or path changed — clean up
-        localStorage.removeItem("agent-lite-preview-open");
-        localStorage.removeItem("agent-lite-preview-path");
+        localStorage.removeItem("code-preview-open");
+        localStorage.removeItem("code-preview-path");
       }
 
     }
@@ -14252,6 +14436,30 @@ async function init() {
   updateSendButtonState();
 
   updateStatsPanel();
+
+  // Flush unpersisted messages on page close (best-effort via sendBeacon)
+  window.addEventListener("beforeunload", () => {
+    const sid = state.sessionId;
+    if (!sid) return;
+    const msgs = state.messages || [];
+    if (msgs.length > 0) {
+      const serialized = msgs.map((msg) => ({
+        role: msg.role, content: msg.content || "", thought: msg.thought || "",
+        meta: msg.meta || {}, _images: msg._images || undefined,
+        _model: msg._model || undefined, _time: msg._time || undefined,
+      }));
+      const payload = JSON.stringify({
+        title: els.sessionTitle.value.trim() || "Untitled",
+        messages: serialized,
+        stats: { ...(state.stats || {}) },
+        runState: {},
+      });
+      navigator.sendBeacon(
+        `/api/sessions/${encodeURIComponent(sid)}`,
+        new Blob([payload], { type: "application/json" })
+      );
+    }
+  });
 
 }
 

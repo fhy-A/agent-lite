@@ -20,7 +20,7 @@ import server
 class TestFuzzyFind(unittest.TestCase):
 
     def setUp(self):
-        self.handler = object.__new__(server.AgentLiteHandler)
+        self.handler = object.__new__(server.CodeHandler)
 
     # ── Exact match ──
     def test_exact_match(self):
@@ -134,7 +134,7 @@ class TestFuzzyFind(unittest.TestCase):
 class TestBuildEditPayload(unittest.TestCase):
 
     def setUp(self):
-        self.handler = object.__new__(server.AgentLiteHandler)
+        self.handler = object.__new__(server.CodeHandler)
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         # Create test file
@@ -252,7 +252,7 @@ class TestBuildEditPayload(unittest.TestCase):
 class TestEditRoundtrip(unittest.TestCase):
 
     def setUp(self):
-        self.handler = object.__new__(server.AgentLiteHandler)
+        self.handler = object.__new__(server.CodeHandler)
         self.handler.send_json = mock.Mock()
         self.handler.read_body_json = mock.Mock()
         self.tmp = tempfile.TemporaryDirectory()
@@ -285,7 +285,7 @@ class TestEditRoundtrip(unittest.TestCase):
             "oldText": "print('v1')",
             "newText": "print('v2')",
         }
-        server.AgentLiteHandler.tool_propose_edit(self.handler)
+        server.CodeHandler.tool_propose_edit(self.handler)
         call_args = self.handler.send_json.call_args[0][0]
         self.assertTrue(call_args.get("ok"))
         self.assertIn("print('v1')", call_args.get("diff", ""))
@@ -298,7 +298,7 @@ class TestEditRoundtrip(unittest.TestCase):
             "oldText": "print('v1')",
             "newText": "print('v2')",
         }
-        server.AgentLiteHandler.tool_apply_edit(self.handler)
+        server.CodeHandler.tool_apply_edit(self.handler)
         call_args = self.handler.send_json.call_args[0][0]
         self.assertTrue(call_args.get("ok"))
         # Verify file was actually modified
@@ -312,7 +312,7 @@ class TestEditRoundtrip(unittest.TestCase):
             "oldText": "print('v1')",
             "newText": "print('v3')",
         }
-        server.AgentLiteHandler.tool_apply_edit(self.handler)
+        server.CodeHandler.tool_apply_edit(self.handler)
         call_args = self.handler.send_json.call_args[0][0]
         self.assertTrue(call_args.get("ok"))
         self.assertIsNotNone(call_args.get("backupPath"))
@@ -330,7 +330,7 @@ class TestEditRoundtrip(unittest.TestCase):
             "newText": "print('v4')",
             "expectedMtime": current_mtime + 999999,  # wrong mtime
         }
-        server.AgentLiteHandler.tool_apply_edit(self.handler)
+        server.CodeHandler.tool_apply_edit(self.handler)
         # Check that send_json was called with 409
         for call in self.handler.send_json.call_args_list:
             kwargs = call[1] if len(call) > 1 else {}
@@ -350,7 +350,7 @@ class TestEditRoundtrip(unittest.TestCase):
         }
         # Need to reset send_json mock from previous test
         self.handler.send_json = mock.Mock()
-        server.AgentLiteHandler.tool_apply_edit(self.handler)
+        server.CodeHandler.tool_apply_edit(self.handler)
         call_args = self.handler.send_json.call_args[0][0]
         self.assertTrue(call_args.get("ok"), f"Expected success but got: {call_args}")
 
@@ -362,7 +362,7 @@ class TestEditRoundtrip(unittest.TestCase):
 class TestFuzzyFindRealWorld(unittest.TestCase):
 
     def setUp(self):
-        self.handler = object.__new__(server.AgentLiteHandler)
+        self.handler = object.__new__(server.CodeHandler)
 
     def test_python_function_replace(self):
         text = (

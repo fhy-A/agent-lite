@@ -1,5 +1,5 @@
 """
-Build agent-lite into a standalone .exe with PyInstaller.
+Build code into a standalone .exe with PyInstaller.
 Run: python build_exe.py
 """
 import subprocess
@@ -13,19 +13,19 @@ for d in ["data", "data/sessions", "data/memory", "data/skills", "data/attachmen
     (APP_DIR / d).mkdir(exist_ok=True)
 
 version = (APP_DIR / "VERSION").read_text().strip()
-name = f"AgentLite-v{version}"
+name = f"Code-v{version}"
 
 cmd = [
     sys.executable, "-m", "PyInstaller",
     "--onefile",
     "--name", name,
-    "--icon", str(APP_DIR / "agent-lite-icon.ico"),
+    "--icon", str(APP_DIR / "code-icon.ico"),
     "--version-file", str(APP_DIR / "file_version_info.txt"),
     "--add-data", f"{APP_DIR / 'VERSION'}{';'}.",
     "--add-data", f"{APP_DIR / 'app.js'}{';'}.",
     "--add-data", f"{APP_DIR / 'index.html'}{';'}.",
     "--add-data", f"{APP_DIR / 'styles.css'}{';'}.",
-    "--add-data", f"{APP_DIR / 'agent-lite-icon.ico'}{';'}.",
+    "--add-data", f"{APP_DIR / 'code-icon.ico'}{';'}.",
     "--add-data", f"{APP_DIR / 'data' / 'skills'}{';'}data/skills",
     "--add-data", f"{APP_DIR / 'data' / 'memory'}{';'}data/memory",
     "--hidden-import", "json",
@@ -96,6 +96,6 @@ cmd = [
     str(APP_DIR / "launcher.py"),
 ]
 
-print("Building AgentLite.exe...")
+print("Building Code.exe...")
 subprocess.run(cmd, cwd=str(APP_DIR))
-print("\nDone! Output: dist/AgentLite.exe")
+print("\nDone! Output: dist/Code.exe")

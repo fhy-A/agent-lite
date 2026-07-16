@@ -17,20 +17,20 @@ import server
 class TestUpdaterHelpers(unittest.TestCase):
     def test_valid_windows_executable(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            exe = Path(temp_dir) / "AgentLite-v1.2.3.exe"
+            exe = Path(temp_dir) / "Code-v1.2.3.exe"
             exe.write_bytes(b"MZ" + (b"\0" * (1024 * 1024)))
             self.assertTrue(server._is_valid_windows_executable(exe))
 
     def test_rejects_incomplete_or_non_pe_download(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            bad = Path(temp_dir) / "AgentLite-v1.2.3.exe.part"
+            bad = Path(temp_dir) / "Code-v1.2.3.exe.part"
             bad.write_text("<html>download failed</html>", encoding="utf-8")
             self.assertFalse(server._is_valid_windows_executable(bad))
 
     def test_update_script_keeps_new_name_and_removes_old_versions(self):
-        root = Path(r"C:\Agent Lite")
-        old_exe = root / "AgentLite-v1.2.2.exe"
-        new_exe = root / "AgentLite-v1.2.3.exe"
+        root = Path(r"C:\Code")
+        old_exe = root / "Code-v1.2.2.exe"
+        new_exe = root / "Code-v1.2.3.exe"
         script = server._build_update_script(old_exe, new_exe, root / "update.log")
         self.assertIn("Get-CimInstance Win32_Process", script)
         self.assertIn("Stop-Process", script)
@@ -41,14 +41,14 @@ class TestUpdaterHelpers(unittest.TestCase):
         self.assertNotIn("Copy-Item", script)
 
     def test_check_update_detects_newer_release(self):
-        handler = object.__new__(server.AgentLiteHandler)
-        download_url = "https://github.com/fhy-A/agent-lite/releases/download/v0.4.11/AgentLite-v0.4.11.exe"
+        handler = object.__new__(server.CodeHandler)
+        download_url = "https://github.com/fhy-A/Code/releases/download/v0.4.11/Code-v0.4.11.exe"
         with mock.patch.object(server, "_read_version_file", return_value="0.4.10"), \
              mock.patch.object(server, "_read_remote_version", return_value=("0.4.11", download_url)):
             result = handler._check_update()
         self.assertTrue(result["updateAvailable"])
         self.assertEqual(result["remoteVersion"], "0.4.11")
-        self.assertTrue(result["downloadUrl"].endswith("/v0.4.11/AgentLite-v0.4.11.exe"))
+        self.assertTrue(result["downloadUrl"].endswith("/v0.4.11/Code-v0.4.11.exe"))
 
     def test_frontend_waits_for_new_version_before_cache_busting_reload(self):
         app_js = (Path(__file__).resolve().parent.parent / "app.js").read_text(encoding="utf-8")
@@ -566,7 +566,7 @@ class TestMakeUnifiedDiff(unittest.TestCase):
         )
         old_fragment = 'def greet(name):\n    return "Hello " + name\n\ndef farewell(name):\n    return "Goodbye " + name'
         new_fragment = 'def greet(name):\n    return f"Hello {name}"\n\ndef farewell(name):\n    return f"Goodbye {name}"'
-        found = server.AgentLiteHandler._fuzzy_find(None, old, old_fragment)
+        found = server.CodeHandler._fuzzy_find(None, old, old_fragment)
         self.assertEqual(found, old_fragment)
         updated = old.replace(found, new_fragment, 1)
         diff = server.make_unified_diff(old, updated, "test_utils.py")

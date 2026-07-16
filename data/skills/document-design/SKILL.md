@@ -500,7 +500,7 @@ result = df.groupby('category').sum()
 3. **风险提示**：需要注意的问题
 
 ---
-*报告由 Agent Lite 自动生成*
+*报告由 Code 自动生成*
 ```
 
 **要点**:

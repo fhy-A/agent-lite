@@ -19,7 +19,7 @@ SKILL_TEMPLATE = """---
 name: {skill_name}
 description: "TODO: Explain what the skill does and the specific situations that should trigger it."
 keywords: "TODO: Add comma-separated Chinese and English trigger phrases; use term1+term2 for combined matching."
-tools: "TODO: Add comma-separated Agent Lite tool names required by this skill."
+tools: "TODO: Add comma-separated Code tool names required by this skill."
 ---
 
 # {skill_title}
@@ -77,20 +77,20 @@ Executable code (Python/Bash/etc.) that can be run directly to perform specific 
 
 **Appropriate for:** Python scripts, shell scripts, or any executable code that performs automation, data processing, or specific operations.
 
-**Note:** Scripts may be executed without loading into context, but can still be read by Agent Lite for patching or environment adjustments.
+**Note:** Scripts may be executed without loading into context, but can still be read by Code for patching or environment adjustments.
 
 ### references/
-Documentation and reference material intended to be loaded into context to inform Agent Lite's process and thinking.
+Documentation and reference material intended to be loaded into context to inform Code's process and thinking.
 
 **Examples from other skills:**
 - Product management: `communication.md`, `context_building.md` - detailed workflow guides
 - BigQuery: API reference documentation and query examples
 - Finance: Schema documentation, company policies
 
-**Appropriate for:** In-depth documentation, API references, database schemas, comprehensive guides, or any detailed information that Agent Lite should reference while working.
+**Appropriate for:** In-depth documentation, API references, database schemas, comprehensive guides, or any detailed information that Code should reference while working.
 
 ### assets/
-Files not intended to be loaded into context, but rather used within the output Agent Lite produces.
+Files not intended to be loaded into context, but rather used within the output Code produces.
 
 **Examples from other skills:**
 - Brand styling: PowerPoint template files (.pptx), logo files
@@ -167,7 +167,7 @@ This placeholder represents where asset files would be stored.
 Replace with actual asset files (templates, images, fonts, etc.) or delete if not needed.
 
 Asset files are NOT intended to be loaded into context, but rather used within
-the output Agent Lite produces.
+the output Code produces.
 
 Example asset files from other skills:
 - Brand guidelines: logo.png, slides_template.pptx

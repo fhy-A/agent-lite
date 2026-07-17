@@ -55,6 +55,7 @@ MAX_SEARCH_RESULTS = 100
 MAX_COMMAND_SECONDS = 30
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 _json_write_lock = threading.RLock()
+_edit_apply_lock = threading.RLock()
 _model_runtime_runs = {}
 _model_runtime_lock = threading.RLock()
 _MODEL_RUNTIME_TERMINAL_TTL = 30 * 60
@@ -63,7 +64,8 @@ _agent_runs = {}
 _agent_run_lock = threading.RLock()
 _AGENT_RUN_TERMINAL = {"completed", "failed", "cancelled"}
 _AGENT_RUN_ACTIVE = {"model", "tools"}
-_AGENT_RUN_WAITING = {"waiting_credentials", "waiting_user_input"}
+_AGENT_RUN_WAITING = {"waiting_credentials", "waiting_user_input", "waiting_authorization"}
+_AGENT_PERMISSION_PROFILES = {"read", "plan", "accept", "bypass"}
 _AGENT_RUN_DEFAULT_MAX_ROUNDS = 12
 _AGENT_RUN_MAX_ROUNDS = 50
 _AGENT_TOOL_MESSAGE_LIMIT = 12000
@@ -475,7 +477,7 @@ def _agent_registry_tool_definition(name):
     return _json_clone(definition)
 
 
-def _agent_selected_tools(payload, allowed_tools=None):
+def _agent_selected_tools(payload, allowed_tools=None, permission_profile="read"):
     requested = []
     if allowed_tools is not None:
         if not isinstance(allowed_tools, list):
@@ -510,7 +512,12 @@ def _agent_selected_tools(payload, allowed_tools=None):
             and spec.get("idempotent")
             and not spec.get("background")
         )
-        if not (safe_read or safe_interaction):
+        safe_proposal = (
+            spec.get("effect") == "proposal"
+            and spec.get("idempotent")
+            and permission_profile in {"plan", "accept", "bypass"}
+        )
+        if not (safe_read or safe_interaction or safe_proposal):
             continue
         definition = _agent_registry_tool_definition(name)
         if definition:
@@ -527,6 +534,7 @@ def _agent_run_record(run):
         "sessionId": run["session_id"],
         "status": run["status"],
         "resumeStatus": run.get("resume_status", ""),
+        "permissionProfile": run.get("permission_profile", "read"),
         "error": run.get("error", ""),
         "baseUrl": run.get("base_url", ""),
         "request": _json_clone(run.get("request") or {}),
@@ -535,6 +543,7 @@ def _agent_run_record(run):
         "rounds": _json_clone(run.get("rounds") or []),
         "pendingToolCalls": _json_clone(run.get("pending_tool_calls") or []),
         "pendingInput": _json_clone(run.get("pending_input")),
+        "pendingAuthorization": _json_clone(run.get("pending_authorization")),
         "toolExecutions": _json_clone(run.get("tool_executions") or {}),
         "usage": _json_clone(run.get("usage") or {}),
         "result": _json_clone(run.get("result") or {}),
@@ -556,17 +565,46 @@ def _persist_agent_run(run):
 def _agent_public_tool_executions(run):
     items = []
     for call_id, execution in (run.get("tool_executions") or {}).items():
+        public_result = _json_clone(execution.get("result"))
+        if execution.get("status") == "waiting_authorization" and isinstance(public_result, dict):
+            for private_key in ("newContent", "baseHash", "newHash"):
+                public_result.pop(private_key, None)
         items.append({
             "toolCallId": call_id,
             "name": execution.get("name", ""),
             "arguments": execution.get("arguments", "{}"),
             "status": execution.get("status", ""),
-            "result": _json_clone(execution.get("result")),
+            "authorizationDecision": execution.get("authorizationDecision", ""),
+            "result": public_result,
             "error": execution.get("error", ""),
             "startedAt": execution.get("startedAt", ""),
             "completedAt": execution.get("completedAt", ""),
         })
     return items
+
+
+def _agent_public_edit_proposal(proposal):
+    public_proposal = _json_clone(proposal) if isinstance(proposal, dict) else {}
+    for private_key in ("newContent", "baseHash", "newHash"):
+        public_proposal.pop(private_key, None)
+    return public_proposal
+
+
+def _agent_public_pending_authorization(run):
+    pending = run.get("pending_authorization")
+    if not isinstance(pending, dict):
+        return None
+    proposal = pending.get("proposal") or {}
+    return {
+        "authorizationId": str(pending.get("authorizationId") or ""),
+        "toolCallId": str(pending.get("toolCallId") or ""),
+        "action": str(pending.get("action") or ""),
+        "proposalId": str(proposal.get("proposalId") or ""),
+        "path": str(proposal.get("path") or ""),
+        "diff": str(proposal.get("diff") or ""),
+        "decision": str(pending.get("decision") or "pending"),
+        "requestedAt": str(pending.get("requestedAt") or ""),
+    }
 
 
 def _agent_snapshot(run, cursor=0):
@@ -582,6 +620,7 @@ def _agent_snapshot(run, cursor=0):
             "agentRunId": run["id"],
             "sessionId": run["session_id"],
             "status": run["status"],
+            "permissionProfile": run.get("permission_profile", "read"),
             "error": run.get("error", ""),
             "model": str((run.get("request") or {}).get("model") or ""),
             "round": len(run.get("rounds") or []),
@@ -590,6 +629,7 @@ def _agent_snapshot(run, cursor=0):
             "activeRuntimeRunId": run.get("active_runtime_id", ""),
             "pendingToolCalls": _json_clone(run.get("pending_tool_calls") or []),
             "pendingInput": _json_clone(run.get("pending_input")),
+            "pendingAuthorization": _agent_public_pending_authorization(run),
             "toolExecutions": _agent_public_tool_executions(run),
             "usage": _json_clone(run.get("usage") or {}),
             "result": _json_clone(run.get("result") or {}),
@@ -669,8 +709,14 @@ def _agent_run_from_record(record):
     if persisted_status in _AGENT_RUN_TERMINAL:
         status = persisted_status
         resume_status = ""
-    elif persisted_status == "waiting_user_input" and isinstance(record.get("pendingInput"), dict):
-        status = "waiting_user_input"
+    elif (
+        persisted_status == "waiting_user_input"
+        and isinstance(record.get("pendingInput"), dict)
+    ) or (
+        persisted_status == "waiting_authorization"
+        and isinstance(record.get("pendingAuthorization"), dict)
+    ):
+        status = persisted_status
         resume_status = ""
     else:
         resume_status = str(record.get("resumeStatus") or persisted_status)
@@ -685,11 +731,22 @@ def _agent_run_from_record(record):
     request_options = dict(record.get("request") or {})
     if _agent_value_has_credential_field(request_options):
         raise ValueError("persisted Agent request contains credentials")
+    permission_profile = str(record.get("permissionProfile") or "read").strip().lower()
+    if permission_profile not in _AGENT_PERMISSION_PROFILES:
+        permission_profile = "read"
+    pending_authorization = (
+        _json_clone(record.get("pendingAuthorization"))
+        if isinstance(record.get("pendingAuthorization"), dict)
+        else None
+    )
+    if pending_authorization:
+        pending_authorization["submitting"] = False
     return {
         "id": run_id,
         "session_id": str(record.get("sessionId") or ""),
         "status": status,
         "resume_status": resume_status,
+        "permission_profile": permission_profile,
         "error": str(record.get("error") or ""),
         "base_url": _agent_base_url(record.get("baseUrl") or ""),
         "request": request_options,
@@ -698,6 +755,7 @@ def _agent_run_from_record(record):
         "rounds": list(record.get("rounds") or []),
         "pending_tool_calls": list(record.get("pendingToolCalls") or []),
         "pending_input": _json_clone(record.get("pendingInput")) if isinstance(record.get("pendingInput"), dict) else None,
+        "pending_authorization": pending_authorization,
         "tool_executions": dict(record.get("toolExecutions") or {}),
         "usage": dict(record.get("usage") or {}),
         "result": dict(record.get("result") or {}),
@@ -1054,6 +1112,137 @@ def _submit_agent_input(run, answers):
     return result
 
 
+def _agent_edit_authorization_request(run, call, proposal):
+    call_id = str(call.get("id") or "")
+    proposal_id = str(proposal.get("proposalId") or "")
+    authorization_id = hashlib.sha256(
+        f"{run['id']}\0{call_id}\0{proposal_id}".encode("utf-8")
+    ).hexdigest()
+    return {
+        "authorizationId": authorization_id,
+        "toolCallId": call_id,
+        "action": "apply_edit",
+        "proposal": _json_clone(proposal),
+        "decision": "pending",
+        "requestedAt": now_iso(),
+    }
+
+
+def _submit_agent_authorization(run, authorization_id, decision):
+    normalized_decision = str(decision or "").strip().lower()
+    if normalized_decision not in {"approved", "rejected"}:
+        raise ValueError("decision must be approved or rejected")
+    with run["condition"]:
+        if run["status"] != "waiting_authorization":
+            raise ValueError(f"Agent run is not waiting for authorization: {run['status']}")
+        pending = _json_clone(run.get("pending_authorization"))
+    if not isinstance(pending, dict):
+        raise ValueError("Agent run has no pending authorization")
+    expected_id = str(pending.get("authorizationId") or "")
+    if authorization_id and str(authorization_id) != expected_id:
+        raise ValueError("Agent authorization request changed before submission")
+    call_id = str(pending.get("toolCallId") or "")
+    proposal = pending.get("proposal") or {}
+
+    # Persist the user's decision before the write. If the process exits after
+    # writing but before completion is persisted, the content hash makes a
+    # repeated approval a no-op instead of a second write.
+    with run["condition"]:
+        current = run.get("pending_authorization") or {}
+        if str(current.get("authorizationId") or "") != expected_id:
+            raise ValueError("Agent authorization request changed before submission")
+        if current.get("submitting"):
+            raise ValueError("Agent authorization decision is already being applied")
+        execution = run.get("tool_executions", {}).get(call_id)
+        if not isinstance(execution, dict):
+            raise ValueError("Agent authorization tool execution is missing")
+        current["decision"] = normalized_decision
+        current["decidedAt"] = now_iso()
+        current["submitting"] = True
+        execution["authorizationDecision"] = normalized_decision
+        run["updated_at"] = now_iso()
+    _persist_agent_run(run)
+
+    if normalized_decision == "approved":
+        try:
+            result = execute_apply_edit_proposal(proposal)
+        except EditConflictError as exc:
+            result = {
+                "ok": False,
+                "action": "apply_edit",
+                "proposalId": proposal.get("proposalId") or "",
+                "path": proposal.get("path") or "",
+                "error": str(exc),
+                "currentMtime": exc.current_mtime,
+                "conflict": True,
+                "applied": False,
+            }
+        except Exception as exc:
+            result = {
+                "ok": False,
+                "action": "apply_edit",
+                "proposalId": proposal.get("proposalId") or "",
+                "path": proposal.get("path") or "",
+                "error": str(exc)[:2000],
+                "applied": False,
+            }
+    else:
+        result = {
+            "ok": False,
+            "action": "propose_edit",
+            "proposalId": proposal.get("proposalId") or "",
+            "path": proposal.get("path") or "",
+            "rejected": True,
+            "applied": False,
+            "error": "User rejected the proposed edit.",
+        }
+
+    with run["condition"]:
+        current = run.get("pending_authorization") or {}
+        if str(current.get("authorizationId") or "") != expected_id:
+            raise ValueError("Agent authorization request changed during submission")
+        execution = run.get("tool_executions", {}).get(call_id)
+        execution["status"] = "completed"
+        execution["result"] = _json_clone(result)
+        execution["error"] = "" if result.get("ok") else str(result.get("error") or "")
+        execution["completedAt"] = now_iso()
+        if not _agent_has_current_tool_message(run, call_id):
+            run["messages"].append({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "name": "propose_edit",
+                "content": _agent_tool_message_content(result),
+            })
+        run["pending_tool_calls"] = [
+            call for call in run.get("pending_tool_calls") or []
+            if call.get("id") != call_id
+        ]
+        resume_status = "tools" if run["pending_tool_calls"] else "model"
+        run["pending_authorization"] = None
+        run["keys"] = []
+        run["status"] = "waiting_credentials"
+        run["resume_status"] = resume_status
+        run["updated_at"] = now_iso()
+        run["condition"].notify_all()
+
+    _append_agent_event(run, "authorization_submitted", {
+        "authorizationId": expected_id,
+        "toolCallId": call_id,
+        "decision": normalized_decision,
+    })
+    _append_agent_event(run, "tool_completed", {
+        "toolCallId": call_id,
+        "name": "propose_edit",
+        "result": result,
+        "replayed": bool(result.get("replayed")),
+    })
+    _append_agent_event(run, "waiting_credentials", {
+        "resumeStatus": resume_status,
+        "reason": "authorization_submitted",
+    })
+    return result
+
+
 def _execute_agent_pending_tools(run):
     allowed_names = {
         str((definition.get("function") or {}).get("name") or "")
@@ -1072,25 +1261,31 @@ def _execute_agent_pending_tools(run):
             raise ValueError(f"tool call id {call_id} was reused with different arguments")
 
         reused_execution = bool(execution and execution.get("status") == "completed")
+        resuming_proposal = bool(
+            execution
+            and execution.get("status") == "applying_edit"
+            and isinstance(execution.get("proposal"), dict)
+        )
         if reused_execution:
             result = execution.get("result") or {}
         else:
-            execution = {
-                "name": name,
-                "arguments": (call.get("function") or {}).get("arguments", "{}"),
-                "fingerprint": call.get("fingerprint", ""),
-                "status": "running",
-                "result": None,
-                "error": "",
-                "startedAt": now_iso(),
-                "completedAt": "",
-            }
-            run["tool_executions"][call_id] = execution
-            _append_agent_event(run, "tool_started", {
-                "toolCallId": call_id,
-                "name": name,
-                "arguments": execution["arguments"],
-            })
+            if not resuming_proposal:
+                execution = {
+                    "name": name,
+                    "arguments": (call.get("function") or {}).get("arguments", "{}"),
+                    "fingerprint": call.get("fingerprint", ""),
+                    "status": "running",
+                    "result": None,
+                    "error": "",
+                    "startedAt": now_iso(),
+                    "completedAt": "",
+                }
+                run["tool_executions"][call_id] = execution
+                _append_agent_event(run, "tool_started", {
+                    "toolCallId": call_id,
+                    "name": name,
+                    "arguments": execution["arguments"],
+                })
             try:
                 spec = SERVER_TOOL_REGISTRY.get(name) or {}
                 if name not in allowed_names:
@@ -1106,15 +1301,53 @@ def _execute_agent_pending_tools(run):
                     _append_agent_event(run, "user_input_required", pending_input)
                     _set_agent_status(run, "waiting_user_input")
                     return False
-                if (
+                if spec.get("effect") == "proposal":
+                    if call.get("parseError") or not isinstance(call.get("arguments"), dict):
+                        raise ValueError(call.get("parseError") or "tool arguments must be an object")
+                    proposal = (
+                        execution["proposal"]
+                        if resuming_proposal
+                        else execute_registered_tool(name, call["arguments"])
+                    )
+                    permission_profile = run.get("permission_profile", "read")
+                    if permission_profile == "plan":
+                        result = {**_agent_public_edit_proposal(proposal), "proposalOnly": True}
+                    elif permission_profile == "accept":
+                        pending_authorization = _agent_edit_authorization_request(
+                            run, call, proposal,
+                        )
+                        execution["status"] = "waiting_authorization"
+                        execution["result"] = _agent_public_edit_proposal(proposal)
+                        run["pending_authorization"] = pending_authorization
+                        run["keys"] = []
+                        _set_agent_status(run, "waiting_authorization")
+                        _append_agent_event(
+                            run,
+                            "authorization_required",
+                            _agent_public_pending_authorization(run),
+                        )
+                        return False
+                    elif permission_profile == "bypass":
+                        if not resuming_proposal:
+                            execution["status"] = "applying_edit"
+                            execution["proposal"] = _json_clone(proposal)
+                            execution["result"] = _agent_public_edit_proposal(proposal)
+                            _persist_agent_run(run)
+                        result = execute_apply_edit_proposal(proposal)
+                    else:
+                        raise ValueError(
+                            f"permission profile does not allow edit proposals: {permission_profile}"
+                        )
+                elif (
                     spec.get("effect") != "read"
                     or not spec.get("idempotent")
                     or not spec.get("background")
                 ):
                     raise ValueError(f"tool is not safe for background execution: {name}")
-                if call.get("parseError") or not isinstance(call.get("arguments"), dict):
-                    raise ValueError(call.get("parseError") or "tool arguments must be an object")
-                result = execute_registered_tool(name, call["arguments"])
+                else:
+                    if call.get("parseError") or not isinstance(call.get("arguments"), dict):
+                        raise ValueError(call.get("parseError") or "tool arguments must be an object")
+                    result = execute_registered_tool(name, call["arguments"])
             except Exception as exc:
                 result = {"ok": False, "action": name, "error": str(exc)[:2000]}
                 execution["error"] = result["error"]
@@ -1263,7 +1496,15 @@ def _start_agent_worker(run):
     return worker
 
 
-def _create_agent_run(session_id, payload, base_url, keys, allowed_tools=None, max_rounds=None):
+def _create_agent_run(
+    session_id,
+    payload,
+    base_url,
+    keys,
+    allowed_tools=None,
+    max_rounds=None,
+    permission_profile="read",
+):
     if not isinstance(payload, dict):
         raise ValueError("payload must be an object")
     messages = payload.get("messages")
@@ -1273,10 +1514,13 @@ def _create_agent_run(session_id, payload, base_url, keys, allowed_tools=None, m
         raise ValueError("payload.messages items must be objects")
     if not isinstance(keys, list):
         raise ValueError("keys must be an array")
+    permission_profile = str(permission_profile or "read").strip().lower()
+    if permission_profile not in _AGENT_PERMISSION_PROFILES:
+        raise ValueError("permissionProfile must be read, plan, accept, or bypass")
     request_options = _agent_request_options(payload)
     if not str(request_options.get("model") or "").strip():
         raise ValueError("payload.model is required")
-    tools = _agent_selected_tools(payload, allowed_tools)
+    tools = _agent_selected_tools(payload, allowed_tools, permission_profile)
     try:
         rounds_limit = int(max_rounds or _AGENT_RUN_DEFAULT_MAX_ROUNDS)
     except (TypeError, ValueError):
@@ -1289,6 +1533,7 @@ def _create_agent_run(session_id, payload, base_url, keys, allowed_tools=None, m
         "session_id": str(session_id or ""),
         "status": "model",
         "resume_status": "",
+        "permission_profile": permission_profile,
         "error": "",
         "base_url": _agent_base_url(base_url),
         "request": request_options,
@@ -1297,6 +1542,7 @@ def _create_agent_run(session_id, payload, base_url, keys, allowed_tools=None, m
         "rounds": [],
         "pending_tool_calls": [],
         "pending_input": None,
+        "pending_authorization": None,
         "tool_executions": {},
         "usage": {},
         "result": {},
@@ -1322,6 +1568,7 @@ def _create_agent_run(session_id, payload, base_url, keys, allowed_tools=None, m
                 for definition in tools
             ],
             "maxRounds": rounds_limit,
+            "permissionProfile": permission_profile,
         })
         _start_agent_worker(run)
     except Exception:
@@ -3113,6 +3360,24 @@ _SERVER_TOOL_DEFINITIONS = {
             },
         },
     },
+    "propose_edit": {
+        "type": "function",
+        "function": {
+            "name": "propose_edit",
+            "description": "Prepare a reviewable file edit. The server never writes until the permission profile permits it and any required authorization is approved.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Project-relative file path."},
+                    "oldText": {"type": "string", "description": "Existing fragment to replace."},
+                    "newText": {"type": "string", "description": "Replacement fragment."},
+                    "newContent": {"type": "string", "description": "Complete replacement content for the file."},
+                },
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        },
+    },
 }
 
 
@@ -3152,6 +3417,13 @@ SERVER_TOOL_REGISTRY = {
         "idempotent": True,
         "background": True,
     },
+    "propose_edit": {
+        "execute": lambda payload: execute_propose_edit_tool(payload),
+        "definition": _SERVER_TOOL_DEFINITIONS["propose_edit"],
+        "effect": "proposal",
+        "idempotent": True,
+        "background": False,
+    },
 }
 
 
@@ -3189,6 +3461,226 @@ def make_unified_diff(old_text, new_text, rel_path):
     )
     diff = "\n".join(lines)
     return diff + "\n" if diff else ""
+
+
+class EditConflictError(ValueError):
+    def __init__(self, message, current_mtime=0):
+        super().__init__(message)
+        self.current_mtime = int(current_mtime or 0)
+
+
+def _edit_content_hash(text):
+    normalized = normalize_text_newlines(text)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _read_edit_text(path):
+    data = path.read_bytes()
+    if len(data) > MAX_TOOL_READ_BYTES:
+        raise ValueError(f"文件超过 {MAX_TOOL_READ_BYTES} 字节，不能通过编辑提案修改")
+    if not is_probably_text(data):
+        raise ValueError("binary file is not supported")
+    return normalize_text_newlines(data.decode("utf-8", errors="replace"))
+
+
+def _atomic_write_edit_text(path, text):
+    temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temp_path.write_bytes(normalize_text_newlines(text).encode("utf-8"))
+        os.replace(temp_path, path)
+    finally:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _fuzzy_find_text(text, fragment):
+    """Find a model-supplied fragment while tolerating harmless whitespace drift."""
+    text = normalize_text_newlines(text)
+    fragment = normalize_text_newlines(fragment)
+    if fragment in text:
+        return fragment
+
+    def _norm(value):
+        return value.replace("\t", "    ")
+
+    text_lines = text.splitlines()
+    fragment_lines = fragment.splitlines()
+    while fragment_lines and not fragment_lines[-1].strip():
+        fragment_lines.pop()
+    while fragment_lines and not fragment_lines[0].strip():
+        fragment_lines.pop(0)
+    if not fragment_lines:
+        return None
+    if len(fragment_lines) == 1:
+        stripped = fragment.strip()
+        return next((line for line in text_lines if line.strip() == stripped), None)
+
+    for start in range(len(text_lines) - len(fragment_lines) + 1):
+        window = text_lines[start:start + len(fragment_lines)]
+        if all(not source.strip() or candidate.rstrip() == source.rstrip()
+               for candidate, source in zip(window, fragment_lines)):
+            return "\n".join(window)
+
+    normalized_text = [_norm(line) for line in text_lines]
+    normalized_fragment = [_norm(line) for line in fragment_lines]
+    for start in range(len(normalized_text) - len(normalized_fragment) + 1):
+        window = normalized_text[start:start + len(normalized_fragment)]
+        if all(not source.strip() or candidate.rstrip() == source.rstrip()
+               for candidate, source in zip(window, normalized_fragment)):
+            return "\n".join(text_lines[start:start + len(normalized_fragment)])
+
+    for start in range(len(text_lines) - len(fragment_lines) + 1):
+        window = text_lines[start:start + len(fragment_lines)]
+        if all(candidate.strip() == source.strip()
+               for candidate, source in zip(window, fragment_lines)):
+            return "\n".join(window)
+
+    fragment_text = "\n".join(normalized_fragment)
+    best_ratio = 0.0
+    best_window = None
+    for start in range(len(normalized_text) - len(normalized_fragment) + 1):
+        window = normalized_text[start:start + len(normalized_fragment)]
+        ratio = difflib.SequenceMatcher(None, "\n".join(window), fragment_text).ratio()
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_window = "\n".join(text_lines[start:start + len(normalized_fragment)])
+    return best_window if best_ratio >= 0.65 else None
+
+
+def build_edit_payload_data(body):
+    path = body.get("path") or ""
+    root, target = resolve_project_path(path)
+    rel = to_project_relative(root, target)
+    old_text = ""
+    if target.exists():
+        if not target.is_file():
+            raise ValueError("目标路径不是文件")
+        old_text = _read_edit_text(target)
+
+    if "oldText" in body and "newText" in body:
+        old_fragment = normalize_text_newlines(body.get("oldText") or "")
+        new_fragment = normalize_text_newlines(body.get("newText") or "")
+        if old_fragment == new_fragment:
+            raise ValueError("修改前后的内容相同，未检测到可应用的变更")
+        found = _fuzzy_find_text(old_text, old_fragment)
+        if not found:
+            preview = old_fragment[:120].replace("\n", "\\n")
+            raise ValueError(
+                f"oldText 在目标文件中未找到。请重新读取 {rel} 后再提交精确片段。"
+                f" oldText 片段：{preview}..."
+            )
+        new_text = old_text.replace(found, new_fragment, 1)
+    else:
+        new_text = body.get("newContent")
+        if new_text is None:
+            new_text = body.get("content")
+        if new_text is None:
+            raise ValueError("缺少 newContent/content，或 oldText/newText")
+        new_text = normalize_text_newlines(new_text)
+
+    diff = make_unified_diff(old_text, new_text, rel)
+    if not diff:
+        raise ValueError("未检测到文件内容变化，请重新读取文件后再提交修改")
+    return root, target, rel, old_text, new_text, diff
+
+
+def execute_propose_edit_tool(body):
+    _, target, rel, old_text, new_text, diff = build_edit_payload_data(body)
+    mtime = int(target.stat().st_mtime * 1000) if target.exists() else 0
+    base_hash = _edit_content_hash(old_text)
+    new_hash = _edit_content_hash(new_text)
+    proposal_id = hashlib.sha256(
+        f"{rel}\0{mtime}\0{base_hash}\0{new_hash}".encode("utf-8")
+    ).hexdigest()
+    return {
+        "ok": True,
+        "action": "propose_edit",
+        "proposalId": proposal_id,
+        "path": rel,
+        "diff": diff,
+        "newContent": new_text,
+        "mtime": mtime,
+        "baseHash": base_hash,
+        "newHash": new_hash,
+        "applied": False,
+    }
+
+
+def _execute_apply_edit_proposal_locked(proposal):
+    if not isinstance(proposal, dict) or not proposal.get("proposalId"):
+        raise ValueError("invalid edit proposal")
+    root, target = resolve_project_path(proposal.get("path") or "")
+    rel = to_project_relative(root, target)
+    new_text = normalize_text_newlines(proposal.get("newContent") or "")
+    expected_base_hash = str(proposal.get("baseHash") or "")
+    expected_new_hash = str(proposal.get("newHash") or "")
+    if _edit_content_hash(new_text) != expected_new_hash:
+        raise ValueError("edit proposal content hash does not match")
+
+    current_exists = target.exists()
+    if current_exists and not target.is_file():
+        raise EditConflictError("目标路径已不再是文件")
+    current_text = ""
+    current_mtime = 0
+    if current_exists:
+        try:
+            current_text = _read_edit_text(target)
+        except ValueError as exc:
+            raise EditConflictError(str(exc)) from exc
+        current_mtime = int(target.stat().st_mtime * 1000)
+    current_hash = _edit_content_hash(current_text)
+
+    # A process may have written the file immediately before a crash. Matching
+    # final content makes replay safe and avoids a duplicate backup/write.
+    if current_exists and current_hash == expected_new_hash:
+        return {
+            "ok": True,
+            "action": "apply_edit",
+            "proposalId": proposal["proposalId"],
+            "path": rel,
+            "diff": proposal.get("diff") or "",
+            "backupPath": None,
+            "applied": True,
+            "replayed": True,
+            "mtime": current_mtime,
+        }
+
+    expected_mtime = int(proposal.get("mtime") or 0)
+    if current_hash != expected_base_hash or current_mtime != expected_mtime:
+        raise EditConflictError(
+            "File modified by another session, please re-read.", current_mtime,
+        )
+
+    backup_path = None
+    if current_exists:
+        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", rel)
+        backup_path = FILE_BACKUP_DIR / f"{safe_name}.{stamp}.{uuid.uuid4().hex[:8]}.bak"
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(target, backup_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write_edit_text(target, new_text)
+    written_text = _read_edit_text(target)
+    if _edit_content_hash(written_text) != expected_new_hash:
+        raise OSError("written file failed content verification")
+    return {
+        "ok": True,
+        "action": "apply_edit",
+        "proposalId": proposal["proposalId"],
+        "path": rel,
+        "diff": proposal.get("diff") or "",
+        "backupPath": str(backup_path) if backup_path else None,
+        "applied": True,
+        "replayed": False,
+        "mtime": int(target.stat().st_mtime * 1000),
+    }
+
+
+def execute_apply_edit_proposal(proposal):
+    with _edit_apply_lock:
+        return _execute_apply_edit_proposal_locked(proposal)
 
 
 def is_safe_command(command):
@@ -3790,6 +4282,7 @@ class CodeHandler(BaseHTTPRequestHandler):
                     keys or [],
                     body.get("allowedTools"),
                     body.get("maxRounds"),
+                    body.get("permissionProfile") or "read",
                 )
                 self.send_json({
                     "agentRunId": run["id"],
@@ -3818,6 +4311,24 @@ class CodeHandler(BaseHTTPRequestHandler):
                     return
                 body = self.read_body_json()
                 result = _submit_agent_input(run, body.get("answers"))
+                self.send_json({
+                    "agentRunId": run["id"],
+                    "status": run["status"],
+                    "result": result,
+                })
+                return
+            if route.startswith("/api/agent/runs/") and route.endswith("/authorization"):
+                run_id = route.rsplit("/", 2)[-2]
+                run = _get_agent_run(run_id)
+                if not run:
+                    self.send_json({"error": "Agent run not found"}, 404)
+                    return
+                body = self.read_body_json()
+                result = _submit_agent_authorization(
+                    run,
+                    body.get("authorizationId") or "",
+                    body.get("decision") or "",
+                )
                 self.send_json({
                     "agentRunId": run["id"],
                     "status": run["status"],
@@ -4498,170 +5009,37 @@ class CodeHandler(BaseHTTPRequestHandler):
         self.send_json(execute_registered_tool("glob_files", self.read_body_json()))
 
     def _fuzzy_find(self, text, fragment):
-        """Try to find fragment in text, falling back to whitespace-normalized matching."""
-        # Normalize line endings first (Windows \r\n vs Unix \n)
-        text = text.replace("\r\n", "\n")
-        fragment = fragment.replace("\r\n", "\n")
-
-        if fragment in text:
-            return fragment  # exact match
-
-        def _norm(s):
-            """Normalize tabs to spaces."""
-            return s.replace("\t", "    ")
-
-        text_lines = text.splitlines()
-        frag_lines = fragment.splitlines()
-
-        # Strip trailing empty lines from fragment (model often adds them)
-        while frag_lines and not frag_lines[-1].strip():
-            frag_lines.pop()
-        while frag_lines and not frag_lines[0].strip():
-            frag_lines.pop(0)
-
-        if not frag_lines:
-            return None
-
-        if len(frag_lines) == 1:
-            stripped = fragment.strip()
-            for line in text_lines:
-                if line.strip() == stripped:
-                    return line
-            return None
-
-        # Strategy 1: match with rstrip (trailing whitespace insensitive), skip blank frag lines
-        for i in range(len(text_lines) - len(frag_lines) + 1):
-            window = text_lines[i:i + len(frag_lines)]
-            match = True
-            for wl, fl in zip(window, frag_lines):
-                if not fl.strip():
-                    continue
-                if wl.rstrip() != fl.rstrip():
-                    match = False
-                    break
-            if match:
-                return "\n".join(window)
-
-        # Strategy 2: normalize tabs→spaces, rstrip match
-        text_norm = [_norm(l) for l in text_lines]
-        frag_norm = [_norm(l) for l in frag_lines]
-        for i in range(len(text_norm) - len(frag_norm) + 1):
-            window = text_norm[i:i + len(frag_norm)]
-            match = True
-            for wl, fl in zip(window, frag_norm):
-                if not fl.strip():
-                    continue
-                if wl.rstrip() != fl.rstrip():
-                    match = False
-                    break
-            if match:
-                return "\n".join(text_lines[i:i + len(frag_norm)])
-
-        # Strategy 3: full strip match (ignore all leading/trailing whitespace)
-        for i in range(len(text_lines) - len(frag_lines) + 1):
-            window = text_lines[i:i + len(frag_lines)]
-            if all(wl.strip() == fl.strip() for wl, fl in zip(window, frag_lines)):
-                return "\n".join(window)
-
-        # Strategy 4: try with normalized leading whitespace too (tab→space + strip)
-        for i in range(len(text_norm) - len(frag_norm) + 1):
-            window = text_norm[i:i + len(frag_norm)]
-            if all(wl.strip() == fl.strip() for wl, fl in zip(window, frag_norm)):
-                return "\n".join(text_lines[i:i + len(frag_norm)])
-
-        # Strategy 5: difflib approximate matching (for when model tweaks fragment content)
-        frag_text = "\n".join(frag_norm)
-        best_ratio = 0.0
-        best_window = None
-        for i in range(len(text_norm) - len(frag_norm) + 1):
-            window = text_norm[i:i + len(frag_norm)]
-            window_text = "\n".join(window)
-            ratio = difflib.SequenceMatcher(None, window_text, frag_text).ratio()
-            if ratio > best_ratio:
-                best_ratio = ratio
-                best_window = "\n".join(text_lines[i:i + len(frag_norm)])
-        if best_ratio >= 0.65 and best_window is not None:
-            return best_window
-
-        return None
+        return _fuzzy_find_text(text, fragment)
 
     def build_edit_payload(self, body):
-        path = body.get("path") or ""
-        root, target = resolve_project_path(path)
-        rel = to_project_relative(root, target)
-        old_text = ""
-        if target.exists():
-            if not target.is_file():
-                raise ValueError("目标路径不是文件")
-            old_text, _, _ = read_text_limited(target, MAX_TOOL_READ_BYTES)
-            old_text = normalize_text_newlines(old_text)
-
-        if "oldText" in body and "newText" in body:
-            old_fragment = normalize_text_newlines(body.get("oldText") or "")
-            new_fragment = normalize_text_newlines(body.get("newText") or "")
-            if old_fragment == new_fragment:
-                raise ValueError("修改前后的内容相同，未检测到可应用的变更")
-            found = self._fuzzy_find(old_text, old_fragment)
-            if not found:
-                preview = old_fragment[:120].replace("\n", "\\n")
-                hint = (
-                    f"oldText 在目标文件中未找到。文件可能已被修改，或 oldText 片段不完整。\n"
-                    f"请用 read_file 重新读取 {rel} 的最新内容，精确复制需要替换的片段后重试。\n"
-                    f"oldText 片段：{preview}..."
-                )
-                raise ValueError(hint)
-            new_text = old_text.replace(found, new_fragment, 1)
-        else:
-            new_text = body.get("newContent")
-            if new_text is None:
-                new_text = body.get("content")
-            if new_text is None:
-                raise ValueError("缺少 newContent/content，或 oldText/newText")
-            new_text = normalize_text_newlines(new_text)
-
-        diff = make_unified_diff(old_text, new_text, rel)
-        if not diff:
-            raise ValueError("未检测到文件内容变化。请重新读取文件并检查 oldText/newText 是否正确")
-        return root, target, rel, old_text, new_text, diff
+        return build_edit_payload_data(body)
 
     def tool_propose_edit(self):
-        body = self.read_body_json()
-        _, target, rel, _, new_text, diff = self.build_edit_payload(body)
-        mtime = int(target.stat().st_mtime * 1000) if target.exists() else 0
-        self.send_json({
-            "ok": True,
-            "action": "propose_edit",
-            "path": rel,
-            "diff": diff or "(no changes)",
-            "newContent": new_text,
-            "mtime": mtime,
-        })
+        self.send_json(execute_registered_tool("propose_edit", self.read_body_json()))
 
     def tool_apply_edit(self):
         body = self.read_body_json()
-        _, target, rel, old_text, new_text, diff = self.build_edit_payload(body)
+        proposal = execute_propose_edit_tool(body)
         expected_mtime = body.get("expectedMtime")
-        if expected_mtime is not None and target.exists():
-            current_mtime = int(target.stat().st_mtime * 1000)
-            if current_mtime != int(expected_mtime):
-                self.send_json({"ok": False, "action": "apply_edit", "path": rel, "error": "File modified by another session, please re-read.", "currentMtime": current_mtime}, 409)
-                return
-        backup_path = None
-        if target.exists():
-            stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-            safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", rel)
-            backup_path = FILE_BACKUP_DIR / f"{safe_name}.{stamp}.bak"
-            backup_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(target, backup_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        write_text_utf8(target, new_text)
-        self.send_json({
-            "ok": True,
-            "action": "apply_edit",
-            "path": rel,
-            "diff": diff or "(no changes)",
-            "backupPath": str(backup_path) if backup_path else None,
-        })
+        if expected_mtime is not None and int(expected_mtime) != int(proposal["mtime"]):
+            self.send_json({
+                "ok": False,
+                "action": "apply_edit",
+                "path": proposal["path"],
+                "error": "File modified by another session, please re-read.",
+                "currentMtime": proposal["mtime"],
+            }, 409)
+            return
+        try:
+            self.send_json(execute_apply_edit_proposal(proposal))
+        except EditConflictError as exc:
+            self.send_json({
+                "ok": False,
+                "action": "apply_edit",
+                "path": proposal["path"],
+                "error": str(exc),
+                "currentMtime": exc.current_mtime,
+            }, 409)
 
     def tool_task(self):
         body = self.read_body_json()

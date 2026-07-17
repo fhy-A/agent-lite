@@ -14,6 +14,21 @@
 
 ---
 
+## 2026-07-18 07:27 · Codex
+
+### 建立服务端编辑授权与幂等写入协议：持久等待、冲突保护和崩溃回放
+
+- **编辑服务统一**：将原 Handler 内的模糊片段定位、提案构建和应用逻辑抽成可复用服务，`/api/tools/propose_edit`、`/api/tools/apply_edit` 与 AgentRun 共用同一实现；`propose_edit` 正式加入工具注册表并声明为 `effect=proposal`、`idempotent=true`、`background=false`。
+- **权限档位语义**：AgentRun 创建协议新增 `permissionProfile`；`read` 不获得编辑工具，`plan` 只接收可审查提案，`accept` 在提案后进入新的 `waiting_authorization`，`bypass` 通过同一受保护应用服务执行。正式界面的计划/接受编辑档位本阶段仍由浏览器编排，避免在授权卡片接入前产生双重执行或命令能力回退。
+- **持久授权决定**：运行记录和公开快照新增 `pendingAuthorization`，以 AgentRun、工具调用和提案指纹生成稳定授权 ID；新增 `POST /api/agent/runs/{id}/authorization`，只接受匹配请求的 `approved` / `rejected`。决定会补成原 `tool_call_id` 的正式工具结果，再进入 `waiting_credentials` 恢复同一任务。
+- **幂等与并发保护**：编辑提案记录原文件内容哈希、mtime 和目标内容哈希；批准时在进程内串行核对状态，先备份，再通过同目录临时文件原子替换并做写后校验。文件在等待期被其他任务修改时返回冲突而不覆盖；若进程在写入后、完成状态落盘前退出，`accept` 的重复批准或 `bypass` 的自动恢复都会复用持久提案并按最终内容哈希识别为回放，不重复写入或生成第二份备份。
+- **恢复与凭据边界**：`waiting_authorization` 与问卷一样可跨服务重启保持可操作，等待时清空内存 Key；公开授权快照不暴露完整新文件内容和内部哈希，持久记录不包含 API Key。浏览器运行时客户端已支持提交授权决定和识别授权等待状态，为下一阶段正式界面投影做好协议准备。
+- **文档与测试**：同步更新 README、迁移计划、架构记忆和 TODO，将下一步收敛为授权卡片投影及 `plan` / `accept` 单一执行所有权切换。新增批准、拒绝、计划只提案、陈旧文件冲突、服务重启、`accept` / `bypass` 写后崩溃回放和真实 HTTP 端点回归；Python/JavaScript 语法检查、`git diff --check` 通过，最终全量回归 `507 passed, 6 subtests passed`。
+
+**涉及文件**：`server.py`、`agent-runtime.js`、`app.js`、`tests/test_agent_runtime.py`、`tests/test_frontend_modules.py`、`tests/test_routes.py`、`README.md`、`docs/SERVER_AGENT_LOOP_PLAN.md`、`data/memory/code-architecture.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 07:02 · Codex
 
 ### 完成只读 AgentRun 的持久问卷闭环：服务端暂停、刷新恢复与原任务续跑

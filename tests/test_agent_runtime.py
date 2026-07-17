@@ -51,8 +51,36 @@ class _AgentUpstream(BaseHTTPRequestHandler):
             message.get("role") == "user" and message.get("content") == "ask for target"
             for message in messages
         )
+        proposes_edit = any(
+            message.get("role") == "user" and message.get("content") == "propose edit"
+            for message in messages
+        )
         should_call_tool = tool_result_count == 0 or (repeat_id and tool_result_count < 2)
-        if asks_user and tool_result_count == 0:
+        if proposes_edit and tool_result_count == 0:
+            frames = [{
+                "choices": [{
+                    "delta": {"tool_calls": [{
+                        "index": 0,
+                        "id": "agent-edit-1",
+                        "type": "function",
+                        "function": {
+                            "name": "propose_edit",
+                            "arguments": json.dumps({
+                                "path": "README.md",
+                                "oldText": "Durable Agent",
+                                "newText": "Authorized Agent",
+                            }),
+                        },
+                    }]},
+                    "finish_reason": "tool_calls",
+                }],
+            }]
+        elif proposes_edit:
+            frames = [
+                {"choices": [{"delta": {"content": "edit task complete"}, "finish_reason": "stop"}]},
+                {"choices": [], "usage": {"prompt_tokens": 9, "completion_tokens": 3, "total_tokens": 12}},
+            ]
+        elif asks_user and tool_result_count == 0:
             arguments = {
                 "title": "Choose a target",
                 "reason": "The target cannot be inferred from the project.",
@@ -159,6 +187,7 @@ class TestDurableAgentRuntime(unittest.TestCase):
         self.patchers = [
             mock.patch.object(server_mod, "DATA_DIR", self.data_dir),
             mock.patch.object(server_mod, "CONFIG_PATH", self.config_path),
+            mock.patch.object(server_mod, "FILE_BACKUP_DIR", self.data_dir / "file-backups"),
         ]
         for patcher in self.patchers:
             patcher.start()
@@ -174,6 +203,11 @@ class TestDurableAgentRuntime(unittest.TestCase):
 
     def tearDown(self):
         _AgentUpstream.release_slow.set()
+        with server_mod._agent_run_lock:
+            runs = list(server_mod._agent_runs.values())
+        deadline = time.time() + 2
+        while any(run.get("worker") is not None for run in runs) and time.time() < deadline:
+            time.sleep(0.01)
         for patcher in reversed(self.patchers):
             patcher.stop()
         self.temp_dir.cleanup()
@@ -304,6 +338,219 @@ class TestDurableAgentRuntime(unittest.TestCase):
             "waiting_credentials", "resumed", "completed",
         ):
             self.assertIn(expected, event_types)
+
+    def test_accept_profile_waits_for_durable_edit_authorization(self):
+        target = self.project_dir / "README.md"
+        run = server_mod._create_agent_run(
+            "edit-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "propose edit"}],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["propose_edit"]],
+            },
+            self.base_url,
+            ["edit-secret-key"],
+            allowed_tools=["propose_edit"],
+            permission_profile="accept",
+        )
+        self._wait_status(run, "waiting_authorization")
+        self._wait_worker_idle(run)
+
+        waiting = server_mod._agent_snapshot(run, 0)
+        pending = waiting["pendingAuthorization"]
+        self.assertEqual(waiting["permissionProfile"], "accept")
+        self.assertEqual(pending["toolCallId"], "agent-edit-1")
+        self.assertEqual(pending["path"], "README.md")
+        self.assertIn("Authorized Agent", pending["diff"])
+        self.assertNotIn("newContent", pending)
+        self.assertEqual(target.read_text(encoding="utf-8"), "# Durable Agent\n")
+        self.assertEqual(run["keys"], [])
+        persisted = server_mod._agent_run_path(run["id"]).read_text(encoding="utf-8")
+        self.assertIn('"status": "waiting_authorization"', persisted)
+        self.assertNotIn("edit-secret-key", persisted)
+
+        result = server_mod._submit_agent_authorization(
+            run, pending["authorizationId"], "approved",
+        )
+        self.assertTrue(result["applied"])
+        self.assertFalse(result["replayed"])
+        self.assertEqual(target.read_text(encoding="utf-8"), "# Authorized Agent\n")
+        self.assertEqual(run["status"], "waiting_credentials")
+        self.assertEqual(len(list((self.data_dir / "file-backups").glob("*.bak"))), 1)
+
+        server_mod._resume_agent_run(run, ["edit-resume-key"])
+        self._wait_terminal(run)
+        snapshot = server_mod._agent_snapshot(run, 0)
+        self.assertEqual(snapshot["status"], "completed")
+        self.assertEqual(snapshot["result"]["content"], "edit task complete")
+        self.assertIsNone(snapshot["pendingAuthorization"])
+        event_types = [event["type"] for event in snapshot["events"]]
+        for expected in (
+            "authorization_required", "authorization_submitted",
+            "tool_completed", "waiting_credentials", "resumed", "completed",
+        ):
+            self.assertIn(expected, event_types)
+
+    def test_plan_profile_returns_edit_proposal_without_writing(self):
+        target = self.project_dir / "README.md"
+        run = server_mod._create_agent_run(
+            "edit-plan-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "propose edit"}],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["propose_edit"]],
+            },
+            self.base_url,
+            ["edit-plan-key"],
+            allowed_tools=["propose_edit"],
+            permission_profile="plan",
+        )
+        self._wait_terminal(run)
+        snapshot = server_mod._agent_snapshot(run, 0)
+        self.assertEqual(snapshot["status"], "completed")
+        self.assertEqual(snapshot["toolExecutions"][0]["status"], "completed")
+        self.assertTrue(snapshot["toolExecutions"][0]["result"]["proposalOnly"])
+        self.assertEqual(target.read_text(encoding="utf-8"), "# Durable Agent\n")
+        self.assertFalse((self.data_dir / "file-backups").exists())
+
+    def test_rejected_edit_authorization_keeps_file_unchanged(self):
+        target = self.project_dir / "README.md"
+        run = server_mod._create_agent_run(
+            "edit-reject-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "propose edit"}],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["propose_edit"]],
+            },
+            self.base_url,
+            ["edit-reject-key"],
+            allowed_tools=["propose_edit"],
+            permission_profile="accept",
+        )
+        self._wait_status(run, "waiting_authorization")
+        self._wait_worker_idle(run)
+        pending = server_mod._agent_snapshot(run, 0)["pendingAuthorization"]
+        with server_mod._agent_run_lock:
+            server_mod._agent_runs.pop(run["id"], None)
+        loaded = server_mod._get_agent_run(run["id"])
+        self.assertEqual(loaded["status"], "waiting_authorization")
+        self.assertEqual(
+            server_mod._agent_snapshot(loaded, 0)["pendingAuthorization"]["authorizationId"],
+            pending["authorizationId"],
+        )
+        result = server_mod._submit_agent_authorization(
+            loaded, pending["authorizationId"], "rejected",
+        )
+        self.assertTrue(result["rejected"])
+        self.assertFalse(result["applied"])
+        self.assertEqual(target.read_text(encoding="utf-8"), "# Durable Agent\n")
+        self.assertFalse((self.data_dir / "file-backups").exists())
+
+    def test_edit_proposal_apply_is_idempotent_after_written_content(self):
+        proposal = server_mod.execute_propose_edit_tool({
+            "path": "README.md",
+            "oldText": "Durable Agent",
+            "newText": "Authorized Agent",
+        })
+        first = server_mod.execute_apply_edit_proposal(proposal)
+        second = server_mod.execute_apply_edit_proposal(proposal)
+        self.assertTrue(first["applied"])
+        self.assertFalse(first["replayed"])
+        self.assertTrue(second["applied"])
+        self.assertTrue(second["replayed"])
+        self.assertEqual(len(list((self.data_dir / "file-backups").glob("*.bak"))), 1)
+
+    def test_approved_stale_edit_returns_conflict_without_overwriting(self):
+        target = self.project_dir / "README.md"
+        run = server_mod._create_agent_run(
+            "edit-conflict-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "propose edit"}],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["propose_edit"]],
+            },
+            self.base_url,
+            ["edit-conflict-key"],
+            allowed_tools=["propose_edit"],
+            permission_profile="accept",
+        )
+        self._wait_status(run, "waiting_authorization")
+        self._wait_worker_idle(run)
+        pending = server_mod._agent_snapshot(run, 0)["pendingAuthorization"]
+        target.write_text("# Changed elsewhere\n", encoding="utf-8")
+        result = server_mod._submit_agent_authorization(
+            run, pending["authorizationId"], "approved",
+        )
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["conflict"])
+        self.assertFalse(result["applied"])
+        self.assertEqual(target.read_text(encoding="utf-8"), "# Changed elsewhere\n")
+        self.assertFalse((self.data_dir / "file-backups").exists())
+
+    def test_restart_after_write_replays_approved_edit_without_second_backup(self):
+        run = server_mod._create_agent_run(
+            "edit-replay-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "propose edit"}],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["propose_edit"]],
+            },
+            self.base_url,
+            ["edit-replay-key"],
+            allowed_tools=["propose_edit"],
+            permission_profile="accept",
+        )
+        self._wait_status(run, "waiting_authorization")
+        self._wait_worker_idle(run)
+        pending = server_mod._agent_snapshot(run, 0)["pendingAuthorization"]
+        first = server_mod.execute_apply_edit_proposal(run["pending_authorization"]["proposal"])
+        self.assertFalse(first["replayed"])
+        with server_mod._agent_run_lock:
+            server_mod._agent_runs.pop(run["id"], None)
+        loaded = server_mod._get_agent_run(run["id"])
+        second = server_mod._submit_agent_authorization(
+            loaded, pending["authorizationId"], "approved",
+        )
+        self.assertTrue(second["replayed"])
+        self.assertEqual(len(list((self.data_dir / "file-backups").glob("*.bak"))), 1)
+
+    def test_bypass_restart_reuses_persisted_proposal_after_write(self):
+        run = server_mod._create_agent_run(
+            "edit-bypass-replay-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "propose edit"}],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["propose_edit"]],
+            },
+            self.base_url,
+            ["edit-bypass-key"],
+            allowed_tools=["propose_edit"],
+            permission_profile="accept",
+        )
+        self._wait_status(run, "waiting_authorization")
+        self._wait_worker_idle(run)
+        proposal = run["pending_authorization"]["proposal"]
+        first = server_mod.execute_apply_edit_proposal(proposal)
+        self.assertFalse(first["replayed"])
+        execution = run["tool_executions"]["agent-edit-1"]
+        execution["status"] = "applying_edit"
+        execution["proposal"] = proposal
+        run["permission_profile"] = "bypass"
+        run["pending_authorization"] = None
+        run["status"] = "tools"
+        server_mod._persist_agent_run(run)
+        with server_mod._agent_run_lock:
+            server_mod._agent_runs.pop(run["id"], None)
+
+        loaded = server_mod._get_agent_run(run["id"])
+        self.assertEqual(loaded["status"], "waiting_credentials")
+        with mock.patch.object(server_mod, "execute_registered_tool") as execute_mock:
+            server_mod._resume_agent_run(loaded, ["edit-bypass-resume-key"])
+            self._wait_terminal(loaded)
+            execute_mock.assert_not_called()
+        result = loaded["tool_executions"]["agent-edit-1"]["result"]
+        self.assertTrue(result["replayed"])
+        self.assertEqual(len(list((self.data_dir / "file-backups").glob("*.bak"))), 1)
 
     def test_restart_recovery_reuses_completed_tool_execution(self):
         run_id = uuid.uuid4().hex
@@ -630,6 +877,65 @@ class TestDurableAgentRuntime(unittest.TestCase):
                     break
             self.assertEqual(snapshot.get("status"), "completed")
             self.assertEqual(snapshot.get("result", {}).get("content"), "questionnaire task complete")
+        finally:
+            http_server.shutdown()
+            http_server.server_close()
+            thread.join(timeout=2)
+
+    def test_http_edit_authorization_endpoint_submits_durable_decision(self):
+        server_mod.ThreadingHTTPServer.daemon_threads = True
+        http_server = server_mod.ThreadingHTTPServer(
+            ("127.0.0.1", 0), server_mod.CodeHandler,
+        )
+        thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{http_server.server_address[1]}"
+        try:
+            created = requests.post(
+                base + "/api/agent/runs",
+                json={
+                    "sessionId": "http-edit-agent",
+                    "payload": {
+                        "model": "test-model",
+                        "messages": [{"role": "user", "content": "propose edit"}],
+                        "tools": [server_mod._SERVER_TOOL_DEFINITIONS["propose_edit"]],
+                    },
+                    "allowedTools": ["propose_edit"],
+                    "permissionProfile": "accept",
+                    "baseUrl": self.base_url,
+                    "keys": ["http-edit-key"],
+                },
+                timeout=5,
+            )
+            self.assertEqual(created.status_code, 201)
+            run_id = created.json()["agentRunId"]
+            deadline = time.time() + 5
+            snapshot = {}
+            while time.time() < deadline:
+                snapshot = requests.get(
+                    f"{base}/api/agent/runs/{run_id}?cursor=0&wait=1",
+                    timeout=3,
+                ).json()
+                if snapshot.get("status") == "waiting_authorization":
+                    break
+            pending = snapshot.get("pendingAuthorization") or {}
+            self.assertEqual(snapshot.get("status"), "waiting_authorization")
+
+            submitted = requests.post(
+                f"{base}/api/agent/runs/{run_id}/authorization",
+                json={
+                    "authorizationId": pending.get("authorizationId"),
+                    "decision": "rejected",
+                },
+                timeout=3,
+            )
+            self.assertEqual(submitted.status_code, 200)
+            self.assertEqual(submitted.json()["status"], "waiting_credentials")
+            self.assertTrue(submitted.json()["result"]["rejected"])
+            self.assertEqual(
+                (self.project_dir / "README.md").read_text(encoding="utf-8"),
+                "# Durable Agent\n",
+            )
         finally:
             http_server.shutdown()
             http_server.server_close()

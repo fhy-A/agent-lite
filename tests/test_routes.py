@@ -155,20 +155,24 @@ class TestHealthAndConfig(TestServerFixture):
 
 class TestFileTools(TestServerFixture):
 
-    def test_read_only_registry_is_background_safe_and_idempotent(self):
+    def test_registry_declares_read_interaction_and_proposal_effects(self):
         self.assertEqual(set(server_mod.SERVER_TOOL_REGISTRY), {
             "request_user_input", "list_files", "read_file", "search_files", "glob_files",
+            "propose_edit",
         })
         interaction = server_mod.SERVER_TOOL_REGISTRY["request_user_input"]
         self.assertEqual(interaction["effect"], "interaction")
         self.assertTrue(interaction["idempotent"])
         self.assertFalse(interaction["background"])
-        for name, spec in server_mod.SERVER_TOOL_REGISTRY.items():
-            if name == "request_user_input":
-                continue
+        for name in ("list_files", "read_file", "search_files", "glob_files"):
+            spec = server_mod.SERVER_TOOL_REGISTRY[name]
             self.assertEqual(spec["effect"], "read")
             self.assertTrue(spec["idempotent"])
             self.assertTrue(spec["background"])
+        proposal = server_mod.SERVER_TOOL_REGISTRY["propose_edit"]
+        self.assertEqual(proposal["effect"], "proposal")
+        self.assertTrue(proposal["idempotent"])
+        self.assertFalse(proposal["background"])
 
     def test_http_read_only_tools_share_registry_results(self):
         cases = [

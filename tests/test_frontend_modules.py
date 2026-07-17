@@ -23,9 +23,10 @@ class TestFrontendCoreModules(unittest.TestCase):
             "getAgentRun",
             "resumeAgentRun",
             "submitAgentInput",
+            "submitAgentAuthorization",
             "watchAgentRun",
             "cancelAgentRun",
-            'if (["completed", "failed", "cancelled", "waiting_credentials", "waiting_user_input"].includes(snapshot.status))',
+            '"waiting_authorization",',
             "await onEvent?.(event, snapshot)",
         ):
             self.assertIn(expected, RUNTIME_SOURCE)

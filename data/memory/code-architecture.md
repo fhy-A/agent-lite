@@ -8,18 +8,18 @@ Code is a local web-based AI Coding Agent. It uses a Python `http.server` backen
 
 Three tiers: Browser UI → local Python service → model gateway.
 
-- **server.py** owns HTTP routing, filesystem/command safety, session persistence, local tools, upstream model connections, retry, SSE event buffering, cancellation, structured model-round aggregation, and an independent durable read-only AgentRun state machine.
+- **server.py** owns HTTP routing, filesystem/command safety, session persistence, local tools, upstream model connections, retry, SSE event buffering, cancellation, structured model-round aggregation, and a durable AgentRun state machine with read, questionnaire, and edit-authorization protocols.
 - **app.js** owns prompt/context assembly, UI projection, and the existing browser Agent loop for plan/edit/auto modes. The explicit read-only profile delegates its full multi-round loop to the server.
-- **agent-runtime.js** bridges the browser to both server-owned model rounds and durable AgentRun tasks. It polls by cursor, reconnects after transient failures, resumes credentials after a service restart, and cancels parent/child runs.
+- **agent-runtime.js** bridges the browser to both server-owned model rounds and durable AgentRun tasks. It polls by cursor, reconnects after transient failures, submits questionnaire/authorization decisions, resumes credentials after a service restart, and cancels parent/child runs.
 - **New API / compatible gateway** supplies models through `/v1/chat/completions`.
 
 ## Runtime boundary
 
 A server model run owns exactly one upstream model round. It survives browser refresh and buffers replayable raw events. The server also aggregates a structured result containing answer text, reasoning, split tool calls, finish reason, and usage.
 
-The independent `/api/agent/runs` path can persist messages and checkpoints, execute the four registered read-only tools, pause durably on the `request_user_input` interaction tool, and continue model rounds without browser orchestration. Questionnaire state is stored as `pendingInput`; validated answers are submitted through a dedicated endpoint and become the matching tool result before the run resumes. It records tool-call fingerprints before execution and reuses completed results during recovery. API keys remain memory-only; a process restart loads active model/tool work as `waiting_credentials`, while `waiting_user_input` remains answerable without credentials.
+The independent `/api/agent/runs` path can persist messages and checkpoints, execute the four registered read-only tools, pause durably on `request_user_input`, and run the registered `propose_edit` protocol. Questionnaire state is stored as `pendingInput`; edit approval state is stored as `pendingAuthorization`. Validated answers or authorization decisions become the matching tool result before the run resumes. Edit proposals carry stable content hashes and the original mtime; approved applications are serialized, backed up, atomically replaced, verified, and replay-safe if the process exits after writing. API keys remain memory-only; a process restart loads active model/tool work as `waiting_credentials`, while questionnaire and authorization waits remain actionable without credentials.
 
-The production UI exposes a `read` permission profile as the explicit ownership switch. Its session checkpoint stores `executionOwner`, `agentRunId`, `agentEventCursor`, the active child `runtimeRunId`, and any visible questionnaire state; model rounds reuse the existing SSE renderer while durable model/tool events are projected into the session in order. Cursor advancement and the projected message snapshot are persisted together. The other permission profiles never fall back into this path, so a tool call has only one executor. Permission decisions for side effects, commands, writes, and sub-agents remain browser-owned until their durable protocols are implemented.
+The production UI exposes a `read` permission profile as the explicit ownership switch. Its session checkpoint stores `executionOwner`, `agentRunId`, `agentEventCursor`, the active child `runtimeRunId`, and any visible questionnaire state; model rounds reuse the existing SSE renderer while durable model/tool events are projected into the session in order. Cursor advancement and the projected message snapshot are persisted together. Although the server protocol now supports `plan`, `accept`, and `bypass` edit semantics, those production profiles remain browser-owned until the durable authorization card and whole-task ownership switch are connected. Commands, deletion, and sub-agents also remain browser-owned.
 
 ## Safety invariants
 
@@ -28,7 +28,7 @@ The production UI exposes a `read` permission profile as the explicit ownership 
 - Durable AgentRun records never contain API keys; credential-like model option fields and credential-bearing Base URLs are rejected.
 - Path and command checks remain server-side.
 - A tool call must have one execution owner; frontend and backend must never execute the same tool-call ID concurrently.
-- Side-effecting tools require durable idempotency and permission state before they move into the server Agent loop.
+- Side-effecting tools require durable idempotency and permission state before they move into the server Agent loop; `propose_edit` is the reference implementation for that rule.
 
 ## Persistence
 

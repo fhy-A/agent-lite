@@ -53,12 +53,21 @@
     keys,
     allowedTools,
     maxRounds,
+    permissionProfile = "read",
     signal,
   }) {
     return apiJson("/api/agent/runs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId, payload, baseUrl, keys, allowedTools, maxRounds }),
+      body: JSON.stringify({
+        sessionId,
+        payload,
+        baseUrl,
+        keys,
+        allowedTools,
+        maxRounds,
+        permissionProfile,
+      }),
       signal,
     });
   }
@@ -84,6 +93,18 @@
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ answers }),
+      signal,
+    });
+  }
+
+  async function submitAgentAuthorization(
+    agentRunId,
+    { authorizationId = "", decision = "", signal } = {},
+  ) {
+    return apiJson(`/api/agent/runs/${encodeURIComponent(agentRunId)}/authorization`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ authorizationId, decision }),
       signal,
     });
   }
@@ -133,7 +154,14 @@
       }
       await onSnapshot?.(snapshot, activeCursor);
 
-      if (["completed", "failed", "cancelled", "waiting_credentials", "waiting_user_input"].includes(snapshot.status)) {
+      if ([
+        "completed",
+        "failed",
+        "cancelled",
+        "waiting_credentials",
+        "waiting_user_input",
+        "waiting_authorization",
+      ].includes(snapshot.status)) {
         return { ...snapshot, nextCursor: activeCursor };
       }
     }
@@ -243,6 +271,7 @@
     getAgentRun,
     resumeAgentRun,
     submitAgentInput,
+    submitAgentAuthorization,
     watchAgentRun,
     cancelAgentRun,
   });

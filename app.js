@@ -11130,6 +11130,7 @@ async function runServerAgentLoop(ctx) {
       keys,
       allowedTools: SERVER_AGENT_SAFE_TOOLS,
       maxRounds: MAX_TOOL_ROUNDS,
+      permissionProfile: ctx.permissionProfile || "read",
       signal: ctx.run.abortController.signal,
     });
     ctx.agentRunId = String(created.agentRunId || "");

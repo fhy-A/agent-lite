@@ -14,6 +14,22 @@
 
 ---
 
+## 2026-07-18 06:02 · Codex
+
+### 建立持久化只读 AgentRun：服务端可独立完成多轮模型与工具循环
+
+- **任务级状态机**：新增独立 `/api/agent/runs` 运行层，持久化模型选项、消息、轮次、累计用量、事件游标、待处理工具和最终结果；状态覆盖 `model`、`tools`、`waiting_credentials`、`completed`、`failed`、`cancelled`，模型轮次继续复用原有流式运行时，不改变正式前端 SSE 链路。
+- **只读闭环执行**：服务端注册表补全四个只读工具的函数定义，AgentRun 只会向模型暴露同时满足 `effect=read`、`idempotent=true`、`background=true` 的 `list_files`、`read_file`、`search_files`、`glob_files`；已验证在浏览器不轮询的情况下自动完成两轮“模型 → 读文件 → 模型”。
+- **持久化恢复与幂等**：工具执行前记录调用 ID、规范化参数和 SHA-256 指纹，执行完成后先落盘结果再补模型工具消息；服务重启时非终态任务转为 `waiting_credentials`，恢复后复用已完成工具结果且不会重复执行，同一调用 ID 在后续轮次重现时仍补齐协议消息。
+- **接口与取消语义**：新增创建、游标查询/长轮询、凭据恢复和取消端点；活动 AgentRun 暴露当前子模型运行 ID 供后续流式投影，取消会同步关闭当前模型请求，终态取消保持幂等，模型轮次上限默认 `12`、最高 `50`。
+- **凭据边界**：API Key 仅存在于运行内存并在所有终态清空，不进入快照、事件或 `data/agent-runs/*.json`；显式 Base URL 禁止携带用户名/密码，模型请求选项中顶层或嵌套的凭据字段会直接拒绝，错误文本会按当前 Key 脱敏。
+- **迁移边界保持**：正式 `app.js` 尚未切换到 AgentRun，原有会话切换、后台输出、刷新续接、权限与问卷行为保持不变；下一步先让会话检查点保存 `agentRunId` 并建立前端事件投影/单一执行所有权，再迁移有副作用工具。
+- **验证结果**：新增 `7` 项 AgentRun 定向测试，覆盖无浏览器续跑、HTTP 生命周期、重启恢复、幂等复用、重复调用 ID、主动取消、轮次上限和凭据拒绝；运行时/路由/会话恢复/并发/安全定向回归 `183 passed, 4 subtests passed`，最终全量回归 `488 passed, 6 subtests passed`，Python/JavaScript 语法与 `git diff --check` 通过。
+
+**涉及文件**：`server.py`、`tests/test_agent_runtime.py`、`docs/SERVER_AGENT_LOOP_PLAN.md`、`data/memory/code-architecture.md`、`README.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 05:16 · Codex
 
 ### 推进服务端 Agent 循环下沉：结构化轮次结果与只读工具注册表

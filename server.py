@@ -6,6 +6,7 @@ import codecs
 import ctypes
 import datetime as dt
 import difflib
+import hashlib
 import json
 import mimetypes
 import os
@@ -58,6 +59,16 @@ _model_runtime_runs = {}
 _model_runtime_lock = threading.RLock()
 _MODEL_RUNTIME_TERMINAL_TTL = 30 * 60
 _MODEL_RUNTIME_ACTIVE_TTL = 6 * 60 * 60
+_agent_runs = {}
+_agent_run_lock = threading.RLock()
+_AGENT_RUN_TERMINAL = {"completed", "failed", "cancelled"}
+_AGENT_RUN_ACTIVE = {"model", "tools"}
+_AGENT_RUN_DEFAULT_MAX_ROUNDS = 12
+_AGENT_RUN_MAX_ROUNDS = 50
+_AGENT_TOOL_MESSAGE_LIMIT = 12000
+_AGENT_CREDENTIAL_FIELDS = {
+    "apikey", "authorization", "accesstoken", "bearertoken", "token", "keys",
+}
 
 
 def _runtime_stream_text(value):
@@ -393,6 +404,725 @@ def _cancel_model_runtime_run(run_id):
             pass
     _finish_runtime_run(run, "cancelled")
     return True
+
+
+# ── Durable server-owned Agent runs ────────────────────────────────
+
+def _agent_runs_dir():
+    """Return the Agent run directory while respecting patched DATA_DIR values."""
+    return DATA_DIR / "agent-runs"
+
+
+def _safe_agent_run_id(run_id):
+    value = str(run_id or "")
+    if not re.fullmatch(r"[0-9a-f]{32}", value):
+        raise ValueError("invalid Agent run id")
+    return value
+
+
+def _agent_run_path(run_id):
+    return _agent_runs_dir() / f"{_safe_agent_run_id(run_id)}.json"
+
+
+def _json_clone(value):
+    return json.loads(json.dumps(value, ensure_ascii=False))
+
+
+def _agent_value_has_credential_field(value):
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            normalized = re.sub(r"[^a-z0-9]", "", str(key).lower())
+            if normalized in _AGENT_CREDENTIAL_FIELDS:
+                return True
+            if _agent_value_has_credential_field(nested):
+                return True
+    elif isinstance(value, list):
+        return any(_agent_value_has_credential_field(item) for item in value)
+    return False
+
+
+def _agent_base_url(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    parsed = parse.urlparse(raw)
+    if parsed.scheme and parsed.scheme not in {"http", "https"}:
+        raise ValueError("baseUrl must use http or https")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("baseUrl must not contain credentials")
+    return _normalize_runtime_base_url(raw)
+
+
+def _agent_request_options(payload):
+    """Keep model options but separate stateful messages/tools and reject credentials."""
+    options = {}
+    for key, value in dict(payload or {}).items():
+        normalized = str(key).strip().lower()
+        if normalized in {"messages", "tools", "stream", "stream_options"}:
+            continue
+        if _agent_value_has_credential_field({key: value}):
+            raise ValueError("credentials must be supplied through the keys field")
+        options[str(key)] = _json_clone(value)
+    return options
+
+
+def _agent_registry_tool_definition(name):
+    spec = SERVER_TOOL_REGISTRY.get(name) or {}
+    definition = spec.get("definition")
+    if not isinstance(definition, dict):
+        return None
+    return _json_clone(definition)
+
+
+def _agent_selected_tools(payload, allowed_tools=None):
+    requested = []
+    if allowed_tools is not None:
+        if not isinstance(allowed_tools, list):
+            raise ValueError("allowedTools must be an array")
+        requested = [str(name or "") for name in allowed_tools]
+    else:
+        payload_tools = payload.get("tools") or []
+        if not isinstance(payload_tools, list):
+            raise ValueError("payload.tools must be an array")
+        for item in payload_tools:
+            if not isinstance(item, dict):
+                continue
+            function = item.get("function") or {}
+            if isinstance(function, dict) and function.get("name"):
+                requested.append(str(function["name"]))
+        if not requested:
+            requested = list(SERVER_TOOL_REGISTRY)
+
+    selected = []
+    seen = set()
+    for name in requested:
+        if name in seen:
+            continue
+        spec = SERVER_TOOL_REGISTRY.get(name) or {}
+        if (
+            spec.get("effect") != "read"
+            or not spec.get("idempotent")
+            or not spec.get("background")
+        ):
+            continue
+        definition = _agent_registry_tool_definition(name)
+        if definition:
+            selected.append(definition)
+            seen.add(name)
+    return selected
+
+
+def _agent_run_record(run):
+    """Return the credential-free durable representation of an Agent run."""
+    return {
+        "version": 1,
+        "id": run["id"],
+        "sessionId": run["session_id"],
+        "status": run["status"],
+        "resumeStatus": run.get("resume_status", ""),
+        "error": run.get("error", ""),
+        "baseUrl": run.get("base_url", ""),
+        "request": _json_clone(run.get("request") or {}),
+        "messages": _json_clone(run.get("messages") or []),
+        "tools": _json_clone(run.get("tools") or []),
+        "rounds": _json_clone(run.get("rounds") or []),
+        "pendingToolCalls": _json_clone(run.get("pending_tool_calls") or []),
+        "toolExecutions": _json_clone(run.get("tool_executions") or {}),
+        "usage": _json_clone(run.get("usage") or {}),
+        "result": _json_clone(run.get("result") or {}),
+        "events": _json_clone(run.get("events") or []),
+        "nextSeq": int(run.get("next_seq") or 1),
+        "maxRounds": int(run.get("max_rounds") or _AGENT_RUN_DEFAULT_MAX_ROUNDS),
+        "createdAt": run.get("created_at") or now_iso(),
+        "updatedAt": run.get("updated_at") or now_iso(),
+    }
+
+
+def _persist_agent_run(run):
+    with run["persist_lock"]:
+        with run["condition"]:
+            record = _agent_run_record(run)
+        write_json(_agent_run_path(run["id"]), record)
+
+
+def _agent_public_tool_executions(run):
+    items = []
+    for call_id, execution in (run.get("tool_executions") or {}).items():
+        items.append({
+            "toolCallId": call_id,
+            "name": execution.get("name", ""),
+            "arguments": execution.get("arguments", "{}"),
+            "status": execution.get("status", ""),
+            "result": _json_clone(execution.get("result")),
+            "error": execution.get("error", ""),
+            "startedAt": execution.get("startedAt", ""),
+            "completedAt": execution.get("completedAt", ""),
+        })
+    return items
+
+
+def _agent_snapshot(run, cursor=0):
+    cursor = max(0, int(cursor or 0))
+    with run["condition"]:
+        events = [dict(event) for event in run["events"] if event["seq"] > cursor]
+        tools = []
+        for definition in run.get("tools") or []:
+            function = definition.get("function") or {}
+            if function.get("name"):
+                tools.append(str(function["name"]))
+        return {
+            "agentRunId": run["id"],
+            "sessionId": run["session_id"],
+            "status": run["status"],
+            "error": run.get("error", ""),
+            "model": str((run.get("request") or {}).get("model") or ""),
+            "round": len(run.get("rounds") or []),
+            "maxRounds": run["max_rounds"],
+            "allowedTools": tools,
+            "activeRuntimeRunId": run.get("active_runtime_id", ""),
+            "pendingToolCalls": _json_clone(run.get("pending_tool_calls") or []),
+            "toolExecutions": _agent_public_tool_executions(run),
+            "usage": _json_clone(run.get("usage") or {}),
+            "result": _json_clone(run.get("result") or {}),
+            "events": events,
+            "nextCursor": events[-1]["seq"] if events else cursor,
+            "createdAt": run["created_at"],
+            "updatedAt": run["updated_at"],
+        }
+
+
+def _append_agent_event(run, event_type, data=None):
+    with run["condition"]:
+        if run["status"] in _AGENT_RUN_TERMINAL:
+            return None
+        event = {
+            "seq": run["next_seq"],
+            "type": str(event_type or "event"),
+            "data": _json_clone(data if data is not None else {}),
+            "createdAt": now_iso(),
+        }
+        run["next_seq"] += 1
+        run["events"].append(event)
+        run["updated_at"] = event["createdAt"]
+        run["condition"].notify_all()
+    _persist_agent_run(run)
+    return event
+
+
+def _set_agent_status(run, status, resume_status=""):
+    with run["condition"]:
+        if run["status"] in _AGENT_RUN_TERMINAL:
+            return False
+        run["status"] = str(status)
+        run["resume_status"] = str(resume_status or "")
+        run["updated_at"] = now_iso()
+        run["condition"].notify_all()
+    _persist_agent_run(run)
+    return True
+
+
+def _redact_agent_secrets(run, value):
+    text = str(value or "")
+    for key in run.get("keys") or []:
+        if key:
+            text = text.replace(str(key), "[REDACTED]")
+    return text
+
+
+def _finish_agent_run(run, status, error_message=""):
+    if status not in _AGENT_RUN_TERMINAL:
+        raise ValueError("invalid terminal Agent status")
+    with run["condition"]:
+        if run["status"] in _AGENT_RUN_TERMINAL:
+            return False
+        run["status"] = status
+        run["resume_status"] = ""
+        run["error"] = _redact_agent_secrets(run, error_message)[:2000]
+        run["active_runtime_id"] = ""
+        run["keys"] = []
+        run["updated_at"] = now_iso()
+        event = {
+            "seq": run["next_seq"],
+            "type": status,
+            "data": {"error": run["error"]} if run["error"] else {},
+            "createdAt": run["updated_at"],
+        }
+        run["next_seq"] += 1
+        run["events"].append(event)
+        run["condition"].notify_all()
+    _persist_agent_run(run)
+    return True
+
+
+def _agent_run_from_record(record):
+    run_id = _safe_agent_run_id(record.get("id"))
+    persisted_status = str(record.get("status") or "failed")
+    if persisted_status in _AGENT_RUN_TERMINAL:
+        status = persisted_status
+        resume_status = ""
+    else:
+        resume_status = str(record.get("resumeStatus") or persisted_status)
+        if resume_status not in _AGENT_RUN_ACTIVE:
+            resume_status = "tools" if record.get("pendingToolCalls") else "model"
+        status = "waiting_credentials"
+    events = list(record.get("events") or [])
+    next_seq = max(
+        int(record.get("nextSeq") or 1),
+        max((int(event.get("seq") or 0) for event in events), default=0) + 1,
+    )
+    request_options = dict(record.get("request") or {})
+    if _agent_value_has_credential_field(request_options):
+        raise ValueError("persisted Agent request contains credentials")
+    return {
+        "id": run_id,
+        "session_id": str(record.get("sessionId") or ""),
+        "status": status,
+        "resume_status": resume_status,
+        "error": str(record.get("error") or ""),
+        "base_url": _agent_base_url(record.get("baseUrl") or ""),
+        "request": request_options,
+        "messages": list(record.get("messages") or []),
+        "tools": list(record.get("tools") or []),
+        "rounds": list(record.get("rounds") or []),
+        "pending_tool_calls": list(record.get("pendingToolCalls") or []),
+        "tool_executions": dict(record.get("toolExecutions") or {}),
+        "usage": dict(record.get("usage") or {}),
+        "result": dict(record.get("result") or {}),
+        "events": events,
+        "next_seq": next_seq,
+        "max_rounds": max(1, min(int(record.get("maxRounds") or _AGENT_RUN_DEFAULT_MAX_ROUNDS), _AGENT_RUN_MAX_ROUNDS)),
+        "created_at": str(record.get("createdAt") or now_iso()),
+        "updated_at": str(record.get("updatedAt") or now_iso()),
+        "condition": threading.Condition(threading.RLock()),
+        "persist_lock": threading.RLock(),
+        "cancel_event": threading.Event(),
+        "keys": [],
+        "active_runtime_id": "",
+        "worker": None,
+    }
+
+
+def _get_agent_run(run_id):
+    try:
+        safe_id = _safe_agent_run_id(run_id)
+    except ValueError:
+        return None
+    with _agent_run_lock:
+        existing = _agent_runs.get(safe_id)
+        if existing:
+            return existing
+    record = read_json(_agent_run_path(safe_id), None)
+    if not isinstance(record, dict):
+        return None
+    run = _agent_run_from_record(record)
+    if run["status"] == "waiting_credentials" and record.get("status") != "waiting_credentials":
+        _append_agent_event(run, "waiting_credentials", {
+            "resumeStatus": run["resume_status"],
+            "reason": "server_restarted",
+        })
+    with _agent_run_lock:
+        return _agent_runs.setdefault(safe_id, run)
+
+
+def _agent_usage_add(total, usage):
+    for key, value in dict(usage or {}).items():
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            total[key] = total.get(key, 0) + value
+        elif key not in total:
+            total[key] = value
+
+
+def _normalize_agent_tool_calls(run, tool_calls, round_number):
+    normalized = []
+    for fallback_index, source in enumerate(tool_calls or []):
+        if not isinstance(source, dict):
+            continue
+        function = source.get("function") or {}
+        if not isinstance(function, dict):
+            continue
+        name = str(function.get("name") or "").strip()
+        raw_arguments = function.get("arguments")
+        if isinstance(raw_arguments, str):
+            arguments_text = raw_arguments.strip() or "{}"
+        else:
+            arguments_text = json.dumps(raw_arguments or {}, ensure_ascii=False, separators=(",", ":"))
+        try:
+            arguments = json.loads(arguments_text)
+            if not isinstance(arguments, dict):
+                raise ValueError("tool arguments must be an object")
+        except Exception as exc:
+            arguments = None
+            parse_error = str(exc)
+        else:
+            parse_error = ""
+            arguments_text = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+        try:
+            index = int(source.get("index", fallback_index) or 0)
+        except (TypeError, ValueError):
+            index = fallback_index
+        call_id = str(source.get("id") or f"call_{run['id']}_{round_number}_{index}")
+        fingerprint = hashlib.sha256(
+            f"{name}\0{arguments_text}".encode("utf-8", errors="replace")
+        ).hexdigest()
+        normalized.append({
+            "index": index,
+            "id": call_id,
+            "type": "function",
+            "function": {"name": name, "arguments": arguments_text},
+            "arguments": arguments,
+            "parseError": parse_error,
+            "fingerprint": fingerprint,
+        })
+    normalized.sort(key=lambda call: call["index"])
+    return normalized
+
+
+def _agent_assistant_tool_calls(tool_calls):
+    return [{
+        "id": call["id"],
+        "type": "function",
+        "function": dict(call["function"]),
+    } for call in tool_calls]
+
+
+def _agent_tool_message_content(result):
+    value = _json_clone(result)
+    if isinstance(value, dict):
+        value.pop("base64", None)
+        value.pop("svgText", None)
+        content = value.get("content")
+        if isinstance(content, str) and len(content) > _AGENT_TOOL_MESSAGE_LIMIT:
+            value["content"] = (
+                content[:_AGENT_TOOL_MESSAGE_LIMIT]
+                + f"\n...[truncated {len(content) - _AGENT_TOOL_MESSAGE_LIMIT} characters]"
+            )
+            value["truncatedForModel"] = True
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _agent_has_current_tool_message(run, call_id):
+    """Check only tool results following the latest assistant tool-call turn."""
+    messages = run.get("messages") or []
+    latest_assistant = -1
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if isinstance(message, dict) and message.get("role") == "assistant":
+            latest_assistant = index
+            break
+    return any(
+        isinstance(message, dict)
+        and message.get("role") == "tool"
+        and message.get("tool_call_id") == call_id
+        for message in messages[latest_assistant + 1:]
+    )
+
+
+def _execute_agent_pending_tools(run):
+    allowed_names = {
+        str((definition.get("function") or {}).get("name") or "")
+        for definition in run.get("tools") or []
+        if isinstance(definition, dict)
+    }
+    while run.get("pending_tool_calls"):
+        if run["cancel_event"].is_set():
+            _finish_agent_run(run, "cancelled")
+            return False
+        call = run["pending_tool_calls"][0]
+        call_id = call["id"]
+        name = str((call.get("function") or {}).get("name") or "")
+        execution = run["tool_executions"].get(call_id)
+        if execution and execution.get("fingerprint") != call.get("fingerprint"):
+            raise ValueError(f"tool call id {call_id} was reused with different arguments")
+
+        reused_execution = bool(execution and execution.get("status") == "completed")
+        if reused_execution:
+            result = execution.get("result") or {}
+        else:
+            execution = {
+                "name": name,
+                "arguments": (call.get("function") or {}).get("arguments", "{}"),
+                "fingerprint": call.get("fingerprint", ""),
+                "status": "running",
+                "result": None,
+                "error": "",
+                "startedAt": now_iso(),
+                "completedAt": "",
+            }
+            run["tool_executions"][call_id] = execution
+            _append_agent_event(run, "tool_started", {
+                "toolCallId": call_id,
+                "name": name,
+                "arguments": execution["arguments"],
+            })
+            try:
+                spec = SERVER_TOOL_REGISTRY.get(name) or {}
+                if name not in allowed_names:
+                    raise ValueError(f"tool is not allowed for this Agent run: {name}")
+                if (
+                    spec.get("effect") != "read"
+                    or not spec.get("idempotent")
+                    or not spec.get("background")
+                ):
+                    raise ValueError(f"tool is not safe for background execution: {name}")
+                if call.get("parseError") or not isinstance(call.get("arguments"), dict):
+                    raise ValueError(call.get("parseError") or "tool arguments must be an object")
+                result = execute_registered_tool(name, call["arguments"])
+            except Exception as exc:
+                result = {"ok": False, "action": name, "error": str(exc)[:2000]}
+                execution["error"] = result["error"]
+            if run["cancel_event"].is_set() or run["status"] in _AGENT_RUN_TERMINAL:
+                return False
+            execution["status"] = "completed"
+            execution["result"] = _json_clone(result)
+            execution["completedAt"] = now_iso()
+            _persist_agent_run(run)
+
+        if not _agent_has_current_tool_message(run, call_id):
+            run["messages"].append({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "name": name,
+                "content": _agent_tool_message_content(result),
+            })
+        run["pending_tool_calls"] = [
+            pending for pending in run["pending_tool_calls"] if pending.get("id") != call_id
+        ]
+        _append_agent_event(run, "tool_completed", {
+            "toolCallId": call_id,
+            "name": name,
+            "result": result,
+            "replayed": reused_execution,
+        })
+    return True
+
+
+def _agent_wait_for_model(run, model_run):
+    with model_run["condition"]:
+        while model_run["status"] == "running":
+            if run["cancel_event"].is_set():
+                _cancel_model_runtime_run(model_run["id"])
+                break
+            model_run["condition"].wait(timeout=0.1)
+    return _runtime_snapshot(model_run, 0)
+
+
+def _agent_run_worker(run):
+    try:
+        while run["status"] not in _AGENT_RUN_TERMINAL:
+            if run["cancel_event"].is_set():
+                _finish_agent_run(run, "cancelled")
+                return
+
+            if run["status"] == "tools" or run.get("pending_tool_calls"):
+                if not _execute_agent_pending_tools(run):
+                    return
+                _set_agent_status(run, "model")
+                _append_agent_event(run, "model_pending", {
+                    "round": len(run["rounds"]) + 1,
+                })
+                continue
+
+            if run["status"] != "model":
+                return
+            if len(run["rounds"]) >= run["max_rounds"]:
+                _finish_agent_run(run, "failed", f"Agent exceeded {run['max_rounds']} model rounds")
+                return
+
+            round_number = len(run["rounds"]) + 1
+            payload = dict(run["request"])
+            payload["messages"] = _json_clone(run["messages"])
+            if run["tools"]:
+                payload["tools"] = _json_clone(run["tools"])
+                payload["tool_choice"] = payload.get("tool_choice") or "auto"
+            else:
+                payload.pop("tool_choice", None)
+
+            model_run = _create_model_runtime_run(
+                run["session_id"], payload, run["base_url"], list(run["keys"]),
+            )
+            with run["condition"]:
+                run["active_runtime_id"] = model_run["id"]
+            _append_agent_event(run, "model_started", {
+                "round": round_number,
+                "runtimeRunId": model_run["id"],
+            })
+            model_snapshot = _agent_wait_for_model(run, model_run)
+            with run["condition"]:
+                run["active_runtime_id"] = ""
+            if run["cancel_event"].is_set() or model_snapshot["status"] == "cancelled":
+                _finish_agent_run(run, "cancelled")
+                return
+            if model_snapshot["status"] != "completed":
+                _finish_agent_run(run, "failed", model_snapshot.get("error") or "model round failed")
+                return
+
+            model_result = model_snapshot["result"]
+            tool_calls = _normalize_agent_tool_calls(run, model_result.get("toolCalls"), round_number)
+            assistant_message = {
+                "role": "assistant",
+                "content": str(model_result.get("content") or ""),
+            }
+            if tool_calls:
+                assistant_message["tool_calls"] = _agent_assistant_tool_calls(tool_calls)
+            run["messages"].append(assistant_message)
+            round_record = {
+                "round": round_number,
+                "runtimeRunId": model_run["id"],
+                "content": str(model_result.get("content") or ""),
+                "reasoning": str(model_result.get("reasoning") or ""),
+                "toolCalls": _agent_assistant_tool_calls(tool_calls),
+                "finishReason": str(model_result.get("finishReason") or ""),
+                "usage": _json_clone(model_result.get("usage") or {}),
+                "completedAt": now_iso(),
+            }
+            run["rounds"].append(round_record)
+            _agent_usage_add(run["usage"], round_record["usage"])
+            _append_agent_event(run, "model_completed", round_record)
+
+            if run["cancel_event"].is_set() or run["status"] in _AGENT_RUN_TERMINAL:
+                _finish_agent_run(run, "cancelled")
+                return
+
+            if tool_calls:
+                run["pending_tool_calls"] = tool_calls
+                _set_agent_status(run, "tools")
+                continue
+
+            run["result"] = {
+                "content": round_record["content"],
+                "reasoning": round_record["reasoning"],
+                "finishReason": round_record["finishReason"],
+                "usage": _json_clone(run["usage"]),
+            }
+            _finish_agent_run(run, "completed")
+            return
+    except Exception as exc:
+        _finish_agent_run(run, "failed", str(exc))
+    finally:
+        with run["condition"]:
+            run["keys"] = []
+            run["active_runtime_id"] = ""
+            run["worker"] = None
+
+
+def _start_agent_worker(run):
+    worker = threading.Thread(target=_agent_run_worker, args=(run,), daemon=True)
+    with run["condition"]:
+        run["worker"] = worker
+    worker.start()
+    return worker
+
+
+def _create_agent_run(session_id, payload, base_url, keys, allowed_tools=None, max_rounds=None):
+    if not isinstance(payload, dict):
+        raise ValueError("payload must be an object")
+    messages = payload.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise ValueError("payload.messages must be a non-empty array")
+    if any(not isinstance(message, dict) for message in messages):
+        raise ValueError("payload.messages items must be objects")
+    if not isinstance(keys, list):
+        raise ValueError("keys must be an array")
+    request_options = _agent_request_options(payload)
+    if not str(request_options.get("model") or "").strip():
+        raise ValueError("payload.model is required")
+    tools = _agent_selected_tools(payload, allowed_tools)
+    try:
+        rounds_limit = int(max_rounds or _AGENT_RUN_DEFAULT_MAX_ROUNDS)
+    except (TypeError, ValueError):
+        raise ValueError("maxRounds must be an integer")
+    rounds_limit = max(1, min(rounds_limit, _AGENT_RUN_MAX_ROUNDS))
+    run_id = uuid.uuid4().hex
+    timestamp = now_iso()
+    run = {
+        "id": run_id,
+        "session_id": str(session_id or ""),
+        "status": "model",
+        "resume_status": "",
+        "error": "",
+        "base_url": _agent_base_url(base_url),
+        "request": request_options,
+        "messages": _json_clone(messages),
+        "tools": tools,
+        "rounds": [],
+        "pending_tool_calls": [],
+        "tool_executions": {},
+        "usage": {},
+        "result": {},
+        "events": [],
+        "next_seq": 1,
+        "max_rounds": rounds_limit,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "condition": threading.Condition(threading.RLock()),
+        "persist_lock": threading.RLock(),
+        "cancel_event": threading.Event(),
+        "keys": [str(key) for key in keys if str(key)],
+        "active_runtime_id": "",
+        "worker": None,
+    }
+    with _agent_run_lock:
+        _agent_runs[run_id] = run
+    try:
+        _append_agent_event(run, "created", {
+            "model": str(request_options.get("model") or ""),
+            "allowedTools": [
+                str((definition.get("function") or {}).get("name") or "")
+                for definition in tools
+            ],
+            "maxRounds": rounds_limit,
+        })
+        _start_agent_worker(run)
+    except Exception:
+        run["keys"] = []
+        with _agent_run_lock:
+            _agent_runs.pop(run_id, None)
+        raise
+    return run
+
+
+def _resume_agent_run(run, keys, base_url=""):
+    if not isinstance(keys, list):
+        raise ValueError("keys must be an array")
+    with run["condition"]:
+        if run["status"] != "waiting_credentials":
+            raise ValueError(f"Agent run cannot resume from status {run['status']}")
+        resume_status = run.get("resume_status") or (
+            "tools" if run.get("pending_tool_calls") else "model"
+        )
+        run["status"] = resume_status
+        run["resume_status"] = ""
+        run["keys"] = [str(key) for key in keys if str(key)]
+        if base_url:
+            run["base_url"] = _agent_base_url(base_url)
+        run["cancel_event"].clear()
+        run["updated_at"] = now_iso()
+    try:
+        _append_agent_event(run, "resumed", {"status": resume_status})
+        _start_agent_worker(run)
+    except Exception:
+        with run["condition"]:
+            run["status"] = "waiting_credentials"
+            run["resume_status"] = resume_status
+            run["keys"] = []
+        raise
+    return run
+
+
+def _cancel_agent_run(run_id):
+    run = _get_agent_run(run_id)
+    if not run:
+        return False
+    if run["status"] in _AGENT_RUN_TERMINAL:
+        return run
+    run["cancel_event"].set()
+    runtime_id = run.get("active_runtime_id")
+    if runtime_id:
+        _cancel_model_runtime_run(runtime_id)
+    _finish_agent_run(run, "cancelled")
+    return run
 
 
 def _hidden_subprocess_kwargs():
@@ -2017,27 +2747,104 @@ def execute_glob_files_tool(body):
     }
 
 
+_SERVER_TOOL_DEFINITIONS = {
+    "list_files": {
+        "type": "function",
+        "function": {
+            "name": "list_files",
+            "description": "List files and directories in the current project. Use maxDepth for shallow recursion.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Project-relative directory; empty means project root."},
+                    "maxDepth": {"type": "integer", "description": "Recursion depth, normally 1-3."},
+                },
+                "required": [],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "read_file": {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read a project or attachment file. Text files support an optional inclusive line range.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Project-relative file path."},
+                    "startLine": {"type": "integer", "description": "Optional one-based start line."},
+                    "endLine": {"type": "integer", "description": "Optional inclusive end line."},
+                },
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "search_files": {
+        "type": "function",
+        "function": {
+            "name": "search_files",
+            "description": "Search project file names and text content with optional regex, type, glob, and context filters.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Substring or regular expression."},
+                    "path": {"type": "string", "description": "Optional project-relative search directory."},
+                    "regex": {"type": "boolean", "description": "Enable regular-expression matching."},
+                    "type": {"type": "string", "description": "Comma or space separated file extensions."},
+                    "glob": {"type": "string", "description": "Optional file-name glob filter."},
+                    "contextAround": {"type": "integer", "description": "Context lines before and after each match."},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "glob_files": {
+        "type": "function",
+        "function": {
+            "name": "glob_files",
+            "description": "Find project files and directories whose names or relative paths match a glob pattern.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Glob pattern such as **/*.py or *.js."},
+                    "path": {"type": "string", "description": "Optional project-relative starting directory."},
+                },
+                "required": ["pattern"],
+                "additionalProperties": False,
+            },
+        },
+    },
+}
+
+
 SERVER_TOOL_REGISTRY = {
     "list_files": {
         "execute": execute_list_files_tool,
+        "definition": _SERVER_TOOL_DEFINITIONS["list_files"],
         "effect": "read",
         "idempotent": True,
         "background": True,
     },
     "read_file": {
         "execute": execute_read_file_tool,
+        "definition": _SERVER_TOOL_DEFINITIONS["read_file"],
         "effect": "read",
         "idempotent": True,
         "background": True,
     },
     "search_files": {
         "execute": execute_search_files_tool,
+        "definition": _SERVER_TOOL_DEFINITIONS["search_files"],
         "effect": "read",
         "idempotent": True,
         "background": True,
     },
     "glob_files": {
         "execute": execute_glob_files_tool,
+        "definition": _SERVER_TOOL_DEFINITIONS["glob_files"],
         "effect": "read",
         "idempotent": True,
         "background": True,
@@ -2513,6 +3320,20 @@ class CodeHandler(BaseHTTPRequestHandler):
                         run["condition"].wait(timeout=wait_seconds)
                 self.send_json(_runtime_snapshot(run, cursor))
                 return
+            if route.startswith("/api/agent/runs/"):
+                run_id = route.rsplit("/", 1)[-1]
+                run = _get_agent_run(run_id)
+                if not run:
+                    self.send_json({"error": "Agent run not found"}, 404)
+                    return
+                cursor = max(0, int((query.get("cursor") or [0])[0] or 0))
+                wait_seconds = max(0.0, min(float((query.get("wait") or [0])[0] or 0), 30.0))
+                with run["condition"]:
+                    has_new_events = any(event["seq"] > cursor for event in run["events"])
+                    if not has_new_events and run["status"] in _AGENT_RUN_ACTIVE and wait_seconds > 0:
+                        run["condition"].wait(timeout=wait_seconds)
+                self.send_json(_agent_snapshot(run, cursor))
+                return
             if route == "/api/config":
                 self.send_json(load_config())
                 return
@@ -2646,6 +3467,44 @@ class CodeHandler(BaseHTTPRequestHandler):
             return
 
         try:
+            route = parse.urlparse(self.path).path
+            if route.rstrip("/") == "/api/agent/runs":
+                body = self.read_body_json()
+                payload = body.get("payload")
+                keys = body.get("keys")
+                if not isinstance(payload, dict):
+                    self.send_json({"error": "payload must be an object"}, 400)
+                    return
+                if keys is not None and not isinstance(keys, list):
+                    self.send_json({"error": "keys must be an array"}, 400)
+                    return
+                run = _create_agent_run(
+                    body.get("sessionId"),
+                    payload,
+                    body.get("baseUrl"),
+                    keys or [],
+                    body.get("allowedTools"),
+                    body.get("maxRounds"),
+                )
+                self.send_json({
+                    "agentRunId": run["id"],
+                    "status": run["status"],
+                }, 201)
+                return
+            if route.startswith("/api/agent/runs/") and route.endswith("/resume"):
+                run_id = route.rsplit("/", 2)[-2]
+                run = _get_agent_run(run_id)
+                if not run:
+                    self.send_json({"error": "Agent run not found"}, 404)
+                    return
+                body = self.read_body_json()
+                keys = body.get("keys")
+                if keys is not None and not isinstance(keys, list):
+                    self.send_json({"error": "keys must be an array"}, 400)
+                    return
+                _resume_agent_run(run, keys or [], body.get("baseUrl") or "")
+                self.send_json({"agentRunId": run["id"], "status": run["status"]})
+                return
             if self.path.rstrip("/") == "/api/runtime/runs":
                 body = self.read_body_json()
                 payload = body.get("payload")
@@ -2769,6 +3628,14 @@ class CodeHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         try:
+            if self.path.startswith("/api/agent/runs/"):
+                run_id = parse.urlparse(self.path).path.rsplit("/", 1)[-1]
+                run = _cancel_agent_run(run_id)
+                if not run:
+                    self.send_json({"error": "Agent run not found"}, 404)
+                else:
+                    self.send_json({"ok": True, "agentRunId": run_id, "status": run["status"]})
+                return
             if self.path.startswith("/api/runtime/runs/"):
                 run_id = parse.urlparse(self.path).path.rsplit("/", 1)[-1]
                 if not _cancel_model_runtime_run(run_id):

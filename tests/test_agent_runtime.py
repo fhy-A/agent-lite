@@ -1,0 +1,446 @@
+"""Durable server-owned Agent run regression tests.
+
+Run: python -m pytest tests/test_agent_runtime.py -v
+"""
+
+import hashlib
+import json
+import tempfile
+import threading
+import time
+import unittest
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from unittest import mock
+
+import requests
+
+import server as server_mod
+
+
+class _AgentUpstream(BaseHTTPRequestHandler):
+    calls = 0
+    payloads = []
+    authorizations = []
+    slow_started = threading.Event()
+    release_slow = threading.Event()
+
+    def log_message(self, *_args):
+        return
+
+    def do_POST(self):
+        type(self).calls += 1
+        type(self).authorizations.append(self.headers.get("Authorization", ""))
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        payload = json.loads(self.rfile.read(length) or b"{}")
+        type(self).payloads.append(payload)
+        messages = payload.get("messages") or []
+        if any(
+            message.get("role") == "user" and message.get("content") == "slow request"
+            for message in messages
+        ):
+            type(self).slow_started.set()
+            type(self).release_slow.wait(timeout=3)
+        tool_result_count = sum(message.get("role") == "tool" for message in messages)
+        repeat_id = any(
+            message.get("role") == "user" and message.get("content") == "repeat tool id"
+            for message in messages
+        )
+        should_call_tool = tool_result_count == 0 or (repeat_id and tool_result_count < 2)
+        if not should_call_tool:
+            frames = [
+                {"choices": [{"delta": {"content": "read-only task complete"}, "finish_reason": "stop"}]},
+                {"choices": [], "usage": {"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11}},
+            ]
+        else:
+            frames = [
+                {
+                    "choices": [{
+                        "delta": {
+                            "reasoning_content": "reading project file",
+                            "tool_calls": [{
+                                "index": 0,
+                                "id": "agent-call-1",
+                                "type": "function",
+                                "function": {"name": "read_", "arguments": "{\"pa"},
+                            }],
+                        },
+                    }],
+                },
+                {
+                    "choices": [{
+                        "delta": {
+                            "tool_calls": [{
+                                "index": 0,
+                                "function": {"name": "file", "arguments": "th\":\"README.md\"}"},
+                            }],
+                        },
+                        "finish_reason": "tool_calls",
+                    }],
+                },
+                {"choices": [], "usage": {"prompt_tokens": 5, "completion_tokens": 4, "total_tokens": 9}},
+            ]
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.end_headers()
+        for frame in frames:
+            self.wfile.write(("data: " + json.dumps(frame) + "\n\n").encode("utf-8"))
+            self.wfile.flush()
+        self.wfile.write(b"data: [DONE]\n\n")
+        self.wfile.flush()
+
+
+class TestDurableAgentRuntime(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.upstream = ThreadingHTTPServer(("127.0.0.1", 0), _AgentUpstream)
+        cls.thread = threading.Thread(target=cls.upstream.serve_forever, daemon=True)
+        cls.thread.start()
+        cls.base_url = f"http://127.0.0.1:{cls.upstream.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.upstream.shutdown()
+        cls.upstream.server_close()
+        cls.thread.join(timeout=2)
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory(prefix="code_agent_runtime_")
+        self.data_dir = Path(self.temp_dir.name) / "data"
+        self.project_dir = Path(self.temp_dir.name) / "project"
+        self.data_dir.mkdir()
+        self.project_dir.mkdir()
+        (self.project_dir / "README.md").write_text("# Durable Agent\n", encoding="utf-8")
+        self.config_path = self.data_dir / "config.json"
+        self.config_path.write_text(json.dumps({
+            "projectRoot": str(self.project_dir),
+            "newApiBaseUrl": self.base_url,
+        }), encoding="utf-8")
+        self.patchers = [
+            mock.patch.object(server_mod, "DATA_DIR", self.data_dir),
+            mock.patch.object(server_mod, "CONFIG_PATH", self.config_path),
+        ]
+        for patcher in self.patchers:
+            patcher.start()
+        with server_mod._agent_run_lock:
+            server_mod._agent_runs.clear()
+        with server_mod._model_runtime_lock:
+            server_mod._model_runtime_runs.clear()
+        _AgentUpstream.calls = 0
+        _AgentUpstream.payloads = []
+        _AgentUpstream.authorizations = []
+        _AgentUpstream.slow_started.clear()
+        _AgentUpstream.release_slow.clear()
+
+    def tearDown(self):
+        _AgentUpstream.release_slow.set()
+        for patcher in reversed(self.patchers):
+            patcher.stop()
+        self.temp_dir.cleanup()
+
+    def _wait_terminal(self, run, timeout=5):
+        deadline = time.time() + timeout
+        with run["condition"]:
+            while run["status"] not in server_mod._AGENT_RUN_TERMINAL and time.time() < deadline:
+                run["condition"].wait(timeout=0.05)
+        self.assertIn(run["status"], server_mod._AGENT_RUN_TERMINAL)
+
+    def test_agent_continues_without_browser_polling_and_executes_read_only_loop(self):
+        run = server_mod._create_agent_run(
+            "session-agent",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "inspect the project"}],
+                "tools": [
+                    server_mod._SERVER_TOOL_DEFINITIONS["read_file"],
+                    {"type": "function", "function": {"name": "write_file", "parameters": {}}},
+                ],
+            },
+            self.base_url,
+            ["agent-secret-key"],
+            allowed_tools=["read_file", "write_file"],
+        )
+
+        # Do not read a snapshot until the worker has reached a terminal state.
+        self._wait_terminal(run)
+        snapshot = server_mod._agent_snapshot(run, 0)
+
+        self.assertEqual(run["status"], "completed")
+        self.assertEqual(_AgentUpstream.calls, 2)
+        self.assertEqual(snapshot["allowedTools"], ["read_file"])
+        self.assertEqual(snapshot["round"], 2)
+        self.assertEqual(snapshot["result"]["content"], "read-only task complete")
+        self.assertEqual(snapshot["usage"]["total_tokens"], 20)
+        self.assertEqual(len(snapshot["toolExecutions"]), 1)
+        self.assertEqual(snapshot["toolExecutions"][0]["name"], "read_file")
+        self.assertEqual(snapshot["toolExecutions"][0]["status"], "completed")
+        self.assertIn("Durable Agent", json.dumps(snapshot["toolExecutions"][0]["result"]))
+        self.assertEqual(run["keys"], [])
+        self.assertEqual(
+            [item["function"]["name"] for item in _AgentUpstream.payloads[0]["tools"]],
+            ["read_file"],
+        )
+        event_types = [event["type"] for event in snapshot["events"]]
+        for expected in (
+            "created", "model_started", "model_completed", "tool_started",
+            "tool_completed", "completed",
+        ):
+            self.assertIn(expected, event_types)
+
+        persisted = server_mod._agent_run_path(run["id"]).read_text(encoding="utf-8")
+        self.assertNotIn("agent-secret-key", persisted)
+        self.assertNotIn("agent-secret-key", json.dumps(snapshot))
+        self.assertEqual(_AgentUpstream.authorizations, ["Bearer agent-secret-key"] * 2)
+
+    def test_restart_recovery_reuses_completed_tool_execution(self):
+        run_id = uuid.uuid4().hex
+        arguments = '{"path":"README.md"}'
+        fingerprint = hashlib.sha256(f"read_file\0{arguments}".encode()).hexdigest()
+        timestamp = server_mod.now_iso()
+        tool_result = {
+            "ok": True,
+            "action": "read_file",
+            "path": "README.md",
+            "content": "# Durable Agent\n",
+            "size": 16,
+            "truncated": False,
+            "lineRange": None,
+        }
+        record = {
+            "version": 1,
+            "id": run_id,
+            "sessionId": "restart-session",
+            "status": "tools",
+            "resumeStatus": "",
+            "error": "",
+            "baseUrl": self.base_url,
+            "request": {"model": "test-model", "tool_choice": "auto"},
+            "messages": [
+                {"role": "user", "content": "inspect after restart"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "agent-call-1",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": arguments},
+                    }],
+                },
+            ],
+            "tools": [server_mod._SERVER_TOOL_DEFINITIONS["read_file"]],
+            "rounds": [{"round": 1, "toolCalls": [], "usage": {"total_tokens": 9}}],
+            "pendingToolCalls": [{
+                "index": 0,
+                "id": "agent-call-1",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": arguments},
+                "arguments": {"path": "README.md"},
+                "parseError": "",
+                "fingerprint": fingerprint,
+            }],
+            "toolExecutions": {
+                "agent-call-1": {
+                    "name": "read_file",
+                    "arguments": arguments,
+                    "fingerprint": fingerprint,
+                    "status": "completed",
+                    "result": tool_result,
+                    "error": "",
+                    "startedAt": timestamp,
+                    "completedAt": timestamp,
+                },
+            },
+            "usage": {"total_tokens": 9},
+            "result": {},
+            "events": [],
+            "nextSeq": 1,
+            "maxRounds": 4,
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+        }
+        server_mod.write_json(server_mod._agent_run_path(run_id), record)
+
+        loaded = server_mod._get_agent_run(run_id)
+        self.assertEqual(loaded["status"], "waiting_credentials")
+        with mock.patch.object(server_mod, "execute_registered_tool") as execute_mock:
+            server_mod._resume_agent_run(loaded, ["restart-secret-key"])
+            self._wait_terminal(loaded)
+            execute_mock.assert_not_called()
+
+        snapshot = server_mod._agent_snapshot(loaded, 0)
+        self.assertEqual(snapshot["status"], "completed")
+        self.assertEqual(snapshot["result"]["content"], "read-only task complete")
+        self.assertEqual(_AgentUpstream.calls, 1)
+        self.assertTrue(any(
+            message.get("role") == "tool" and message.get("tool_call_id") == "agent-call-1"
+            for message in loaded["messages"]
+        ))
+        persisted = server_mod._agent_run_path(run_id).read_text(encoding="utf-8")
+        self.assertNotIn("restart-secret-key", persisted)
+
+    def test_repeated_tool_call_id_reuses_execution_but_keeps_protocol_pair(self):
+        original_execute = server_mod.execute_registered_tool
+        with mock.patch.object(
+            server_mod,
+            "execute_registered_tool",
+            wraps=original_execute,
+        ) as execute_mock:
+            run = server_mod._create_agent_run(
+                "repeat-call-session",
+                {
+                    "model": "test-model",
+                    "messages": [{"role": "user", "content": "repeat tool id"}],
+                    "tools": [server_mod._SERVER_TOOL_DEFINITIONS["read_file"]],
+                },
+                self.base_url,
+                ["repeat-secret-key"],
+                allowed_tools=["read_file"],
+                max_rounds=4,
+            )
+            self._wait_terminal(run)
+
+        self.assertEqual(run["status"], "completed")
+        self.assertEqual(_AgentUpstream.calls, 3)
+        self.assertEqual(execute_mock.call_count, 1)
+        self.assertEqual(
+            sum(message.get("role") == "tool" for message in run["messages"]),
+            2,
+        )
+        replay_events = [
+            event for event in run["events"]
+            if event["type"] == "tool_completed" and event["data"].get("replayed")
+        ]
+        self.assertEqual(len(replay_events), 1)
+
+    def test_model_round_limit_is_enforced(self):
+        run = server_mod._create_agent_run(
+            "round-limit-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "repeat tool id"}],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["read_file"]],
+            },
+            self.base_url,
+            ["round-limit-secret-key"],
+            allowed_tools=["read_file"],
+            max_rounds=2,
+        )
+        self._wait_terminal(run)
+
+        self.assertEqual(run["status"], "failed")
+        self.assertIn("exceeded 2 model rounds", run["error"])
+        self.assertEqual(_AgentUpstream.calls, 2)
+        self.assertEqual(run["keys"], [])
+
+    def test_credentials_inside_payload_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "credentials"):
+            server_mod._create_agent_run(
+                "session-agent",
+                {
+                    "model": "test-model",
+                    "apiKey": "must-not-persist",
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+                self.base_url,
+                [],
+            )
+        with self.assertRaisesRegex(ValueError, "credentials"):
+            server_mod._create_agent_run(
+                "session-agent",
+                {
+                    "model": "test-model",
+                    "extra_body": {"authorization": "Bearer must-not-persist"},
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+                self.base_url,
+                [],
+            )
+        with self.assertRaisesRegex(ValueError, "credentials"):
+            server_mod._create_agent_run(
+                "session-agent",
+                {
+                    "model": "test-model",
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+                "https://secret@example.com/v1",
+                [],
+            )
+
+    def test_http_create_poll_and_idempotent_cancel(self):
+        server_mod.ThreadingHTTPServer.daemon_threads = True
+        http_server = server_mod.ThreadingHTTPServer(
+            ("127.0.0.1", 0), server_mod.CodeHandler,
+        )
+        thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{http_server.server_address[1]}"
+        try:
+            response = requests.post(
+                base + "/api/agent/runs",
+                json={
+                    "sessionId": "http-agent",
+                    "payload": {
+                        "model": "test-model",
+                        "messages": [{"role": "user", "content": "inspect through HTTP"}],
+                        "tools": [server_mod._SERVER_TOOL_DEFINITIONS["read_file"]],
+                    },
+                    "allowedTools": ["read_file"],
+                    "baseUrl": self.base_url,
+                    "keys": ["http-secret-key"],
+                },
+                timeout=5,
+            )
+            self.assertEqual(response.status_code, 201)
+            run_id = response.json()["agentRunId"]
+
+            deadline = time.time() + 5
+            snapshot = {}
+            while time.time() < deadline:
+                poll = requests.get(
+                    f"{base}/api/agent/runs/{run_id}?cursor=0&wait=1",
+                    timeout=3,
+                )
+                self.assertEqual(poll.status_code, 200)
+                snapshot = poll.json()
+                if snapshot.get("status") in server_mod._AGENT_RUN_TERMINAL:
+                    break
+            self.assertEqual(snapshot.get("status"), "completed")
+            self.assertEqual(snapshot.get("result", {}).get("content"), "read-only task complete")
+            self.assertNotIn("http-secret-key", json.dumps(snapshot))
+
+            cancel = requests.delete(f"{base}/api/agent/runs/{run_id}", timeout=3)
+            self.assertEqual(cancel.status_code, 200)
+            self.assertEqual(cancel.json()["status"], "completed")
+        finally:
+            http_server.shutdown()
+            http_server.server_close()
+            thread.join(timeout=2)
+
+    def test_cancel_stops_active_model_round_and_clears_credentials(self):
+        run = server_mod._create_agent_run(
+            "cancel-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "slow request"}],
+            },
+            self.base_url,
+            ["cancel-secret-key"],
+            allowed_tools=[],
+        )
+        self.assertTrue(_AgentUpstream.slow_started.wait(timeout=2))
+        self.assertTrue(server_mod._cancel_agent_run(run["id"]))
+        _AgentUpstream.release_slow.set()
+        self._wait_terminal(run)
+
+        self.assertEqual(run["status"], "cancelled")
+        self.assertEqual(run["keys"], [])
+        time.sleep(0.05)
+        event_types = [event["type"] for event in run["events"]]
+        self.assertEqual(event_types[-1], "cancelled")
+        persisted = server_mod._agent_run_path(run["id"]).read_text(encoding="utf-8")
+        self.assertNotIn("cancel-secret-key", persisted)
+
+
+if __name__ == "__main__":
+    unittest.main()

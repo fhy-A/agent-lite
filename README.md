@@ -15,7 +15,7 @@
   <a href="https://github.com/fhy-A/Code/releases/latest"><img src="https://img.shields.io/badge/version-0.5.4-2563EB" alt="Version 0.5.4"></a>
   <img src="https://img.shields.io/badge/platform-Windows-0078D4" alt="Windows">
   <img src="https://img.shields.io/badge/python-3.12+-3776AB" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/tests-476%20passed-16A34A" alt="476 tests passed">
+  <img src="https://img.shields.io/badge/tests-488%20passed-16A34A" alt="488 tests passed">
   <a href="docs/LICENSE"><img src="https://img.shields.io/badge/license-MIT-6B7280" alt="MIT License"></a>
 </p>
 
@@ -66,6 +66,8 @@ Code 当前聚焦三个目标：
 ```
 
 前端负责展示与交互，本地服务负责模型请求、任务状态、会话数据和工具执行。模型 API Key 只用于请求，不写入持久化的任务运行状态。
+
+服务端现已具备独立的持久化只读 AgentRun：可在没有浏览器轮询时连续完成模型请求与四个只读工具调用，并在服务重启后等待重新注入凭据再恢复。正式界面暂未切换到这条新链路，当前用户会话仍沿用经过验证的浏览器 Agent 循环，避免迁移期间重复执行同一个工具调用。详见[服务端 Agent 循环迁移计划](docs/SERVER_AGENT_LOOP_PLAN.md)。
 
 ## 快速开始
 
@@ -121,6 +123,7 @@ python server.py
 .code/
 ├── config.json          # 项目目录等本地配置
 ├── sessions/            # 会话元数据、JSONL 消息与运行检查点
+├── agent-runs/          # 服务端多轮 AgentRun 状态、事件与工具检查点
 ├── attachments/         # 会话附件
 ├── file-backups/        # 文件修改备份
 ├── memory/              # 项目记忆

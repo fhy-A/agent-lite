@@ -1,99 +1,206 @@
 <p align="center">
-  <img src="code-icon.ico" width="80" alt="Code" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/code-logo-white.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/code-logo-black.svg">
+    <img src="assets/code-logo-black.svg" width="88" height="88" alt="Code Logo">
+  </picture>
 </p>
 
 <h1 align="center">Code</h1>
-<p align="center">轻量级本地 AI 编程助手 · 浏览器即界面 · API 中转站驱动</p>
+
+<p align="center"><strong>本地 Web 服务 · AI Coding Agent</strong></p>
+<p align="center">让 AI 真正进入你的项目，而不是停在对话框里。</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.5.3-blue" />
-  <img src="https://img.shields.io/badge/python-3.12+-green" />
-  <img src="https://img.shields.io/badge/tests-412%20passed-brightgreen" />
-  <img src="https://img.shields.io/badge/license-MIT-lightgrey" />
+  <a href="https://github.com/fhy-A/Code/releases/latest"><img src="https://img.shields.io/badge/version-0.5.4-2563EB" alt="Version 0.5.4"></a>
+  <img src="https://img.shields.io/badge/platform-Windows-0078D4" alt="Windows">
+  <img src="https://img.shields.io/badge/python-3.12+-3776AB" alt="Python 3.12+">
+  <img src="https://img.shields.io/badge/tests-473%20passed-16A34A" alt="473 tests passed">
+  <a href="docs/LICENSE"><img src="https://img.shields.io/badge/license-MIT-6B7280" alt="MIT License"></a>
 </p>
 
 ---
 
-## 这是什么
+## 项目简介
 
-Code 是一个**运行在你本机的 AI 编程助手**。打开浏览器就能用，拥有完整的文件读写、命令执行、Git 操作能力。通过 New API 聚合网关接入各类大模型。
+Code 是一个运行在本机的 AI 编程 Agent。它以浏览器作为交互界面，通过 OpenAI 兼容 API 接入模型，并在用户选定的项目目录中读取文件、搜索代码、执行命令、修改内容和验证结果。
 
-**核心理念**：你只需要一个浏览器。不需要安装 IDE 插件，不需要终端，不需要记住命令行。用自然语言描述需求，Code 帮你完成。
+它不是 IDE 插件，也不是只能生成代码片段的聊天页面。一次任务可以从理解项目开始，经过多轮工具调用、测试和修复，最终把结果直接落到真实工作区。
+
+Code 当前聚焦三个目标：
+
+- **项目上下文**：围绕完整目录、依赖关系和历史会话工作，而不是只理解粘贴进来的片段。
+- **持续执行**：任务由本地服务承载；刷新页面、切换会话或新建会话不会打断其他正在运行的任务。
+- **可见且可控**：文件修改、命令结果、结构化问卷和最终回答都保留在会话中，用户可以随时停止、确认或继续调整。
+
+## 核心能力
+
+| 领域 | 当前能力 |
+|---|---|
+| 项目理解 | 文件树、全文搜索、跨文件关联、项目记忆、长对话上下文压缩 |
+| 文件操作 | 读取、创建、编辑、目录管理、备份与项目外路径处理 |
+| 命令执行 | PowerShell、Git、Python、Node 等本地命令，带超时与输出回传 |
+| Agent 循环 | 多轮“分析 → 工具 → 验证 → 回答”，单任务最多 200 轮工具交互 |
+| 后台任务 | 服务端运行任务、SSE 流式输出、刷新续接、多会话并行与独立停止 |
+| 文件预览 | 图片、Markdown、PDF、CSV、TSV 以及常见文本和代码文件 |
+| 图片输入 | 粘贴、拖拽、路径引用，以及工具读取失败后的视觉模型回退 |
+| 结构化交互 | 单选、多选、补充输入、风险确认等任务内问卷 |
+| 会话系统 | JSONL 持久化、分支会话、层级索引、异常恢复和历史导出 |
+| Skills | Markdown 技能、渐进式说明加载、资源读取及内置办公/设计工具包 |
+| 通知 | 断网重试、任务完成、待确认和问卷通知 |
+| 界面 | 中英双语、浅色/深色/跟随系统主题、托盘常驻和响应式布局 |
+
+## 工作方式
+
+```text
+浏览器界面
+    │  会话、SSE、问卷、文件预览
+    ▼
+本地 Python 服务（127.0.0.1:3010）
+    ├── 模型任务运行时与会话持久化
+    ├── 文件 / 搜索 / 命令 / Git 工具
+    └── OpenAI 兼容代理
+              │
+              ▼
+       New API 或其他兼容网关
+```
+
+前端负责展示与交互，本地服务负责模型请求、任务状态、会话数据和工具执行。模型 API Key 只用于请求，不写入持久化的任务运行状态。
 
 ## 快速开始
 
-### 方式一：直接运行
+### Windows 单文件版
 
-```bash
-pip install pystray pillow
+1. 从 [GitHub Releases](https://github.com/fhy-A/Code/releases/latest) 下载 `Code-v0.5.4.exe`。
+2. 双击运行。Code 会常驻系统托盘，并打开 `http://127.0.0.1:3010/`。
+3. 在设置中填写模型网关地址和 API Key，刷新模型列表。
+4. 选择一个项目目录，在输入框中直接描述任务。
+
+> v0.5.4 是首次使用 Code 名称发布的版本。旧版测试用户请退出 Agent Lite 后重新下载；首次运行会迁移原有用户数据与浏览器设置。
+
+### 从源码运行
+
+环境要求：Windows、Python 3.12+；托盘功能依赖 `pystray` 和 `Pillow`。
+
+```powershell
+git clone https://github.com/fhy-A/Code.git
+Set-Location Code
+
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install pystray pillow pytest
+
 python server.py
-# 浏览器打开 http://127.0.0.1:3010
 ```
 
-### 方式二：下载 EXE（Windows）
+也可以直接运行 `启动Code.bat`。源码模式默认把运行数据保存在仓库的 `data/` 中；正式 EXE 使用用户目录下的 `.code/`。
 
-从 [Releases](https://github.com/fhy-A/Code/releases) 下载 `Code-v0.5.3.exe`，双击运行，托盘图标常驻。
+## 模型与项目配置
 
-## 功能
+首次启动后打开设置：
 
-| 分类 | 能力 |
-|------|------|
-| **模型** | 通过 New API 接入 OpenAI / Anthropic / DeepSeek 等，支持多 Key 切换 |
-| **文件** | 项目文件树浏览、读写编辑、跨项目路径自动降级 |
-| **命令** | 白名单安全策略，支持 PowerShell / Git / Python / Node 等 |
-| **办公文档** | Word / Excel / PPT / PDF 的读取与生成 |
-| **图片** | 粘贴 / 拖拽 / @路径 三种方式上传，支持视觉模型识图 |
-| **会话分支** | 从任意位置创建分支探索替代路径，树形分支面板 |
-| **子 Agent** | 后台并行委派任务，自动合并结果 |
-| **上下文压缩** | 超过 95% 自动压缩历史消息，长对话不丢上下文 |
-| **Skill 系统** | Markdown + frontmatter 自定义技能，内置 Office / Design 等 |
-| **记忆系统** | 跨会话持久记忆，自动索引与召回 |
-| **系统托盘** | 最小化到托盘，后台静默运行 |
-| **中英双语** | 全界面 i18n，模型自动匹配用户语言 |
+1. **Base URL**：填写 New API 或其他 OpenAI 兼容网关地址；本地开发默认值为 `http://localhost:3000`。
+2. **API Keys**：可以添加多枚 Key，并为每枚 Key 关联可用模型。
+3. **项目目录**：选择 Code 可以工作的项目根目录。
+4. **模型与推理强度**：在输入区选择本次任务使用的模型和参数。
 
-## 截图
+可用环境变量：
 
-> 待补充
+| 变量 | 作用 | 默认值 |
+|---|---|---|
+| `CODE_PORT` | 本地 Web 服务端口 | `3010` |
+| `CODE_DATA_DIR` | 源码模式的数据目录 | `<项目>/data` |
+| `NEW_API_BASE_URL` | 服务端默认模型网关 | `http://localhost:3000` |
 
-## 技术栈
+## 数据与隐私
 
+正式 EXE 的用户数据位于 `%USERPROFILE%\.code\`：
+
+```text
+.code/
+├── config.json          # 项目目录等本地配置
+├── sessions/            # 会话元数据、JSONL 消息与运行检查点
+├── attachments/         # 会话附件
+├── file-backups/        # 文件修改备份
+├── memory/              # 项目记忆
+├── skills/              # 用户与内置技能
+├── update.log           # 自动更新日志（如有）
+└── crash.log            # 启动异常记录（如有）
 ```
-浏览器 Web UI  ←→  Python HTTP Server  ←→  New API  ←→  LLM
-                       ↓
-                 本地工具层（FS / Shell / Git）
+
+- Web 服务只监听 `127.0.0.1`，默认不向局域网暴露。
+- 项目文件和会话保存在本机；发送给模型的上下文仍会经过你配置的 API 网关及其上游模型服务。
+- Code 拥有真实文件和命令执行能力，请只选择可信项目并检查重要改动；关键项目建议同时使用 Git。
+
+## 会话与后台任务
+
+每个模型任务都拥有独立的运行 ID、消息队列、停止信号和恢复检查点。页面刷新后会重新连接原任务的 SSE 事件流；切换或新建会话只改变前台视图，不会取消后台任务。
+
+会话正文采用 JSONL 持久化，元数据与消息分开保存。历史 JSON 会话可以迁移，长会话则通过上下文压缩减少重复 Token，同时保留必要任务背景与近期交互。
+
+## 项目结构
+
+```text
+Code/
+├── server.py                # HTTP 服务、模型代理、任务运行时和本地工具
+├── launcher.py              # EXE 启动、托盘、数据目录与浏览器接管
+├── index.html               # 应用结构
+├── app.js                   # 前端主流程与状态投影
+├── agent-runtime.js         # 浏览器侧任务运行时桥接
+├── styles.css               # 主题与响应式样式
+├── src/                     # 已拆分的前端核心与服务模块
+├── data/skills/             # 随程序分发的 Skills
+├── assets/                  # Code 品牌与界面资产
+├── tests/                   # 自动化测试与测试夹具
+├── docs/                    # 使用、迁移、架构计划与版本说明
+├── build_exe.py             # PyInstaller 单文件构建入口
+├── VERSION                  # 当前版本号
+├── CHANGELOG.md             # 已完成开发记录
+└── TODO.md                  # 尚未完成的路线清单
 ```
 
-| 层 | 技术 |
-|----|------|
-| 后端 | Python 3.12, http.server + ThreadingHTTPServer |
-| 前端 | Vanilla JS (ES6), HTML5, CSS3 |
-| 打包 | PyInstaller --onefile (≈40MB) |
-| 托盘 | pystray + PIL |
-| 测试 | pytest, 412 tests, 20s 全量 |
+## 开发与验证
 
-## 配置
+```powershell
+# 全量测试
+python -m pytest tests -q
 
-首次启动后在 **Settings → Models** 中配置：
+# JavaScript 语法检查
+node --check app.js
+node --check agent-runtime.js
 
-1. **Base URL** — New API 网关地址（默认 `http://localhost:3000`）
-2. **API Keys** — 一行一个，支持 `名称:sk-xxx` 格式命名
-3. 点击 **Refresh Models** 拉取可用模型列表
-4. 在输入框上方选择模型即可开始对话
+# Python 编译检查
+python -m py_compile server.py launcher.py build_exe.py
 
-## 开发
-
-```bash
-# 运行测试
-python -m pytest tests/ -q
-
-# 构建 EXE
+# 构建 Windows 单文件程序
 python build_exe.py
 ```
 
-## License
+构建产物位于 `dist/Code-v<version>.exe`。发布前应同时核对：
 
-MIT
+- `VERSION`、`file_version_info.txt` 和 README 版本号一致；
+- 全量测试与语法检查通过；
+- EXE 的 Windows 版本元数据、文件名和内置版本一致；
+- SHA-256 已写入对应的 `docs/releases/` 版本说明；
+- Git 标签和 GitHub Release 使用同一版本号。
 
----
+## 文档与路线
 
-<p align="center">🤖 Built with <a href="https://claude.com/claude-code">Claude Code</a></p>
+- [使用指南](docs/GUIDE.md)
+- [v0.5.4 发布说明](docs/releases/v0.5.4.md)
+- [会话 JSONL 迁移说明](docs/session-jsonl-migration.md)
+- [前端模块拆分计划](docs/APP_JS_SPLIT_PLAN.md)
+- [开发日志](CHANGELOG.md)
+- [待办与路线](TODO.md)
+
+## 当前边界
+
+- 正式打包和托盘流程目前仅支持 Windows。
+- Code 依赖外部 OpenAI 兼容模型网关，本仓库不提供模型服务或 API 额度。
+- Agent 循环仍由本地服务和浏览器共同完成；让任务在浏览器完全关闭后持续运行是后续路线。
+- 当前前端仍以原生 JavaScript 为主，`app.js` 的进一步模块化正在进行。
+
+## 许可证
+
+本项目采用 [MIT License](docs/LICENSE)。

@@ -3,6 +3,7 @@ Tests for server.py pure functions.
 Run: python -m unittest tests.test_server -v
    or: python tests/test_server.py
 """
+import json
 import re
 import sys
 import tempfile
@@ -15,6 +16,24 @@ import server
 
 
 class TestUpdaterHelpers(unittest.TestCase):
+    def test_remote_version_selects_matching_code_asset(self):
+        payload = {
+            "tag_name": "v0.5.4",
+            "assets": [
+                {"name": "helper.exe", "browser_download_url": "https://example.test/helper.exe"},
+                {
+                    "name": "Code-v0.5.4.exe",
+                    "browser_download_url": "https://example.test/Code-v0.5.4.exe",
+                },
+            ],
+        }
+        response = mock.Mock()
+        response.read.return_value = json.dumps(payload).encode("utf-8")
+        with mock.patch.object(server.request, "urlopen", return_value=response):
+            version, url = server._read_remote_version()
+        self.assertEqual(version, "0.5.4")
+        self.assertEqual(url, "https://example.test/Code-v0.5.4.exe")
+
     def test_valid_windows_executable(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             exe = Path(temp_dir) / "Code-v1.2.3.exe"

@@ -100,6 +100,7 @@ cmd = [
     str(APP_DIR / "launcher.py"),
 ]
 
-print("Building Code.exe...")
-subprocess.run(cmd, cwd=str(APP_DIR))
-print("\nDone! Output: dist/Code.exe")
+output_path = APP_DIR / "dist" / f"{name}.exe"
+print(f"Building {name}.exe...")
+subprocess.run(cmd, cwd=str(APP_DIR), check=True)
+print(f"\nDone! Output: {output_path}")

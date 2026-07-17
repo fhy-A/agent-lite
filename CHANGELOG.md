@@ -14,6 +14,20 @@
 
 ---
 
+## 2026-07-18 04:39 · Codex
+
+### 发布 Code v0.5.4：完成品牌迁移与运行时、会话和流式界面重构
+
+- **正式版本迁移**：版本号与 Windows 文件元数据统一升级到 `0.5.4`，发布文件正式使用 `Code-v0.5.4.exe`；README、构建输出和 GitHub Release 文档同步切换到 Code 品牌，不再发布 AgentLite 命名的过渡包。
+- **大版本说明**：新增 `docs/releases/v0.5.4.md`，按品牌与欢迎页、后台任务续接、JSONL 会话存储、SSE 投影、问卷与文件预览、Skills/Token 优化、前端模块化和配套平台八个部分整理 `v0.5.3..v0.5.4` 的 24 个提交、182 个文件变更，并单列升级提示、安装步骤、构建校验与文件摘要。
+- **项目级 README 重写**：根 README 改为 Code 的正式项目入口，补全产品定位、核心能力、运行架构、EXE/源码启动、模型与项目配置、数据隐私、后台任务与 JSONL 会话机制、目录结构、开发验证、发布检查和当前边界；品牌图按系统主题自动选择黑白 SVG，并链接版本说明、迁移文档、架构计划与路线清单。
+- **更新资产选择**：当前版本检查只接受与 Release 标签精确对应的 `Code-v{version}.exe`，避免同一 Release 中其他 `.exe` 资产被误选；构建脚本在 PyInstaller 失败时立即返回失败，并输出实际版本化产物路径。
+- **验证与发布产物**：定向回归 `165 passed`，全量回归 `473 passed, 2 subtests passed`；`app.js`、`agent-runtime.js` 及拆分模块 JavaScript 语法检查、核心 Python 编译、SVG XML 解析和 `git diff --check` 通过。使用 Python `3.12.10` 与 PyInstaller `6.21.0` 构建 Windows x64 单文件 `dist/Code-v0.5.4.exe`，大小 `30,859,501` bytes（`29.43 MiB`），文件/产品版本均为 `0.5.4`，SHA-256 为 `BE333DF1187D30D61111F2EDADF2948BACE16C2CD611B1EA7433B07A05623AE4`；签名状态为 `NotSigned`。
+
+**涉及文件**：`VERSION`、`file_version_info.txt`、`README.md`、`server.py`、`build_exe.py`、`tests/test_server.py`、`docs/releases/v0.5.4.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 04:21 · Codex
 
 ### 重构中转站 Code 专题页并规范定制部署包
@@ -29,7 +43,7 @@
 
 ---
 
-## 2026-07-18 03:16 · Code
+## 2026-07-18 03:16 · Codex
 
 ### 新增项目 Python 统计脚本
 

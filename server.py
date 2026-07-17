@@ -279,9 +279,10 @@ def _read_remote_version():
         tag = data.get("tag_name", "").lstrip("v")
         assets = data.get("assets") or []
         exe_url = None
+        expected_name = f"Code-v{tag}.exe".lower()
         for a in assets:
             name = a.get("name", "")
-            if name.endswith(".exe"):
+            if name.lower() == expected_name:
                 exe_url = a.get("browser_download_url")
                 break
         if tag and exe_url:

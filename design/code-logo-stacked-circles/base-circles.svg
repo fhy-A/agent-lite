@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" fill="none">
+  <path d="M80 13A40 40 0 1 1 79.99 13" stroke="#172033" stroke-width="14"/>
+  <path d="M80 67A40 40 0 1 1 79.99 67" stroke="#64748B" stroke-width="14"/>
+  <path d="M80 4V156" stroke="#CBD5E1" stroke-width="1" stroke-dasharray="4 4"/>
+</svg>

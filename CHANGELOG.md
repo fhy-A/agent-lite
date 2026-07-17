@@ -14,6 +14,74 @@
 
 ---
 
+## 2026-07-18 01:37 · Codex
+
+### 将命令光标品牌动效接入正式欢迎页
+
+- **正式接入而非仅保留预览**：移除欢迎页原有的静态几何 Logo 展台，将无字体依赖的 `Code` SVG 字标、标语与真实输入框组成同一套命令光标接力；四个字母按节奏逐个生成，光标随后扫出标语并移动到正式 `textarea`，不再只存在于 `design/` 演示页面。
+- **真实输入接管**：末段路径根据字标、标语和输入框的实时 `getBoundingClientRect()` 计算，移动 caret 精确落到输入框 `17px / 15px` 的内容起点并保持 `240ms`；落点期间隐藏原生 caret，输入框先取得焦点，再无缝切换为原生 caret，动画结束后无需点击即可直接输入。用户提前点击、聚焦或输入时会立即结束装饰动画，不阻塞操作。
+- **排版与响应式修正**：品牌名和标语改为同一行按可见底边对齐，桌面字标保持 `130 × 54px`，窄屏缩为 `112 × 47px`；去除窄屏跳过光标移动的例外，最终移动时长继续按实际距离限制在 `440–600ms`，不同窗口大小均落到真实输入位置。
+- **主题与无障碍兼容**：字标、命令提示符、移动 caret 和原生 caret 全部继承 `--text`，标语继承主题弱化文字色，浅色与深色模式自动反色；`prefers-reduced-motion` 下直接显示最终品牌状态，不播放位移动画。
+- **验证结果**：浅色正式页实测移动 caret 与输入内容起点坐标完全一致，落点时输入框已获得焦点；深色主题字标与标语正确反色。`app.js` 语法、前端定向测试、`git diff --check` 通过，全量回归 `476 passed, 2 subtests passed`。
+
+**改动文件**：`app.js`、`styles.css`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`
+
+---
+
+## 2026-07-18 01:06 · Codex
+
+### 定稿无字体依赖的 Inter Tight 轮廓字标
+
+- **字形定稿**：在 Segoe UI、Inter Tight、Space Grotesk、Sora 与 IBM Plex Sans 五组真实字体对比后，选择 `Inter Tight 800`；按确认后的 `54px` 字号与 `-0.035em` 字距将 `C / o / d / e` 分别转换为 SVG 路径，保留逐字生成所需的独立字母边界。
+- **运行时零字体依赖**：新增 `assets/code-wordmark.svg`，正式欢迎页通过内联 `currentColor` SVG 渲染品牌名，不再等待 Web Font、依赖系统字体或因不同设备字形回退产生宽度变化；浅色与深色主题继续自动继承文字色。
+- **动效一致性**：命令光标品牌预览改用同一组字母路径，重新校准四次光标跳位、标语底边与整体宽度；标语到输入框的末段移动按实际距离自适应为 `440–600ms`，桌面与窄屏继续使用各自的响应式节奏。
+- **验证结果**：`app.js` JavaScript 语法检查、SVG/页面视觉检查与 `git diff --check` 通过；全量回归 `476 passed, 2 subtests passed`。
+
+**改动文件**：`app.js`、`styles.css`、`assets/code-wordmark.svg`、`design/code-welcome-command-brand/preview.html`、`design/code-wordmark-fonts/preview.html`、`design/code-custom-wordmarks/preview.html`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`
+
+---
+
+## 2026-07-17 23:07 · Codex
+
+### 将欢迎页重构为极简品牌入口
+
+- **内容收敛**：移除“理解项目 / 修复问题 / 实现功能”三张任务模板、工作区状态、操作提示及对应的点击填充逻辑和 i18n 文案；欢迎页只保留 Logo、`Code` 品牌名、一句“把想法变成可运行的代码”标语与现有输入框。
+- **品牌化几何**：在正式双圆 Logo 后使用两个低对比度完整圆和一条中心轴展示构造关系，不引入新颜色、插画或额外信息卡；浅色/深色主题继续使用自动黑白反色。
+- **布局调整**：品牌区改为居中纵向布局，输入框收敛为最大 `680px`、`16px` 圆角和轻量阴影；桌面保持充足留白，`640px` 窄屏缩小构造图并保持输入框完整可用。
+- **验证结果**：无头 Chrome 在 `1400×900` 和 `640×800` 下确认页面仅包含一组品牌信息和输入框，无任务模板、横向溢出或遮挡；全量回归 `471 passed`，`app.js` / `agent-runtime.js` JavaScript 语法与 `git diff --check` 通过。
+
+**改动文件**：`app.js`、`styles.css`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`
+
+---
+
+## 2026-07-17 22:47 · Codex
+
+### 定稿双圆对话环 Logo，并支持主题自动反色
+
+- **几何标志定稿**：正式 Logo 改为纵向同轴的两个等半径圆，经中线裁切后仅保留上圆右半和下圆左半；采用 `160 × 160` 母版、`R40` 半径、`14` 环宽、`54` 中心距和 `26` 交叠量，不再包含自由曲线、渐变或装饰元素。
+- **黑白主题适配**：侧栏与欢迎页使用内联 SVG 的 `currentColor`，新增 `--brand-mark` 主题变量；浅色主题固定为纯黑 `#000000`，深色主题固定为纯白 `#FFFFFF`，跟随系统时复用现有主题监听自动切换。
+- **品牌资产统一**：新增黑白 SVG/PNG 导出文件，重写图标导出脚本；系统级 PNG/ICO 使用白色标志与黑色容器，保持浅色和深色桌面背景下的可见性；针对 `16–24px` 做独立光学校正，将圆心各向内收 `7` 个母版单位并把环宽从 `14` 调整为 `13`，让最小尺寸保留接近 `2px` 的中央负空间，避免两段 C 被抗锯齿粘连；PyInstaller 同步打包 `assets/`，favicon 增加版本标记以绕过浏览器旧图标缓存。
+- **验证结果**：全量回归 `471 passed`；`app.js` / `agent-runtime.js` JavaScript 语法、导出脚本 Python 语法、SVG 解析和 `git diff --check` 通过；无头 Chrome 实测浅色侧栏/欢迎页显示黑标、深色侧栏显示白标。
+
+**改动文件**：`index.html`、`app.js`、`styles.css`、`assets/code-logo*.svg`、`assets/code-logo*.png`、`assets/code-icon.png`、`code-icon.png`、`code-icon.ico`、`build_exe.py`、`design/logo-concepts/export_selected_logo.py`、`design/code-logo-stacked-circles/*`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`
+
+---
+
+## 2026-07-17 20:46 · Codex
+
+### 重新设计 Code 品牌 Logo 与欢迎页
+
+- **全新品牌标志**：以蓝色圆角工作区为底，使用白色 `C` 形循环表达 Code / 当前工作区，并用浅蓝命令提示符表达“从理解到执行”；替换侧栏旧 A 图形及应用 SVG、PNG、ICO 资源。
+- **资源链统一**：新增根目录与 `assets/` 下的 PNG，重写可重复执行的图标导出脚本，同步更新 favicon、托盘/EXE ICO、系统通知 PNG 和 PyInstaller 资源清单；品牌方向预览新增 `07 · Code Workspace · Selected`。
+- **欢迎页重构**：空会话页改为开放式品牌布局，展示“本地工作区已就绪”、核心主张和产品能力说明；新增“理解项目 / 修复问题 / 实现功能”三个快捷任务入口，点击只填充输入框并触发原有输入状态更新，不会自动发送。
+- **响应式与主题**：欢迎区和输入框统一为最大 `720px` 内容列，浅色/深色主题使用相同层级；在窄屏切换为单列快捷入口，并保留键盘焦点、无横向溢出和可滚动能力。
+- **真实页面验证**：无头 Chrome 在 `1400×900` 下确认欢迎区宽 `720px`、快捷入口 `3` 个且提示词正确写入；在 `640×800` 下确认单列布局、页面和工作区均无溢出；PNG、SVG、ICO 三类资源通过 `127.0.0.1:3010` 返回 `200`。
+- **测试结果**：前端定向测试 `14 passed`，全量 `476 passed, 2 subtests passed`；JavaScript/Python 语法检查与 `git diff --check` 通过。
+
+**改动文件**：`app.js`、`index.html`、`styles.css`、`assets/code-logo.svg`、`assets/code-icon.png`、`code-icon.png`、`code-icon.ico`、`build_exe.py`、`design/logo-concepts/*`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-17 20:29 · Codex
 
 ### 将模型名分隔线延伸到会话内容列右侧

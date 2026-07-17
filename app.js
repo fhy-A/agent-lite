@@ -1969,7 +1969,7 @@ const I18N = {
     exportBtn: "导出", tools: "工具", toolLog: "工具日志", settingsBtn: "设置",
     files: "文件", chooseFolder: "选择文件夹", recentLabel: "最近使用",
     welcome: "我是 Code，你的本地 AI 编程伙伴。\\n\\n我可以读文件、搜代码、跑命令、改项目。",
-    welcomeTagline: "开始对话，用自然语言驱动代码。",
+    welcomeHeadline: "把想法变成可运行的代码",
     inputPlaceholder: "描述需求、粘贴代码，或输入 / 调用命令",
     processingLabel: "处理中", networkRecovering: "网络恢复中", networkReconnectStatus: "网络连接已中断，正在自动恢复 · 已尝试 {attempt} 次 · ", networkReconnectSuffix: " 后重试", completedLabel: "完成",
     refreshBtn: "刷新", closePreview: "关闭", filterFiles: "筛选文件…",
@@ -2171,7 +2171,7 @@ const I18N = {
     exportBtn: "Export", tools: "Tools", toolLog: "Tool Log", settingsBtn: "Settings",
     files: "Files", chooseFolder: "Choose Folder", recentLabel: "Recent",
     welcome: "I'm Code, your local AI coding partner. I can read files, search code, run commands, and modify projects.",
-    welcomeTagline: "Start a conversation, drive code with natural language.",
+    welcomeHeadline: "Turn ideas into working code",
     inputPlaceholder: "Describe your task, paste code, or type / for commands",
     processingLabel: "Working", networkRecovering: "Reconnecting", networkReconnectStatus: "Connection lost. Recovering automatically · Attempt {attempt} · retry in ", networkReconnectSuffix: "", completedLabel: "Completed",
     refreshBtn: "Refresh", closePreview: "Close", filterFiles: "Filter files...",
@@ -5026,6 +5026,218 @@ function pruneStaleStreamingNodes(sessionId = state.sessionId) {
   });
 }
 
+function renderCodeMark(className = "") {
+  return `
+    <svg class="${className}" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M80 13A40 40 0 0 1 80 93" fill="none" stroke="currentColor" stroke-width="14"></path>
+      <path d="M80 147A40 40 0 0 1 80 67" fill="none" stroke="currentColor" stroke-width="14"></path>
+    </svg>
+  `;
+}
+
+function renderCodeWordmark(className = "") {
+  return `
+    <svg class="${className}" viewBox="0 0 130 54" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Code">
+      <g fill="currentColor">
+        <path class="code-wordmark-letter" transform="translate(0 44) scale(.0263671875 -.0263671875)" d="M774-20Q572-20 412.5 69Q253 158 160.5 328.5Q68 499 68 744Q68 990 161.5 1161.5Q255 1333 415.5 1421.5Q576 1510 774 1510Q909 1510 1024 1472.5Q1139 1435 1226.5 1363Q1314 1291 1368 1187Q1422 1083 1436 949H1072Q1065 1005 1042.5 1050.5Q1020 1096 982.5 1128Q945 1160 895 1177.5Q845 1195 783 1195Q675 1195 597 1141.5Q519 1088 477 987.5Q435 887 435 744Q435 597 477.5 496.5Q520 396 597.5 345.5Q675 295 782 295Q841 295 890 310.5Q939 326 976.5 355.5Q1014 385 1038.5 427.5Q1063 470 1072 524H1436Q1426 425 1379 328Q1332 231 1248.5 152.5Q1165 74 1046 27Q927-20 774-20Z"/>
+        <path class="code-wordmark-letter" transform="translate(37.66 44) scale(.0263671875 -.0263671875)" d="M605-21Q429-21 303 51.5Q177 124 109.5 253.5Q42 383 42 555Q42 728 109.5 857.5Q177 987 303 1059.5Q429 1132 605 1132Q781 1132 907.5 1059.5Q1034 987 1101.5 857.5Q1169 728 1169 555Q1169 383 1101.5 253.5Q1034 124 907.5 51.5Q781-21 605-21ZM607 250Q672 250 716 288Q760 326 783.5 395.5Q807 465 807 557Q807 650 783.5 718Q760 786 716 823.5Q672 861 607 861Q542 861 496 823.5Q450 786 427 718Q404 650 404 557Q404 465 427 395.5Q450 326 496 288Q542 250 607 250Z"/>
+        <path class="code-wordmark-letter" transform="translate(67.69 44) scale(.0263671875 -.0263671875)" d="M488-16Q365-16 263.5 48Q162 112 102 240Q42 368 42 558Q42 755 104.5 882Q167 1009 268 1070.5Q369 1132 486 1132Q574 1132 636.5 1102Q699 1072 740 1024.5Q781 977 802 926H809V1490H1165V0H814V182H802Q779 130 738 85Q697 40 635 12Q573-16 488-16ZM611 261Q676 261 722 298Q768 335 793 401.5Q818 468 818 558Q818 650 793.5 716.5Q769 783 722.5 819Q676 855 611 855Q546 855 500 818Q454 781 430.5 714.5Q407 648 407 558Q407 469 431 402Q455 335 500.5 298Q546 261 611 261Z"/>
+        <path class="code-wordmark-letter" transform="translate(98.74 44) scale(.0263671875 -.0263671875)" d="M607-21Q431-21 304 48.5Q177 118 109.5 247Q42 376 42 555Q42 728 110 857.5Q178 987 302 1059.5Q426 1132 594 1132Q713 1132 812.5 1094.5Q912 1057 984.5 984.5Q1057 912 1096.5 806Q1136 700 1136 561V473H165V678H967L801 630Q801 707 778 761.5Q755 816 710 846Q665 876 598 876Q531 876 485 846Q439 816 415 762.5Q391 709 391 636V489Q391 411 418.5 354Q446 297 496.5 266.5Q547 236 613 236Q659 236 697 249Q735 262 762 287.5Q789 313 803 349L1129 340Q1109 230 1041 149Q973 68 863 23.5Q753-21 607-21Z"/>
+      </g>
+    </svg>
+  `;
+}
+
+const welcomeMotion = {
+  played: false,
+  root: null,
+  timers: [],
+  travelAnimation: null,
+  inputIntentHandler: null,
+};
+
+function detachWelcomeInputIntent() {
+  if (!welcomeMotion.inputIntentHandler) return;
+  ["focus", "pointerdown", "keydown", "input"].forEach((eventName) => {
+    els.prompt.removeEventListener(eventName, welcomeMotion.inputIntentHandler);
+  });
+  welcomeMotion.inputIntentHandler = null;
+}
+
+function clearWelcomeMotionRuntime() {
+  welcomeMotion.timers.forEach(clearTimeout);
+  welcomeMotion.timers = [];
+  welcomeMotion.travelAnimation?.cancel();
+  welcomeMotion.travelAnimation = null;
+  detachWelcomeInputIntent();
+  els.chatForm.classList.remove("welcome-caret-handoff");
+  welcomeMotion.root = null;
+}
+
+function scheduleWelcomeMotion(callback, delay) {
+  const timer = setTimeout(callback, delay);
+  welcomeMotion.timers.push(timer);
+  return timer;
+}
+
+function finishWelcomeMotion(root, { focusPrompt = false } = {}) {
+  if (!root?.isConnected) {
+    clearWelcomeMotionRuntime();
+    return;
+  }
+  clearWelcomeMotionRuntime();
+  root.classList.remove("is-animating");
+  root.classList.add("is-complete");
+  root.querySelectorAll(".code-wordmark-letter").forEach((letter) => {
+    letter.classList.add("is-visible");
+  });
+  const travelCaret = root.querySelector(".welcome-travel-caret");
+  if (travelCaret) travelCaret.removeAttribute("style");
+
+  const activeElement = document.activeElement;
+  const canMoveFocus = !activeElement
+    || activeElement === document.body
+    || activeElement === document.documentElement
+    || activeElement === els.prompt;
+  if (focusPrompt && canMoveFocus && !els.prompt.disabled) {
+    els.prompt.focus({ preventScroll: true });
+    els.prompt.setSelectionRange(els.prompt.value.length, els.prompt.value.length);
+  }
+}
+
+function welcomeBezierPoint(t, start, controlA, controlB, end) {
+  const inverse = 1 - t;
+  return inverse ** 3 * start
+    + 3 * inverse ** 2 * t * controlA
+    + 3 * inverse * t ** 2 * controlB
+    + t ** 3 * end;
+}
+
+function playWelcomeMotion(root) {
+  if (!root?.isConnected) return;
+  clearWelcomeMotionRuntime();
+  welcomeMotion.root = root;
+  els.chatForm.classList.add("welcome-caret-handoff");
+
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduceMotion) {
+    finishWelcomeMotion(root, { focusPrompt: true });
+    return;
+  }
+
+  const letters = [...root.querySelectorAll(".code-wordmark-letter")];
+  [590, 875, 1160, 1445].forEach((delay, index) => {
+    scheduleWelcomeMotion(() => letters[index]?.classList.add("is-visible"), delay);
+  });
+
+  const finishFromInputIntent = () => finishWelcomeMotion(root);
+  welcomeMotion.inputIntentHandler = finishFromInputIntent;
+  ["focus", "pointerdown", "keydown", "input"].forEach((eventName) => {
+    els.prompt.addEventListener(eventName, finishFromInputIntent);
+  });
+
+  scheduleWelcomeMotion(() => {
+    if (!root.isConnected) return;
+    const typedBrand = root.querySelector(".welcome-typed-brand");
+    const slogan = root.querySelector(".welcome-title");
+    const brandCaret = root.querySelector(".welcome-brand-caret");
+    const travelCaret = root.querySelector(".welcome-travel-caret");
+    if (!typedBrand || !slogan || !brandCaret || !travelCaret) {
+      finishWelcomeMotion(root, { focusPrompt: true });
+      return;
+    }
+
+    brandCaret.classList.add("is-finished");
+    const rootRect = root.getBoundingClientRect();
+    const brandRect = typedBrand.getBoundingClientRect();
+    const sloganRect = slogan.getBoundingClientRect();
+    const promptRect = els.prompt.getBoundingClientRect();
+    travelCaret.style.left = `${brandRect.right - rootRect.left}px`;
+    travelCaret.style.top = `${brandRect.top - rootRect.top + 6}px`;
+
+    const from = travelCaret.getBoundingClientRect();
+    const sloganStart = {
+      x: sloganRect.left - from.left - 7,
+      y: sloganRect.top - from.top,
+    };
+    const sloganEnd = {
+      x: sloganRect.right - from.left + 7,
+      y: sloganStart.y,
+    };
+    const inputEnd = {
+      x: promptRect.left + 17 - from.left,
+      y: promptRect.top + 15 - from.top,
+    };
+    const finalDistance = Math.hypot(
+      inputEnd.x - sloganEnd.x,
+      inputEnd.y - sloganEnd.y,
+    );
+    const finalDuration = Math.min(600, Math.max(440, finalDistance / .9));
+    const approachDuration = 335;
+    const revealDuration = 780;
+    const travelDuration = approachDuration + revealDuration + finalDuration;
+    const approachEnd = approachDuration / travelDuration;
+    const revealEnd = (approachDuration + revealDuration) / travelDuration;
+    const sloganScale = Math.max(.36, sloganRect.height / from.height);
+    const inputScale = Math.max(.34, 21 / from.height);
+    const frames = [];
+
+    [0, .2, .42, .65, .82, 1].forEach((t) => {
+      const x = welcomeBezierPoint(t, 0, sloganStart.x * .3, sloganStart.x * .78, sloganStart.x);
+      const y = welcomeBezierPoint(t, 0, sloganStart.y * .25, sloganStart.y * .78, sloganStart.y);
+      frames.push({
+        offset: approachEnd * t,
+        opacity: 1,
+        transform: `translate(${x}px, ${y}px) scaleY(${1 + (sloganScale - 1) * t})`,
+      });
+    });
+    [0, .2, .4, .6, .8, 1].forEach((t) => {
+      const x = sloganStart.x + (sloganEnd.x - sloganStart.x) * t;
+      frames.push({
+        offset: approachEnd + (revealEnd - approachEnd) * t,
+        opacity: 1,
+        transform: `translate(${x}px, ${sloganStart.y}px) scaleY(${sloganScale})`,
+      });
+    });
+    [0, .18, .38, .6, .8, .93, 1].forEach((t) => {
+      const x = welcomeBezierPoint(t, sloganEnd.x, sloganEnd.x + 30, inputEnd.x + 112, inputEnd.x);
+      const y = welcomeBezierPoint(t, sloganEnd.y, sloganEnd.y + 36, inputEnd.y - 24, inputEnd.y);
+      frames.push({
+        offset: revealEnd + (1 - revealEnd) * t,
+        opacity: 1,
+        transform: `translate(${x}px, ${y}px) scaleY(${sloganScale + (inputScale - sloganScale) * t})`,
+      });
+    });
+
+    if (typeof travelCaret.animate !== "function") {
+      scheduleWelcomeMotion(() => finishWelcomeMotion(root, { focusPrompt: true }), travelDuration);
+      return;
+    }
+    welcomeMotion.travelAnimation = travelCaret.animate(frames, {
+      duration: travelDuration,
+      easing: "linear",
+      fill: "forwards",
+    });
+    welcomeMotion.travelAnimation.finished
+      .then(() => {
+        if (!root.isConnected) return;
+        detachWelcomeInputIntent();
+        const activeElement = document.activeElement;
+        const canMoveFocus = !activeElement
+          || activeElement === document.body
+          || activeElement === document.documentElement
+          || activeElement === els.prompt;
+        if (canMoveFocus && !els.prompt.disabled) {
+          els.prompt.focus({ preventScroll: true });
+          els.prompt.setSelectionRange(els.prompt.value.length, els.prompt.value.length);
+        }
+        travelCaret.classList.add("is-landed");
+        scheduleWelcomeMotion(() => finishWelcomeMotion(root), 240);
+      })
+      .catch(() => {});
+  }, 1820);
+}
+
 function renderMessages() {
 
   renderUserInputPanel();
@@ -5045,19 +5257,34 @@ function renderMessages() {
     // that same node to its parking spot before replacing the projection so
     // its timer and animation state are never destroyed.
     parkActiveRunBanner();
-    els.messageList.innerHTML = `
-      <div class="welcome-screen">
-        <div class="welcome-kicker"><span class="welcome-status-dot"></span>LOCAL WORKSPACE</div>
-        <div class="welcome-header">
-          <div class="welcome-mark" aria-hidden="true"><span>C</span></div>
-          <div class="welcome-brand">
-            <h1 class="welcome-title">Code</h1>
-            <p class="welcome-desc" data-i18n="welcomeTagline">开始对话，用自然语言驱动代码。</p>
+    let welcomeRoot = els.messageList.querySelector(":scope > .welcome-screen");
+    if (!welcomeRoot) {
+      const shouldAnimate = !welcomeMotion.played
+        && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      welcomeMotion.played = true;
+      els.messageList.innerHTML = `
+        <div class="welcome-screen">
+          <div class="welcome-wordmark welcome-brand-lockup">
+            <div class="welcome-command-line">
+              <span class="welcome-command-prompt" aria-hidden="true">&gt;</span>
+              <div class="welcome-product">${renderCodeWordmark("welcome-typed-brand")}</div>
+              <span class="welcome-brand-caret" aria-hidden="true"></span>
+            </div>
+            <h1 class="welcome-title"><span class="welcome-slogan-text">${escapeHtml(t("welcomeHeadline"))}</span></h1>
           </div>
+          <span class="welcome-travel-caret" aria-hidden="true"></span>
         </div>
-        <div class="welcome-rail" aria-hidden="true"><span></span><i></i><span></span></div>
-      </div>
-    `;
+      `;
+      welcomeRoot = els.messageList.querySelector(":scope > .welcome-screen");
+      welcomeRoot?.classList.add(shouldAnimate ? "is-animating" : "is-complete");
+      if (shouldAnimate) requestAnimationFrame(() => playWelcomeMotion(welcomeRoot));
+      else welcomeRoot?.querySelectorAll(".code-wordmark-letter").forEach((letter) => {
+        letter.classList.add("is-visible");
+      });
+    } else {
+      const sloganText = welcomeRoot.querySelector(".welcome-slogan-text");
+      if (sloganText) sloganText.textContent = t("welcomeHeadline");
+    }
 
     const timeline = document.getElementById("chatTimeline");
     if (timeline) {
@@ -5070,13 +5297,13 @@ function renderMessages() {
     renderToolLog();
 
     applyI18n(); // translate dynamically rendered welcome HTML
-
     return;
 
   }
 
 
 
+  clearWelcomeMotionRuntime();
   els.chatPane.classList.remove("empty-chat");
 
   const msgs = state.messages;

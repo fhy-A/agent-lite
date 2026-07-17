@@ -11,6 +11,8 @@ APP_SOURCE = (ROOT / "app.js").read_text(encoding="utf-8")
 INDEX_SOURCE = (ROOT / "index.html").read_text(encoding="utf-8")
 BUILD_SOURCE = (ROOT / "build_exe.py").read_text(encoding="utf-8")
 STYLE_SOURCE = (ROOT / "styles.css").read_text(encoding="utf-8")
+LOGO_SOURCE = (ROOT / "assets" / "code-logo.svg").read_text(encoding="utf-8")
+LOGO_EXPORT_SOURCE = (ROOT / "design" / "logo-concepts" / "export_selected_logo.py").read_text(encoding="utf-8")
 
 
 class TestFrontendCoreModules(unittest.TestCase):
@@ -123,6 +125,61 @@ class TestFrontendCoreModules(unittest.TestCase):
         self.assertIn("APP_DIR / 'agent-runtime.js'", BUILD_SOURCE)
         self.assertIn("APP_DIR / 'src'", BUILD_SOURCE)
         self.assertIn("f\"{APP_DIR / 'src'}{';'}src\"", BUILD_SOURCE)
+        self.assertIn("APP_DIR / 'code-icon.png'", BUILD_SOURCE)
+        self.assertIn("APP_DIR / 'assets'", BUILD_SOURCE)
+
+    def test_code_brand_mark_and_minimal_welcome_stay_in_sync(self):
+        upper_path = "M80 13A40 40 0 0 1 80 93"
+        lower_path = "M80 147A40 40 0 0 1 80 67"
+        for source in (INDEX_SOURCE, APP_SOURCE, LOGO_SOURCE):
+            self.assertIn(upper_path, source)
+            self.assertIn(lower_path, source)
+            self.assertIn('stroke="currentColor"', source)
+            self.assertNotIn("#2563EB", source)
+            self.assertNotIn("#BFDBFE", source)
+        self.assertIn(".logo-svg {", STYLE_SOURCE)
+        self.assertIn("--brand-mark: #000000;", STYLE_SOURCE)
+        self.assertIn("--brand-mark: #ffffff;", STYLE_SOURCE)
+        self.assertIn("color: var(--brand-mark);", STYLE_SOURCE)
+        self.assertIn("draw.rounded_rectangle", LOGO_EXPORT_SOURCE)
+        self.assertIn(
+            'draw_mark(draw, "#FFFFFF", SCALE, optical_small_size=True)',
+            LOGO_EXPORT_SOURCE,
+        )
+        self.assertIn('render_transparent_mark("#000000")', LOGO_EXPORT_SOURCE)
+        self.assertIn('render_transparent_mark("#FFFFFF")', LOGO_EXPORT_SOURCE)
+        self.assertTrue((ROOT / "code-icon.ico").is_file())
+        self.assertTrue((ROOT / "code-icon.png").is_file())
+        self.assertTrue((ROOT / "assets" / "code-icon.png").is_file())
+        self.assertTrue((ROOT / "assets" / "code-logo-black.svg").is_file())
+        self.assertTrue((ROOT / "assets" / "code-logo-white.svg").is_file())
+        self.assertTrue((ROOT / "assets" / "code-logo-black.png").is_file())
+        self.assertTrue((ROOT / "assets" / "code-logo-white.png").is_file())
+        self.assertTrue((ROOT / "assets" / "code-wordmark.svg").is_file())
+        self.assertIn("function renderCodeWordmark", APP_SOURCE)
+        self.assertIn('viewBox="0 0 130 54"', APP_SOURCE)
+
+        welcome_start = APP_SOURCE.index('<div class="welcome-screen">')
+        welcome_end = APP_SOURCE.index("const timeline", welcome_start)
+        welcome = APP_SOURCE[welcome_start:welcome_end]
+        self.assertIn('class="welcome-wordmark welcome-brand-lockup"', welcome)
+        self.assertIn('class="welcome-command-line"', welcome)
+        self.assertIn('class="welcome-product"', welcome)
+        self.assertIn('renderCodeWordmark("welcome-typed-brand")', welcome)
+        self.assertIn('class="welcome-travel-caret"', welcome)
+        self.assertNotIn('<div class="welcome-product">Code</div>', welcome)
+        self.assertNotIn('class="welcome-mark-stage"', welcome)
+        self.assertIn('t("welcomeHeadline")', welcome)
+        self.assertNotIn('class="welcome-actions"', welcome)
+        self.assertNotIn("data-welcome-prompt=", welcome)
+        self.assertNotIn("function bindWelcomeActions()", APP_SOURCE)
+        self.assertNotIn(".welcome-actions {", STYLE_SOURCE)
+        self.assertIn("function playWelcomeMotion(root)", APP_SOURCE)
+        self.assertIn('window.matchMedia("(prefers-reduced-motion: reduce)")', APP_SOURCE)
+        self.assertIn("const promptRect = els.prompt.getBoundingClientRect();", APP_SOURCE)
+        self.assertIn("background: var(--text);", STYLE_SOURCE)
+        self.assertIn("@keyframes welcomeCaretType", STYLE_SOURCE)
+        self.assertIn("width: min(680px, calc(100% - 48px));", STYLE_SOURCE)
 
     def test_thought_projection_only_collects_tool_round_summaries(self):
         render_start = APP_SOURCE.index("function renderMessages()")

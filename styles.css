@@ -7,6 +7,7 @@
   --line: #e1e3e7;
   --line-strong: #c9ced6;
   --text: #20242a;
+  --brand-mark: #000000;
   --muted: #7b8493;
   --faint: #a3abb7;
   --accent: #2f78ff;
@@ -30,6 +31,7 @@ body.theme-dark {
   --line: #343434;
   --line-strong: #494949;
   --text: #f2f3f5;
+  --brand-mark: #ffffff;
   --muted: #9da5b3;
   --faint: #727b88;
   --accent: #6ea8ff;
@@ -151,6 +153,7 @@ input:focus, select:focus, textarea:focus {
 
 .logo-svg {
   flex-shrink: 0;
+  color: var(--brand-mark);
 }
 
 .new-session-bar {
@@ -5327,138 +5330,188 @@ body.theme-dark .chat-pane.empty-chat .composer {
   max-width: none;
 }
 
-/* Empty state: a compact local-workspace identity rather than a plain heading. */
-.welcome-screen {
-  position: relative;
-  gap: 14px;
-  min-width: min(560px, 86vw);
-  padding: 26px 22px 20px;
-  isolation: isolate;
+/* Empty state: the command caret writes the brand, reveals the promise, then
+   hands focus to the real composer. Every color comes from the active theme. */
+.chat-pane.empty-chat {
+  gap: clamp(20px, 3vh, 28px);
+  padding: clamp(28px, 6vh, 64px) 0 clamp(42px, 8vh, 84px);
 }
 
-.welcome-screen::before,
-.welcome-screen::after {
-  content: "";
+.chat-pane.empty-chat .composer {
+  width: min(680px, calc(100% - 48px));
+  border-color: color-mix(in srgb, var(--line-strong) 72%, var(--line));
+  border-radius: 16px;
+  background: var(--panel-3);
+  box-shadow: 0 18px 50px rgba(15, 23, 42, .09), 0 1px 0 rgba(255, 255, 255, .05) inset;
+}
+
+.welcome-screen {
+  position: relative;
+  width: min(680px, calc(100% - 48px));
+  min-width: 0;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  isolation: isolate;
+  --welcome-wordmark-width: 130px;
+}
+
+.welcome-screen.is-animating {
+  z-index: 4;
+}
+
+.welcome-wordmark {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  flex-direction: row;
+  justify-content: center;
+  gap: 24px;
+}
+
+.welcome-brand-lockup {
+  width: max-content;
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+.welcome-command-line {
+  position: relative;
+  width: var(--welcome-wordmark-width);
+  height: 54px;
+  flex: 0 0 var(--welcome-wordmark-width);
+}
+
+.welcome-product {
   position: absolute;
-  z-index: -1;
+  inset: 0;
+  display: block;
+  width: var(--welcome-wordmark-width);
+  height: 54px;
+  color: var(--text);
+}
+
+.welcome-product svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.welcome-command-prompt {
+  position: absolute;
+  top: 10px;
+  left: -36px;
+  color: var(--text);
+  font: 700 34px/1 Consolas, "Cascadia Mono", monospace;
+  opacity: 0;
+  transform: translateX(-12px);
+}
+
+.welcome-typed-brand .code-wordmark-letter {
+  opacity: 1;
+}
+
+.welcome-screen.is-animating .welcome-typed-brand .code-wordmark-letter {
+  opacity: 0;
+}
+
+.welcome-screen.is-animating .welcome-typed-brand .code-wordmark-letter.is-visible,
+.welcome-screen.is-complete .welcome-typed-brand .code-wordmark-letter {
+  opacity: 1;
+}
+
+.welcome-brand-caret,
+.welcome-travel-caret {
+  width: 3px;
+  height: 43px;
+  background: var(--text);
+  border-radius: 2px;
   pointer-events: none;
 }
 
-.welcome-screen::before {
-  inset: 0 10% auto;
-  height: 1px;
-  background: color-mix(in srgb, var(--line-strong) 60%, transparent);
-}
-
-.welcome-screen::after {
-  top: -5px;
-  left: 50%;
-  width: 11px;
-  height: 11px;
-  border: 2px solid var(--bg);
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
-  transform: translateX(-50%);
-}
-
-.welcome-kicker {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--muted);
-  font-family: Consolas, "Cascadia Mono", monospace;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1.4px;
-}
-
-.welcome-status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--green);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 12%, transparent);
-}
-
-.welcome-header {
-  flex-direction: column;
-  gap: 13px;
-}
-
-.welcome-mark {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  width: 68px;
-  height: 54px;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--line));
-  border-radius: 8px;
-  background: var(--panel-3);
-  box-shadow: 7px 7px 0 color-mix(in srgb, var(--accent) 12%, transparent);
-}
-
-.welcome-mark::after {
-  content: "";
+.welcome-brand-caret {
   position: absolute;
+  top: 3px;
+  left: -2px;
+  opacity: 0;
+}
+
+.welcome-brand-caret.is-finished {
+  visibility: hidden;
+}
+
+.welcome-travel-caret {
+  position: absolute;
+  z-index: 4;
   top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 1px;
-  background: color-mix(in srgb, var(--accent) 32%, var(--line));
+  left: 0;
+  opacity: 0;
+  transform-origin: 50% 0;
+  will-change: transform, opacity;
 }
 
-.welcome-mark span {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text);
-  font-family: Consolas, "Cascadia Mono", monospace;
-  font-size: 22px;
-  font-weight: 800;
-}
-
-.welcome-mark span:last-child {
-  background: var(--accent);
-  color: #fff;
-}
-
-.welcome-brand {
-  gap: 6px;
+.welcome-travel-caret.is-landed {
+  opacity: 1;
 }
 
 .welcome-title {
-  font-size: 34px;
-  line-height: 1.05;
-  letter-spacing: 0;
+  margin: 0 0 6px;
+  color: color-mix(in srgb, var(--muted) 88%, var(--text));
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 450;
+  letter-spacing: .02em;
+  white-space: nowrap;
 }
 
-.welcome-desc {
-  max-width: 460px;
-  color: color-mix(in srgb, var(--muted) 90%, var(--text));
-  font-size: 14px;
-  white-space: normal;
+.welcome-screen.is-animating .welcome-title {
+  clip-path: inset(0 100% 0 0);
+  animation: welcomeRevealSlogan .78s cubic-bezier(.4, 0, .2, 1) 2.155s forwards;
 }
 
-.welcome-rail {
-  display: grid;
-  grid-template-columns: 56px 5px 56px;
-  align-items: center;
-  gap: 8px;
-  margin-top: 2px;
+.welcome-screen.is-complete .welcome-command-prompt,
+.welcome-screen.is-complete .welcome-brand-caret,
+.welcome-screen.is-complete .welcome-travel-caret {
+  display: none;
 }
 
-.welcome-rail span {
-  height: 1px;
-  background: var(--line-strong);
+.welcome-screen.is-animating .welcome-command-prompt {
+  animation: welcomePromptIn .3s ease .08s forwards,
+             welcomePromptOut .22s ease 1.68s forwards;
 }
 
-.welcome-rail i {
-  width: 5px;
-  height: 5px;
-  border: 1px solid var(--accent);
-  transform: rotate(45deg);
+.welcome-screen.is-animating .welcome-brand-caret {
+  animation: welcomeCaretType 1.5s step-end .32s forwards;
+}
+
+.chat-pane.empty-chat .composer textarea {
+  caret-color: var(--text);
+}
+
+.chat-pane.empty-chat .composer.welcome-caret-handoff textarea {
+  caret-color: transparent;
+}
+
+@keyframes welcomePromptIn {
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes welcomePromptOut {
+  to { opacity: 0; transform: translateX(8px); }
+}
+
+@keyframes welcomeCaretType {
+  0% { left: -2px; opacity: 1; }
+  18% { left: 30.77%; opacity: 1; }
+  37% { left: 54.62%; opacity: 1; }
+  56% { left: 77.69%; opacity: 1; }
+  75%, 96% { left: 100%; opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+
+@keyframes welcomeRevealSlogan {
+  to { clip-path: inset(0 0 0 0); }
 }
 
 /* Preserve model-authored thought paragraphs and make their boundaries readable. */
@@ -5809,6 +5862,74 @@ body.theme-dark .chat-pane.empty-chat .composer {
   }
 
   .welcome-title {
-    font-size: 30px;
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 640px) {
+  .chat-pane.empty-chat {
+    justify-content: flex-start;
+    overflow-y: auto;
+    padding: 28px 0;
+  }
+
+  .chat-pane.empty-chat .messages {
+    width: 100%;
+    padding: 0 18px;
+  }
+
+  .chat-pane.empty-chat .composer,
+  .welcome-screen {
+    width: calc(100% - 36px);
+  }
+
+  .welcome-screen {
+    --welcome-wordmark-width: 112px;
+  }
+
+  .welcome-wordmark {
+    gap: 16px;
+  }
+
+  .welcome-command-line,
+  .welcome-product {
+    height: 47px;
+  }
+
+  .welcome-title {
+    margin-bottom: 6px;
+    font-size: 14px;
+  }
+
+  .welcome-command-prompt {
+    top: 9px;
+    left: -30px;
+    font-size: 29px;
+  }
+
+  .welcome-brand-caret,
+  .welcome-travel-caret {
+    height: 37px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-screen,
+  .welcome-screen * {
+    animation: none !important;
+  }
+
+  .welcome-screen .welcome-typed-brand .code-wordmark-letter {
+    opacity: 1;
+  }
+
+  .welcome-screen .welcome-title {
+    clip-path: none;
+  }
+
+  .welcome-command-prompt,
+  .welcome-brand-caret,
+  .welcome-travel-caret {
+    display: none;
   }
 }

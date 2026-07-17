@@ -28,6 +28,8 @@ cmd = [
     "--add-data", f"{APP_DIR / 'index.html'}{';'}.",
     "--add-data", f"{APP_DIR / 'styles.css'}{';'}.",
     "--add-data", f"{APP_DIR / 'code-icon.ico'}{';'}.",
+    "--add-data", f"{APP_DIR / 'code-icon.png'}{';'}.",
+    "--add-data", f"{APP_DIR / 'assets'}{';'}assets",
     "--add-data", f"{APP_DIR / 'data' / 'skills'}{';'}data/skills",
     "--add-data", f"{APP_DIR / 'data' / 'memory'}{';'}data/memory",
     "--hidden-import", "json",

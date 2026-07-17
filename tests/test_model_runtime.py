@@ -23,22 +23,59 @@ class _StreamingUpstream(BaseHTTPRequestHandler):
         type(self).calls += 1
         type(self).authorizations.append(self.headers.get("Authorization", ""))
         length = int(self.headers.get("Content-Length", "0"))
-        self.rfile.read(length)
+        payload = json.loads(self.rfile.read(length) or b"{}")
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.end_headers()
-        frames = [
-            {"choices": [{"delta": {"reasoning_content": "checking"}}]},
-            {"choices": [{"delta": {"content": "hello"}}]},
-            {
-                "choices": [],
-                "usage": {
-                    "prompt_tokens": 3,
-                    "completion_tokens": 2,
-                    "total_tokens": 5,
+        user_content = (payload.get("messages") or [{}])[-1].get("content")
+        if user_content == "call a tool":
+            frames = [
+                {
+                    "choices": [{
+                        "delta": {
+                            "reasoning_content": "checking files",
+                            "tool_calls": [{
+                                "index": 0,
+                                "id": "call-1",
+                                "type": "function",
+                                "function": {"name": "read_", "arguments": "{\"pa"},
+                            }],
+                        },
+                    }],
                 },
-            },
-        ]
+                {
+                    "choices": [{
+                        "delta": {
+                            "tool_calls": [{
+                                "index": 0,
+                                "function": {"name": "file", "arguments": "th\":\"README.md\"}"},
+                            }],
+                        },
+                        "finish_reason": "tool_calls",
+                    }],
+                },
+                {
+                    "choices": [],
+                    "usage": {
+                        "prompt_tokens": 7,
+                        "completion_tokens": 4,
+                        "total_tokens": 11,
+                    },
+                },
+            ]
+        else:
+            frames = [
+                {"choices": [{"delta": {"reasoning_content": "checking"}}]},
+                {"choices": [{"delta": {"content": "hello"}, "finish_reason": "stop"}]},
+                {
+                    "choices": [],
+                    "usage": {
+                        "prompt_tokens": 3,
+                        "completion_tokens": 2,
+                        "total_tokens": 5,
+                    },
+                },
+            ]
         for frame in frames:
             self.wfile.write(
                 ("data: " + json.dumps(frame, ensure_ascii=False) + "\n\n").encode("utf-8")
@@ -96,6 +133,31 @@ class TestModelRuntime(unittest.TestCase):
         self.assertEqual(first_browser["events"], refreshed_browser["events"])
         self.assertEqual(first_browser["events"][-1]["data"], "[DONE]")
         self.assertIn("hello", json.dumps(first_browser, ensure_ascii=False))
+        self.assertEqual(first_browser["result"]["content"], "hello")
+        self.assertEqual(first_browser["result"]["reasoning"], "checking")
+        self.assertEqual(first_browser["result"]["finishReason"], "stop")
+        self.assertEqual(first_browser["result"]["usage"]["total_tokens"], 5)
+
+    def test_runtime_aggregates_split_tool_call_without_browser_parser(self):
+        run = server_mod._create_model_runtime_run(
+            "session-tool",
+            {"model": "test-model", "messages": [{"role": "user", "content": "call a tool"}]},
+            self.base_url,
+            ["secret-test-key"],
+        )
+        self._wait_for_terminal(run)
+
+        snapshot = server_mod._runtime_snapshot(run, 0)
+        self.assertEqual(snapshot["status"], "completed")
+        self.assertEqual(snapshot["result"]["reasoning"], "checking files")
+        self.assertEqual(snapshot["result"]["finishReason"], "tool_calls")
+        self.assertEqual(snapshot["result"]["usage"]["total_tokens"], 11)
+        self.assertEqual(snapshot["result"]["toolCalls"], [{
+            "index": 0,
+            "id": "call-1",
+            "type": "function",
+            "function": {"name": "read_file", "arguments": "{\"path\":\"README.md\"}"},
+        }])
 
     def test_runtime_snapshot_never_exposes_credentials_or_request_payload(self):
         run = server_mod._create_model_runtime_run(

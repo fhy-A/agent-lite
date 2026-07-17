@@ -155,6 +155,29 @@ class TestHealthAndConfig(TestServerFixture):
 
 class TestFileTools(TestServerFixture):
 
+    def test_read_only_registry_is_background_safe_and_idempotent(self):
+        self.assertEqual(set(server_mod.SERVER_TOOL_REGISTRY), {
+            "list_files", "read_file", "search_files", "glob_files",
+        })
+        for spec in server_mod.SERVER_TOOL_REGISTRY.values():
+            self.assertEqual(spec["effect"], "read")
+            self.assertTrue(spec["idempotent"])
+            self.assertTrue(spec["background"])
+
+    def test_http_read_only_tools_share_registry_results(self):
+        cases = [
+            ("list_files", {"path": "src", "maxDepth": 1}),
+            ("read_file", {"path": "src/main.py"}),
+            ("search_files", {"query": "hello", "path": "src"}),
+            ("glob_files", {"pattern": "*.py", "path": "src"}),
+        ]
+        for action, payload in cases:
+            with self.subTest(action=action):
+                direct = server_mod.execute_registered_tool(action, payload)
+                status, routed = _req("POST", f"/api/tools/{action}", json=payload)
+                self.assertEqual(status, 200)
+                self.assertEqual(routed, direct)
+
     # ── list_files ──
     def test_list_files_root(self):
         status, data = _req("POST", "/api/tools/list_files", json={"path": ""})

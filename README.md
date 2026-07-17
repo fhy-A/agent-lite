@@ -15,7 +15,7 @@
   <a href="https://github.com/fhy-A/Code/releases/latest"><img src="https://img.shields.io/badge/version-0.5.4-2563EB" alt="Version 0.5.4"></a>
   <img src="https://img.shields.io/badge/platform-Windows-0078D4" alt="Windows">
   <img src="https://img.shields.io/badge/python-3.12+-3776AB" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/tests-473%20passed-16A34A" alt="473 tests passed">
+  <img src="https://img.shields.io/badge/tests-476%20passed-16A34A" alt="476 tests passed">
   <a href="docs/LICENSE"><img src="https://img.shields.io/badge/license-MIT-6B7280" alt="MIT License"></a>
 </p>
 
@@ -190,6 +190,7 @@ python build_exe.py
 - [使用指南](docs/GUIDE.md)
 - [v0.5.4 发布说明](docs/releases/v0.5.4.md)
 - [会话 JSONL 迁移说明](docs/session-jsonl-migration.md)
+- [服务端 Agent 循环迁移计划](docs/SERVER_AGENT_LOOP_PLAN.md)
 - [前端模块拆分计划](docs/APP_JS_SPLIT_PLAN.md)
 - [开发日志](CHANGELOG.md)
 - [待办与路线](TODO.md)

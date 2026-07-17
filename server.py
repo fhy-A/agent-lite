@@ -60,6 +60,150 @@ _MODEL_RUNTIME_TERMINAL_TTL = 30 * 60
 _MODEL_RUNTIME_ACTIVE_TTL = 6 * 60 * 60
 
 
+def _runtime_stream_text(value):
+    """Normalize text fragments used by OpenAI-compatible stream variants."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, dict):
+                    text = text.get("value")
+                if text is None:
+                    text = item.get("content")
+                if text is not None:
+                    parts.append(str(text))
+        return "".join(parts)
+    if isinstance(value, dict):
+        text = value.get("text")
+        if isinstance(text, dict):
+            text = text.get("value")
+        return str(text or value.get("content") or "")
+    return str(value)
+
+
+def _merge_runtime_tool_call(run, part, fallback_index=0, replace=False):
+    if not isinstance(part, dict):
+        return
+    try:
+        index = int(part.get("index", fallback_index) or 0)
+    except (TypeError, ValueError):
+        index = int(fallback_index or 0)
+    calls = run["tool_call_parts"]
+    call = calls.setdefault(index, {
+        "index": index,
+        "id": "",
+        "type": "function",
+        "function": {"name": "", "arguments": ""},
+    })
+    if part.get("id"):
+        call["id"] = str(part["id"])
+    if part.get("type"):
+        call["type"] = str(part["type"])
+    function = part.get("function") or {}
+    if not isinstance(function, dict):
+        return
+    for key in ("name", "arguments"):
+        fragment = function.get(key)
+        if fragment is None:
+            continue
+        if key == "arguments" and not isinstance(fragment, str):
+            fragment = json.dumps(fragment, ensure_ascii=False, separators=(",", ":"))
+        fragment = str(fragment)
+        if replace:
+            call["function"][key] = fragment
+        else:
+            call["function"][key] += fragment
+
+
+def _merge_runtime_result(run, data):
+    """Aggregate one SSE data frame into a browser-independent round result."""
+    if not data or data == "[DONE]" or str(data).startswith("[ERROR]"):
+        return
+    try:
+        frame = json.loads(data)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return
+    if not isinstance(frame, dict):
+        return
+
+    result = run["result"]
+    choices = frame.get("choices") or []
+    if isinstance(choices, list) and choices:
+        choice = choices[0] if isinstance(choices[0], dict) else {}
+        delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
+        message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+
+        reasoning = _runtime_stream_text(
+            delta.get("reasoning_content", delta.get("reasoning", delta.get("thinking")))
+        )
+        content = _runtime_stream_text(delta.get("content"))
+        if reasoning:
+            result["reasoning"] += reasoning
+        elif not result["reasoning"] and message:
+            result["reasoning"] = _runtime_stream_text(
+                message.get("reasoning_content", message.get("reasoning", message.get("thinking")))
+            )
+        if content:
+            result["content"] += content
+        elif not result["content"] and message:
+            result["content"] = _runtime_stream_text(message.get("content"))
+
+        delta_calls = delta.get("tool_calls")
+        if isinstance(delta_calls, list):
+            for fallback_index, part in enumerate(delta_calls):
+                _merge_runtime_tool_call(run, part, fallback_index)
+        elif isinstance(message.get("tool_calls"), list) and not run["tool_call_parts"]:
+            for fallback_index, part in enumerate(message["tool_calls"]):
+                _merge_runtime_tool_call(run, part, fallback_index, replace=True)
+
+        finish_reason = choice.get("finish_reason")
+        if finish_reason is not None:
+            result["finishReason"] = str(finish_reason)
+
+    event_type = str(frame.get("type") or "")
+    if event_type == "content_block_delta" and isinstance(frame.get("delta"), dict):
+        delta = frame["delta"]
+        if delta.get("type") == "thinking_delta":
+            result["reasoning"] += _runtime_stream_text(delta.get("thinking"))
+        elif delta.get("type") == "text_delta":
+            result["content"] += _runtime_stream_text(delta.get("text"))
+    elif event_type == "response.output_text.delta":
+        result["content"] += _runtime_stream_text(frame.get("delta"))
+    elif event_type == "response.reasoning_text.delta":
+        result["reasoning"] += _runtime_stream_text(frame.get("delta"))
+
+    usage = frame.get("usage")
+    if isinstance(usage, dict):
+        result["usage"].update(usage)
+
+
+def _runtime_result_snapshot(run):
+    result = run["result"]
+    tool_calls = []
+    for index in sorted(run["tool_call_parts"]):
+        source = run["tool_call_parts"][index]
+        tool_calls.append({
+            "index": index,
+            "id": source.get("id", ""),
+            "type": source.get("type", "function"),
+            "function": dict(source.get("function") or {}),
+        })
+    return {
+        "content": result["content"],
+        "reasoning": result["reasoning"],
+        "toolCalls": tool_calls,
+        "finishReason": result["finishReason"],
+        "usage": dict(result["usage"]),
+    }
+
+
 def _normalize_runtime_base_url(base_url):
     value = str(base_url or NEW_API_BASE_URL or "http://localhost:3000").strip().rstrip("/")
     if value.endswith("/v1"):
@@ -69,6 +213,7 @@ def _normalize_runtime_base_url(base_url):
 
 def _append_runtime_event(run, data):
     with run["condition"]:
+        _merge_runtime_result(run, data)
         run["events"].append({"seq": len(run["events"]) + 1, "data": str(data)})
         run["updated_at"] = time.time()
         run["condition"].notify_all()
@@ -97,6 +242,7 @@ def _runtime_snapshot(run, cursor=0):
             "upstreamStatus": run["upstream_status"],
             "events": events,
             "nextCursor": events[-1]["seq"] if events else cursor,
+            "result": _runtime_result_snapshot(run),
         }
 
 
@@ -209,6 +355,13 @@ def _create_model_runtime_run(session_id, payload, base_url, keys):
         "error": "",
         "upstream_status": 0,
         "events": [],
+        "result": {
+            "content": "",
+            "reasoning": "",
+            "finishReason": "",
+            "usage": {},
+        },
+        "tool_call_parts": {},
         "condition": threading.Condition(threading.RLock()),
         "cancel_event": threading.Event(),
         "upstream_response": None,
@@ -1531,6 +1684,376 @@ def read_text_limited(path, limit_bytes):
     return text, len(data), truncated
 
 
+def _resolve_search_candidates(root, start, glob_pattern):
+    """Resolve file candidates for read-only search tools."""
+    if start.is_file():
+        return [start]
+
+    candidates = []
+    if glob_pattern:
+        import fnmatch as _fnmatch
+        try:
+            for dirpath, dirnames, filenames in os.walk(str(start)):
+                dirnames[:] = [item for item in dirnames if item not in SKIP_DIRS]
+                dirpath_p = Path(dirpath)
+                for name in filenames + dirnames:
+                    full = dirpath_p / name
+                    if _fnmatch.fnmatch(full.name, glob_pattern):
+                        candidates.append(full)
+                    elif "**" in glob_pattern:
+                        try:
+                            if _fnmatch.fnmatch(str(full.relative_to(start)), glob_pattern):
+                                candidates.append(full)
+                        except ValueError:
+                            pass
+                if len(candidates) >= 5000:
+                    break
+        except Exception:
+            candidates = []
+    else:
+        for dirpath, dirnames, filenames in os.walk(str(start)):
+            dirnames[:] = [item for item in dirnames if item not in SKIP_DIRS]
+            for name in filenames:
+                candidates.append(Path(dirpath) / name)
+            if len(candidates) >= 5000:
+                break
+
+    return [
+        path for path in candidates
+        if path.is_file() and not any(part in SKIP_DIRS for part in path.relative_to(root).parts)
+    ]
+
+
+def execute_list_files_tool(body):
+    body = dict(body or {})
+    relative_path = body.get("path") or ""
+    try:
+        max_depth = int(body.get("maxDepth") or 1)
+    except (TypeError, ValueError):
+        max_depth = 1
+    max_depth = max(1, min(max_depth, 3))
+    root, start = resolve_project_path(relative_path)
+    if not start.exists() or not start.is_dir():
+        raise ValueError("目录不存在")
+
+    items = []
+
+    def walk_dir(current, depth):
+        if len(items) >= 200:
+            return
+        try:
+            children = sorted(current.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower()))
+        except OSError:
+            return
+        for child in children:
+            if child.name in SKIP_DIRS:
+                continue
+            rel = to_project_relative(root, child)
+            if child.is_dir():
+                items.append({"type": "dir", "path": rel, "name": child.name})
+                if depth < max_depth:
+                    walk_dir(child, depth + 1)
+            elif child.is_file():
+                try:
+                    size = child.stat().st_size
+                except OSError:
+                    size = 0
+                items.append({"type": "file", "path": rel, "name": child.name, "size": size})
+            if len(items) >= 200:
+                return
+
+    walk_dir(start, 1)
+    return {
+        "ok": True,
+        "action": "list_files",
+        "path": relative_path or "/",
+        "count": len(items),
+        "maxDepth": max_depth,
+        "truncated": len(items) >= 200,
+        "items": items,
+    }
+
+
+def execute_read_file_tool(body):
+    body = dict(body or {})
+    path = body.get("path") or ""
+    root, target = resolve_attachment_path(path)
+    is_attachment = target is not None
+    if not target:
+        root, target = resolve_project_path(path)
+    if not target.exists() or not target.is_file():
+        raise ValueError("文件不存在")
+    data = target.read_bytes()
+    size = len(data)
+    preview = data[:MAX_TOOL_READ_BYTES]
+    ext = target.suffix.lower().lstrip(".")
+    mime_map = {
+        "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif",
+        "webp": "image/webp", "bmp": "image/bmp", "ico": "image/x-icon", "svg": "image/svg+xml",
+    }
+    image_mime = mime_map.get(ext)
+    truncated = size > (MAX_TOOL_IMAGE_BYTES if image_mime else MAX_TOOL_READ_BYTES)
+    display_path = display_attachment_path(root, target) if is_attachment else to_project_relative(root, target)
+    if image_mime or not is_probably_text(preview):
+        import base64 as b64
+        mime = image_mime or "application/octet-stream"
+        if ext == "svg":
+            try:
+                svg_text = data.decode("utf-8")
+                return {
+                    "ok": True,
+                    "action": "read_file",
+                    "path": display_path,
+                    "content": f"[Image file: {target.name} ({size} bytes, {mime}); visual content attached separately]",
+                    "size": size,
+                    "truncated": False,
+                    "binary": True,
+                    "mime": mime,
+                    "visual": True,
+                    "svgText": svg_text,
+                }
+            except Exception:
+                pass
+
+        img_data = data
+        if image_mime and size > MAX_TOOL_IMAGE_BYTES:
+            try:
+                from PIL import Image as PILImage
+                import io as _io
+                pil_img = PILImage.open(_io.BytesIO(data))
+                for scale in [0.5, 0.25, 0.15]:
+                    width, height = pil_img.size
+                    new_width, new_height = int(width * scale), int(height * scale)
+                    if max(new_width, new_height) < 256:
+                        break
+                    resized = pil_img.resize((new_width, new_height), PILImage.LANCZOS)
+                    buffer = _io.BytesIO()
+                    save_format = pil_img.format or ext.upper()
+                    if save_format == "JPG":
+                        save_format = "JPEG"
+                    resized.save(buffer, format=save_format, quality=80, optimize=True)
+                    compressed = buffer.getvalue()
+                    if len(compressed) <= MAX_TOOL_IMAGE_BYTES:
+                        img_data = compressed
+                        break
+            except Exception:
+                pass
+
+        can_attach = bool(image_mime) and len(img_data) <= MAX_TOOL_IMAGE_BYTES
+        payload = {
+            "ok": True,
+            "action": "read_file",
+            "path": display_path,
+            "content": (
+                f"[Image file: {target.name} ({size} bytes, {mime}); visual content attached separately]"
+                if can_attach else
+                f"[Binary file: {target.name} ({size} bytes, {mime}) — too large for visual attachment]"
+            ),
+            "size": size,
+            "truncated": truncated,
+            "binary": True,
+            "mime": mime,
+            "visual": can_attach,
+        }
+        if can_attach:
+            payload["base64"] = b64.b64encode(img_data).decode("ascii")
+        return payload
+
+    content = preview.decode("utf-8", errors="replace")
+    line_range = None
+    start_line = body.get("startLine")
+    end_line = body.get("endLine")
+    if start_line is not None or end_line is not None:
+        lines = content.splitlines()
+        try:
+            start = max(1, int(start_line or 1))
+            end = min(len(lines), int(end_line or len(lines)))
+        except (TypeError, ValueError):
+            raise ValueError("startLine/endLine 必须是数字")
+        if end < start:
+            raise ValueError("endLine 不能小于 startLine")
+        content = "\n".join(lines[start - 1:end])
+        line_range = {"start": start, "end": end}
+    return {
+        "ok": True,
+        "action": "read_file",
+        "path": display_path,
+        "content": content,
+        "size": size,
+        "truncated": truncated,
+        "lineRange": line_range,
+    }
+
+
+def execute_search_files_tool(body):
+    body = dict(body or {})
+    query = (body.get("query") or body.get("pattern") or "").strip()
+    start_path = body.get("path") or ""
+    use_regex = bool(body.get("regex") or body.get("useRegex") or False)
+    file_types = body.get("type") or body.get("fileTypes") or ""
+    glob_pattern = body.get("glob") or ""
+    context_lines = int(body.get("contextAround") or body.get("contextLines") or 0)
+    max_per_file = int(body.get("maxPerFile") or body.get("maxResultsPerFile") or 10)
+    if not query:
+        raise ValueError("搜索关键词或正则表达式不能为空")
+    if use_regex:
+        try:
+            needle = re.compile(query, re.IGNORECASE)
+        except re.error as exc:
+            raise ValueError(f"正则表达式无效：{exc}")
+    else:
+        needle = query
+
+    allowed_exts = set()
+    if file_types:
+        allowed_exts = {
+            ext.strip().lstrip(".").lower()
+            for ext in file_types.replace(",", " ").split()
+            if ext.strip()
+        }
+    root, start = resolve_project_path(start_path)
+    if not start.exists():
+        raise ValueError("搜索路径不存在")
+
+    results = []
+    for path in _resolve_search_candidates(root, start, glob_pattern):
+        if allowed_exts and path.suffix.lstrip(".").lower() not in allowed_exts:
+            continue
+        if len(results) >= MAX_SEARCH_RESULTS:
+            break
+        rel = to_project_relative(root, path)
+        matched_name = bool(needle.search(path.name)) if use_regex else (
+            needle.lower() in path.name.lower() or needle.lower() in rel.lower()
+        )
+        matches = []
+        try:
+            if path.stat().st_size <= MAX_SEARCH_FILE_BYTES:
+                content, _, _ = read_text_limited(path, MAX_SEARCH_FILE_BYTES)
+                content_lines = content.splitlines()
+                for line_no, line in enumerate(content_lines, start=1):
+                    hit = bool(needle.search(line)) if use_regex else needle.lower() in line.lower()
+                    if not hit:
+                        continue
+                    context_start = max(0, line_no - 1 - context_lines)
+                    context_end = min(len(content_lines), line_no + context_lines)
+                    context = [
+                        {"line": index + 1, "text": content_lines[index][:500]}
+                        for index in range(context_start, context_end)
+                    ]
+                    matches.append({
+                        "line": line_no,
+                        "text": line[:500],
+                        "context": context if context_lines > 0 else None,
+                    })
+                    if len(matches) >= max_per_file:
+                        break
+        except Exception:
+            pass
+        if matched_name or matches:
+            results.append({"path": rel, "nameMatch": matched_name, "matches": matches})
+
+    return {
+        "ok": True,
+        "action": "search_files",
+        "query": query,
+        "regex": use_regex,
+        "count": len(results),
+        "truncated": len(results) >= MAX_SEARCH_RESULTS,
+        "results": results,
+    }
+
+
+def execute_glob_files_tool(body):
+    body = dict(body or {})
+    pattern = (body.get("pattern") or "").strip()
+    start_path = body.get("path") or ""
+    if not pattern:
+        raise ValueError("glob 模式不能为空")
+    root, start = resolve_project_path(start_path)
+    if not start.exists():
+        raise ValueError("搜索路径不存在")
+
+    import fnmatch as _fnmatch
+
+    def collect(search_root, relative_root):
+        collected = []
+        for dirpath, dirnames, filenames in os.walk(str(search_root)):
+            dirnames[:] = [name for name in dirnames if name not in SKIP_DIRS]
+            dirpath_p = Path(dirpath)
+            for name in filenames + dirnames:
+                full = dirpath_p / name
+                try:
+                    relative_pattern = str(full.relative_to(relative_root))
+                except ValueError:
+                    continue
+                if not _fnmatch.fnmatch(full.name, pattern) and not _fnmatch.fnmatch(relative_pattern, pattern):
+                    continue
+                rel = to_project_relative(root, full)
+                if full.is_dir():
+                    collected.append({"path": rel, "type": "dir"})
+                elif full.is_file():
+                    try:
+                        size = full.stat().st_size
+                    except OSError:
+                        size = 0
+                    collected.append({"path": rel, "type": "file", "size": size})
+                if len(collected) >= 200:
+                    return collected
+        return collected
+
+    try:
+        results = collect(start, start)
+        if not results and start != root:
+            results = collect(root, root)
+    except Exception as exc:
+        raise ValueError(f"glob 模式无效：{exc}")
+    return {
+        "ok": True,
+        "action": "glob_files",
+        "pattern": pattern,
+        "count": len(results),
+        "truncated": len(results) >= 200,
+        "results": results,
+    }
+
+
+SERVER_TOOL_REGISTRY = {
+    "list_files": {
+        "execute": execute_list_files_tool,
+        "effect": "read",
+        "idempotent": True,
+        "background": True,
+    },
+    "read_file": {
+        "execute": execute_read_file_tool,
+        "effect": "read",
+        "idempotent": True,
+        "background": True,
+    },
+    "search_files": {
+        "execute": execute_search_files_tool,
+        "effect": "read",
+        "idempotent": True,
+        "background": True,
+    },
+    "glob_files": {
+        "execute": execute_glob_files_tool,
+        "effect": "read",
+        "idempotent": True,
+        "background": True,
+    },
+}
+
+
+def execute_registered_tool(action, payload):
+    spec = SERVER_TOOL_REGISTRY.get(str(action or ""))
+    if not spec:
+        raise ValueError(f"unknown server tool: {action}")
+    if not isinstance(payload, dict):
+        raise ValueError("tool payload must be an object")
+    return spec["execute"](payload)
+
+
 def normalize_text_newlines(text):
     """Normalize valid and accidentally doubled Windows newlines to LF."""
     return str(text).replace("\r\r\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
@@ -2777,381 +3300,16 @@ class CodeHandler(BaseHTTPRequestHandler):
         })
 
     def tool_list_files(self):
-        body = self.read_body_json()
-        relative_path = body.get("path") or ""
-        try:
-            max_depth = int(body.get("maxDepth") or 1)
-        except (TypeError, ValueError):
-            max_depth = 1
-        max_depth = max(1, min(max_depth, 3))
-        root, start = resolve_project_path(relative_path)
-        if not start.exists() or not start.is_dir():
-            raise ValueError("目录不存在")
-
-        items = []
-
-        def walk_dir(current, depth):
-            if len(items) >= 200:
-                return
-            try:
-                children = sorted(
-                    current.iterdir(),
-                    key=lambda item: (not item.is_dir(), item.name.lower()),
-                )
-            except OSError:
-                return
-            for child in children:
-                if child.name in SKIP_DIRS:
-                    continue
-                rel = to_project_relative(root, child)
-                if child.is_dir():
-                    items.append({"type": "dir", "path": rel, "name": child.name})
-                    if depth < max_depth:
-                        walk_dir(child, depth + 1)
-                elif child.is_file():
-                    try:
-                        size = child.stat().st_size
-                    except OSError:
-                        size = 0
-                    items.append({"type": "file", "path": rel, "name": child.name, "size": size})
-                if len(items) >= 200:
-                    return
-
-        walk_dir(start, 1)
-        self.send_json({
-            "ok": True,
-            "action": "list_files",
-            "path": relative_path or "/",
-            "count": len(items),
-            "maxDepth": max_depth,
-            "truncated": len(items) >= 200,
-            "items": items,
-        })
+        self.send_json(execute_registered_tool("list_files", self.read_body_json()))
 
     def tool_read_file(self):
-        body = self.read_body_json()
-        path = body.get("path") or ""
-        root, target = resolve_attachment_path(path)
-        is_attachment = target is not None
-        if not target:
-            root, target = resolve_project_path(path)
-        if not target.exists() or not target.is_file():
-            raise ValueError("文件不存在")
-        data = target.read_bytes()
-        size = len(data)
-        preview = data[:MAX_TOOL_READ_BYTES]
-        ext = target.suffix.lower().lstrip(".")
-        mime_map = {"png":"image/png","jpg":"image/jpeg","jpeg":"image/jpeg","gif":"image/gif",
-                    "webp":"image/webp","bmp":"image/bmp","ico":"image/x-icon","svg":"image/svg+xml"}
-        image_mime = mime_map.get(ext)
-        truncated = size > (MAX_TOOL_IMAGE_BYTES if image_mime else MAX_TOOL_READ_BYTES)
-        if image_mime or not is_probably_text(preview):
-            # Return image data separately so the frontend can attach it as an
-            # image_url block instead of sending base64 as plain tool text.
-            import base64 as b64
-            mime = image_mime or "application/octet-stream"
-            # SVG: return raw text instead of base64 (avoids 33% inflation)
-            if ext == "svg":
-                try:
-                    svg_text = data.decode("utf-8")
-                    payload = {
-                        "ok": True, "action": "read_file",
-                        "path": display_attachment_path(root, target) if is_attachment else to_project_relative(root, target),
-                        "content": f"[Image file: {target.name} ({size} bytes, {mime}); visual content attached separately]",
-                        "size": size, "truncated": False, "binary": True,
-                        "mime": mime, "visual": True, "svgText": svg_text,
-                    }
-                    self.send_json(payload)
-                    return
-                except Exception:
-                    pass  # fall through to base64 encoding below
-
-            # Downsample large images with PIL before giving up
-            img_data = data
-            if image_mime and size > MAX_TOOL_IMAGE_BYTES:
-                try:
-                    from PIL import Image as PILImage
-                    import io as _io
-                    pil_img = PILImage.open(_io.BytesIO(data))
-                    # Try progressively smaller sizes until it fits
-                    for scale in [0.5, 0.25, 0.15]:
-                        w, h = pil_img.size
-                        new_w, new_h = int(w * scale), int(h * scale)
-                        # Don't go below 256px on longest side
-                        if max(new_w, new_h) < 256:
-                            break
-                        resized = pil_img.resize((new_w, new_h), PILImage.LANCZOS)
-                        buf = _io.BytesIO()
-                        save_fmt = pil_img.format or ext.upper()
-                        if save_fmt == "JPG":
-                            save_fmt = "JPEG"
-                        resized.save(buf, format=save_fmt, quality=80, optimize=True)
-                        compressed = buf.getvalue()
-                        if len(compressed) <= MAX_TOOL_IMAGE_BYTES:
-                            img_data = compressed
-                            break
-                except Exception:
-                    pass  # keep original data, will be oversized
-
-            can_attach = bool(image_mime) and len(img_data) <= MAX_TOOL_IMAGE_BYTES
-            payload = {
-                "ok": True,
-                "action": "read_file",
-                "path": display_attachment_path(root, target) if is_attachment else to_project_relative(root, target),
-                "content": f"[Image file: {target.name} ({size} bytes, {mime}); visual content attached separately]" if can_attach else f"[Binary file: {target.name} ({size} bytes, {mime}) — too large for visual attachment]",
-                "size": size,
-                "truncated": truncated,
-                "binary": True,
-                "mime": mime,
-                "visual": can_attach,
-            }
-            if can_attach:
-                payload["base64"] = b64.b64encode(img_data).decode("ascii")
-            self.send_json(payload)
-            return
-        content = preview.decode("utf-8", errors="replace")
-        line_range = None
-        start_line = body.get("startLine")
-        end_line = body.get("endLine")
-        if start_line is not None or end_line is not None:
-            lines = content.splitlines()
-            try:
-                start = max(1, int(start_line or 1))
-                end = min(len(lines), int(end_line or len(lines)))
-            except (TypeError, ValueError):
-                raise ValueError("startLine/endLine 必须是数字")
-            if end < start:
-                raise ValueError("endLine 不能小于 startLine")
-            content = "\n".join(lines[start - 1:end])
-            line_range = {"start": start, "end": end}
-        self.send_json({
-            "ok": True,
-            "action": "read_file",
-            "path": display_attachment_path(root, target) if is_attachment else to_project_relative(root, target),
-            "content": content,
-            "size": size,
-            "truncated": truncated,
-            "lineRange": line_range,
-        })
-
-    def _resolve_search_candidates(self, root, start, glob_pattern):
-        """Resolve file candidates for search tools."""
-        if start.is_file():
-            return [start]
-
-        # Apply glob pattern to filter files (os.walk with pruning)
-        if glob_pattern:
-            import fnmatch as _fnmatch
-            candidates = []
-            try:
-                for dirpath, dirnames, filenames in os.walk(str(start)):
-                    dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-                    dirpath_p = Path(dirpath)
-                    for name in filenames + dirnames:
-                        full = dirpath_p / name
-                        if _fnmatch.fnmatch(full.name, glob_pattern):
-                            candidates.append(full)
-                        elif "**" in glob_pattern:
-                            try:
-                                if _fnmatch.fnmatch(str(full.relative_to(start)), glob_pattern):
-                                    candidates.append(full)
-                            except ValueError:
-                                pass
-                    if len(candidates) >= 5000:
-                        break
-            except Exception:
-                candidates = []
-        else:
-            candidates = []
-            for dirpath, dirnames, filenames in os.walk(str(start)):
-                # Prune skipped dirs BEFORE recursing
-                dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-                for fn in filenames:
-                    candidates.append(Path(dirpath) / fn)
-                if len(candidates) >= 5000:
-                    break
-            candidates = [p for p in candidates if p.is_file()]
-
-        # Filter: skip dirs
-        candidates = [p for p in candidates if p.is_file()]
-        # Filter: skip skipped dirs
-        candidates = [p for p in candidates if not any(part in SKIP_DIRS for part in p.relative_to(root).parts)]
-        return candidates
+        self.send_json(execute_registered_tool("read_file", self.read_body_json()))
 
     def tool_search_files(self):
-        body = self.read_body_json()
-        query = (body.get("query") or body.get("pattern") or "").strip()
-        start_path = body.get("path") or ""
-        use_regex = bool(body.get("regex") or body.get("useRegex") or False)
-        file_types = body.get("type") or body.get("fileTypes") or ""
-        glob_pattern = body.get("glob") or ""
-        context_lines = int(body.get("contextAround") or body.get("contextLines") or 0)
-        max_per_file = int(body.get("maxPerFile") or body.get("maxResultsPerFile") or 10)
-
-        if not query:
-            raise ValueError("搜索关键词或正则表达式不能为空")
-        if use_regex:
-            try:
-                needle = re.compile(query, re.IGNORECASE)
-            except re.error as exc:
-                raise ValueError(f"正则表达式无效：{exc}")
-        else:
-            needle = query
-
-        # Determine file type filter
-        allowed_exts = set()
-        if file_types:
-            allowed_exts = {ext.strip().lstrip(".").lower() for ext in file_types.replace(",", " ").split() if ext.strip()}
-
-        root, start = resolve_project_path(start_path)
-        if not start.exists():
-            raise ValueError("搜索路径不存在")
-
-        candidates = self._resolve_search_candidates(root, start, glob_pattern)
-
-        results = []
-        for path in candidates:
-            if allowed_exts:
-                ext = path.suffix.lstrip(".").lower()
-                if ext not in allowed_exts:
-                    continue
-            if len(results) >= MAX_SEARCH_RESULTS:
-                break
-            rel = to_project_relative(root, path)
-
-            # Name match
-            if use_regex:
-                matched_name = bool(needle.search(path.name))
-            else:
-                matched_name = needle.lower() in path.name.lower() or needle.lower() in rel.lower()
-
-            matches = []
-            try:
-                if path.stat().st_size <= MAX_SEARCH_FILE_BYTES:
-                    content, _, _ = read_text_limited(path, MAX_SEARCH_FILE_BYTES)
-                    for line_no, line in enumerate(content.splitlines(), start=1):
-                        if use_regex:
-                            hit = bool(needle.search(line))
-                        else:
-                            hit = needle.lower() in line.lower()
-                        if hit:
-                            # Collect context lines
-                            lines_for_context = content.splitlines()
-                            ctx_start = max(0, line_no - 1 - context_lines)
-                            ctx_end = min(len(lines_for_context), line_no - 1 + context_lines + 1)
-                            ctx = []
-                            for ctx_i in range(ctx_start, ctx_end):
-                                ctx.append({
-                                    "line": ctx_i + 1,
-                                    "text": lines_for_context[ctx_i][:500],
-                                })
-                            matches.append({
-                                "line": line_no,
-                                "text": line[:500],
-                                "context": ctx if context_lines > 0 else None,
-                            })
-                            if len(matches) >= max_per_file:
-                                break
-            except Exception:
-                pass
-            if matched_name or matches:
-                results.append({
-                    "path": rel,
-                    "nameMatch": matched_name,
-                    "matches": matches,
-                })
-
-        self.send_json({
-            "ok": True,
-            "action": "search_files",
-            "query": query,
-            "regex": use_regex,
-            "count": len(results),
-            "truncated": len(results) >= MAX_SEARCH_RESULTS,
-            "results": results,
-        })
+        self.send_json(execute_registered_tool("search_files", self.read_body_json()))
 
     def tool_glob_files(self):
-        body = self.read_body_json()
-        pattern = (body.get("pattern") or "").strip()
-        start_path = body.get("path") or ""
-        if not pattern:
-            raise ValueError("glob 模式不能为空")
-
-        root, start = resolve_project_path(start_path)
-        if not start.exists():
-            raise ValueError("搜索路径不存在")
-
-        import fnmatch as _fnmatch
-        results = []
-        try:
-            for dirpath, dirnames, filenames in os.walk(str(start)):
-                # Prune skipped dirs BEFORE recursing
-                dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-                dirpath_p = Path(dirpath)
-                for name in filenames + dirnames:
-                    full = dirpath_p / name
-                    if not _fnmatch.fnmatch(full.name, pattern) and not _fnmatch.fnmatch(str(full.relative_to(start)) if start != full else full.name, pattern):
-                        # Also check relative path match for ** patterns
-                        try:
-                            rel_pat = str(full.relative_to(start))
-                        except ValueError:
-                            continue
-                        if not _fnmatch.fnmatch(rel_pat, pattern):
-                            continue
-                    rel = to_project_relative(root, full)
-                    if full.is_dir():
-                        results.append({"path": rel, "type": "dir"})
-                    elif full.is_file():
-                        try:
-                            size = full.stat().st_size
-                        except OSError:
-                            size = 0
-                        results.append({"path": rel, "type": "file", "size": size})
-                    if len(results) >= 200:
-                        break
-                if len(results) >= 200:
-                    break
-        except Exception as exc:
-            raise ValueError(f"glob 模式无效：{exc}")
-
-        if not results:
-            results = []
-            # Try walk on root
-            for dirpath, dirnames, filenames in os.walk(str(root)):
-                dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-                dirpath_p = Path(dirpath)
-                for name in filenames + dirnames:
-                    full = dirpath_p / name
-                    if not _fnmatch.fnmatch(full.name, pattern):
-                        try:
-                            rel_pat = str(full.relative_to(root))
-                        except ValueError:
-                            continue
-                        if not _fnmatch.fnmatch(rel_pat, pattern):
-                            continue
-                    rel = to_project_relative(root, full)
-                    if full.is_dir():
-                        results.append({"path": rel, "type": "dir"})
-                    elif full.is_file():
-                        try:
-                            size = full.stat().st_size
-                        except OSError:
-                            size = 0
-                        results.append({"path": rel, "type": "file", "size": size})
-                    if len(results) >= 200:
-                        break
-                if len(results) >= 200:
-                    break
-
-        self.send_json({
-            "ok": True,
-            "action": "glob_files",
-            "pattern": pattern,
-            "count": len(results),
-            "truncated": len(results) >= 200,
-            "results": results,
-        })
+        self.send_json(execute_registered_tool("glob_files", self.read_body_json()))
 
     def _fuzzy_find(self, text, fragment):
         """Try to find fragment in text, falling back to whitespace-normalized matching."""

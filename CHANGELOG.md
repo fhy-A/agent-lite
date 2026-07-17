@@ -14,6 +14,22 @@
 
 ---
 
+## 2026-07-18 05:16 · Codex
+
+### 推进服务端 Agent 循环下沉：结构化轮次结果与只读工具注册表
+
+- **确认真实架构边界**：复核模型运行时、恢复检查点和前端 `runAgentLoop()` 后确认，v0.5.4 服务端只持有单次上游模型流；浏览器刷新可续接当前 SSE，但模型返回工具调用后仍必须由浏览器执行工具并发起下一轮，因此浏览器完全关闭后的多轮续跑尚未成立。
+- **结构化模型轮次结果**：服务端在保留原始 SSE 事件和游标重放协议的同时，增量聚合 `content`、`reasoning`、`tool_calls`、`finish_reason` 与 `usage`；支持 OpenAI 兼容流中的分片函数名/参数、完整 `message.tool_calls` 以及 Anthropic/Responses 风格文本增量，运行快照新增稳定的 `result` 字段。
+- **流式与凭据不变量**：聚合发生在原有事件追加的同一临界区，不增加整轮缓冲、网络等待或额外上游请求；结束后仍立即清空 API Key 和请求 Payload，运行快照只包含模型输出与工具参数，原有前端无需切换即可继续消费 `events`。
+- **首批共享工具注册表**：将 `list_files`、`read_file`、`search_files`、`glob_files` 从 HTTP Handler 抽成可直接调用的服务函数，集中注册到 `SERVER_TOOL_REGISTRY`，并声明 `effect=read`、`idempotent=true`、`background=true`；现有 `/api/tools/*` 路由与未来服务端 AgentRun 现已共用同一实现。
+- **迁移路线与架构记忆**：新增 `docs/SERVER_AGENT_LOOP_PLAN.md`，明确当前/目标所有权、五阶段迁移顺序、权限与幂等约束及阶段 1 API；重写过期的 `data/memory/code-architecture.md`，TODO 更新为下一步建立可消费只读注册表的持久化 `AgentRun` 状态机。
+- **当前阶段边界**：本次完成的是安全下沉所需的协议和首批工具执行层，没有提前宣称浏览器关闭后已能完整续跑；写入、命令、问卷和子任务仍由前端编排，待持久化状态机和副作用幂等协议完成后迁移。
+- **验证结果**：模型运行时定向测试 `3 passed`，运行时/会话恢复/并发/安全回归 `119 passed`，工具路由与注册表一致性 `48 passed, 4 subtests passed`；最终全量回归 `476 passed, 6 subtests passed`，JavaScript 语法、Python 编译和 `git diff --check` 通过。用户重启实际 Code 服务后完成 `list_files`、`read_file`、`search_files`、`glob_files` 四项只读界面验收，结果正常且未产生意外写入。
+
+**涉及文件**：`server.py`、`tests/test_model_runtime.py`、`tests/test_routes.py`、`docs/SERVER_AGENT_LOOP_PLAN.md`、`data/memory/code-architecture.md`、`README.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 04:53 · Codex
 
 ### 完成 Code v0.5.4 GitHub Release 发布

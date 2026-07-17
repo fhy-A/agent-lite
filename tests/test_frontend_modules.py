@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_SOURCE = (ROOT / "app.js").read_text(encoding="utf-8")
+RUNTIME_SOURCE = (ROOT / "agent-runtime.js").read_text(encoding="utf-8")
 INDEX_SOURCE = (ROOT / "index.html").read_text(encoding="utf-8")
 BUILD_SOURCE = (ROOT / "build_exe.py").read_text(encoding="utf-8")
 STYLE_SOURCE = (ROOT / "styles.css").read_text(encoding="utf-8")
@@ -16,6 +17,71 @@ LOGO_EXPORT_SOURCE = (ROOT / "design" / "logo-concepts" / "export_selected_logo.
 
 
 class TestFrontendCoreModules(unittest.TestCase):
+    def test_agent_runtime_client_exposes_durable_run_protocol(self):
+        for expected in (
+            "createAgentRun",
+            "getAgentRun",
+            "resumeAgentRun",
+            "watchAgentRun",
+            "cancelAgentRun",
+            'if (["completed", "failed", "cancelled", "waiting_credentials"].includes(snapshot.status))',
+            "await onEvent?.(event, snapshot)",
+        ):
+            self.assertIn(expected, RUNTIME_SOURCE)
+
+    def test_agent_runtime_watcher_projects_events_sequentially_and_resumes_cursor(self):
+        script = f"""
+global.window = {{}};
+const source = {json.dumps(RUNTIME_SOURCE)};
+const urls = [];
+const snapshots = [
+  {{status: "running", events: [{{seq: 1, type: "created"}}, {{seq: 2, type: "model_started"}}]}},
+  {{status: "completed", events: [{{seq: 3, type: "completed"}}], result: {{content: "ok"}}}},
+];
+global.fetch = async (url) => {{
+  urls.push(String(url));
+  return new Response(JSON.stringify(snapshots.shift()), {{
+    status: 200,
+    headers: {{"Content-Type": "application/json"}},
+  }});
+}};
+eval(source);
+const order = [];
+(async () => {{
+  const result = await window.AgentRuntime.watchAgentRun({{
+    agentRunId: "agent-1",
+    onEvent: async (event) => {{
+      order.push(`start-${{event.seq}}`);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      order.push(`end-${{event.seq}}`);
+    }},
+  }});
+  process.stdout.write(JSON.stringify({{urls, order, cursor: result.nextCursor, status: result.status}}));
+}})().catch((error) => {{ console.error(error); process.exit(1); }});
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertIn("cursor=0", data["urls"][0])
+        self.assertIn("cursor=2", data["urls"][1])
+        self.assertEqual(
+            data["order"],
+            ["start-1", "end-1", "start-2", "end-2", "start-3", "end-3"],
+        )
+        self.assertEqual(data["cursor"], 3)
+        self.assertEqual(data["status"], "completed")
+
+    def test_read_only_permission_is_user_visible(self):
+        self.assertIn('data-value="read"', INDEX_SOURCE)
+        self.assertIn('data-i18n="permRead"', INDEX_SOURCE)
+        self.assertIn('permRead: "只读分析"', APP_SOURCE)
+        self.assertIn('permRead: "Read only"', APP_SOURCE)
+
     def test_partial_think_blocks_never_leak_into_visible_content(self):
         parser_start = APP_SOURCE.index("function splitThoughtContent")
         parser_end = APP_SOURCE.index("// ── Syntax highlighting", parser_start)

@@ -9,8 +9,8 @@ Code is a local web-based AI Coding Agent. It uses a Python `http.server` backen
 Three tiers: Browser UI → local Python service → model gateway.
 
 - **server.py** owns HTTP routing, filesystem/command safety, session persistence, local tools, upstream model connections, retry, SSE event buffering, cancellation, structured model-round aggregation, and an independent durable read-only AgentRun state machine.
-- **app.js** still owns the full multi-round Agent loop, prompt/context assembly, tool orchestration, permission and questionnaire interaction, sub-agent scheduling, and UI projection.
-- **agent-runtime.js** bridges the browser to server-owned model runs. It creates a run, polls event snapshots by cursor, reconstructs an SSE `Response`, reconnects after transient failures, and cancels by run ID.
+- **app.js** owns prompt/context assembly, UI projection, and the existing browser Agent loop for plan/edit/auto modes. The explicit read-only profile delegates its full multi-round loop to the server.
+- **agent-runtime.js** bridges the browser to both server-owned model rounds and durable AgentRun tasks. It polls by cursor, reconnects after transient failures, resumes credentials after a service restart, and cancels parent/child runs.
 - **New API / compatible gateway** supplies models through `/v1/chat/completions`.
 
 ## Runtime boundary
@@ -19,7 +19,7 @@ A server model run owns exactly one upstream model round. It survives browser re
 
 The independent `/api/agent/runs` path can persist messages and checkpoints, execute the four registered read-only tools, and continue model rounds without browser polling. It records tool-call fingerprints before execution and reuses completed results during recovery. API keys remain memory-only; a process restart loads active runs as `waiting_credentials` until the resume endpoint supplies keys again.
 
-The production browser UI still uses `runAgentLoop()` and the one-round runtime bridge, so the new AgentRun path is not yet the default execution owner. The next step is to persist `agentRunId` in the session checkpoint and project AgentRun events in the browser behind an explicit ownership switch. Only after that boundary is stable should permission, questionnaire, command, and write tools move server-side.
+The production UI exposes a `read` permission profile as the explicit ownership switch. Its session checkpoint stores `executionOwner`, `agentRunId`, `agentEventCursor`, and the active child `runtimeRunId`; model rounds reuse the existing SSE renderer while durable model/tool events are projected into the session in order. Cursor advancement and the projected message snapshot are persisted together. The other permission profiles never fall back into this path, so a tool call has only one executor. Permission decisions, questionnaires, commands, writes, and sub-agents remain browser-owned until their durable protocols are implemented.
 
 ## Safety invariants
 
@@ -34,5 +34,5 @@ The production browser UI still uses `runAgentLoop()` and the one-round runtime 
 
 - Packaged builds use `%USERPROFILE%/.code/`; source mode defaults to `data/`.
 - Session messages use JSONL while metadata and run checkpoints are stored separately.
-- Browser refresh recovery uses persisted session `runState` plus a server runtime run ID when the current model round is still alive.
-- Durable AgentRun state is stored separately under `data/agent-runs/`; it is not yet referenced by production session checkpoints.
+- Browser refresh recovery uses persisted session `runState` plus either a single-round runtime ID or a durable AgentRun ID/event cursor.
+- Durable AgentRun state is stored separately under `data/agent-runs/`; production read-only session checkpoints reference it without copying credentials into session data.

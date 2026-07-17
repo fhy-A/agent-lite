@@ -169,6 +169,8 @@ function ensureSessionRun(sessionId) {
       timerDisplay: null,
       recovery: null,
       runtimeRunId: "",
+      agentRunId: "",
+      agentEventCursor: 0,
     };
   }
   return state._sessionRuns[sessionId];
@@ -204,6 +206,9 @@ function makeRunCheckpoint(ctx, status = "running", phase = "model", extra = {})
     taskPrompt: ctx._taskPrompt || previous.taskPrompt || "",
     recoveryCount: Number(extra.recoveryCount ?? previous.recoveryCount ?? 0),
     runtimeRunId: String(extra.runtimeRunId ?? ctx.runtimeRunId ?? previous.runtimeRunId ?? ""),
+    executionOwner: String(extra.executionOwner ?? ctx.executionOwner ?? previous.executionOwner ?? "browser"),
+    agentRunId: String(extra.agentRunId ?? ctx.agentRunId ?? previous.agentRunId ?? ""),
+    agentEventCursor: Number(extra.agentEventCursor ?? ctx.agentEventCursor ?? previous.agentEventCursor ?? 0),
     ...extra,
   };
 }
@@ -211,12 +216,18 @@ function makeRunCheckpoint(ctx, status = "running", phase = "model", extra = {})
 async function persistRunCheckpoint(ctx, status = "running", phase = "model", extra = {}) {
   if (!ctx?.sessionId || ctx.isSubAgent) return;
   setSessionRunState(ctx.sessionId, makeRunCheckpoint(ctx, status, phase, extra));
-  await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats);
+  await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats, undefined, {
+    persistMessages: ctx.executionOwner === "server-agent",
+  });
 }
 
 async function clearRunCheckpoint(ctx) {
   if (!ctx?.sessionId || ctx.isSubAgent) return;
   setSessionRunState(ctx.sessionId, {});
+  const local = state.sessions.find((session) => session.id === ctx.sessionId);
+  const sessionTitle = ctx.sessionId === state.sessionId
+    ? els.sessionTitle.value.trim()
+    : String(local?.title || "").trim();
   // Write all messages to JSONL in one shot (stream is complete)
   const msgs = ctx.messages || [];
   if (msgs.length > 0) {
@@ -232,7 +243,7 @@ async function clearRunCheckpoint(ctx) {
     await apiJson(`/api/sessions/${encodeURIComponent(ctx.sessionId)}`, {
       method: "PUT",
       body: JSON.stringify({
-        title: els.sessionTitle.value.trim() || "Untitled",
+        title: sessionTitle || "Untitled",
         messages: serialized,
         stats: { ...(ctx.stats || getSessionStats(ctx.sessionId) || {}) },
         lastUsage: getSessionLastUsage(ctx.sessionId),
@@ -345,7 +356,7 @@ function cacheActiveSessionState() {
         messages: serialized,
         stats: { ...(state.stats || {}) },
         lastUsage: state.lastUsage,
-        runState: {},
+        runState: { ...getSessionRunState(prevId) },
       }),
     }).catch(() => {});
   }
@@ -441,6 +452,9 @@ function buildRunContext(sessionId) {
     maxTokens: getEffectiveMaxTokens(model),
     toolPreset,
     permissionProfile,
+    executionOwner: permissionProfile === "read" ? "server-agent" : "browser",
+    agentRunId: "",
+    agentEventCursor: 0,
     allowedToolNames,
     tools: getNativeTools(toolPreset, allowedToolNames),
     explicitSkill: null,
@@ -688,6 +702,8 @@ const MAX_TOOL_ROUNDS = 200;
 
 
 const toolPolicy = {
+
+  read: new Set(["list_files", "read_file", "search_files", "glob_files"]),
 
   plan: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "task", "use_skill", "read_skill_resource"]),
 
@@ -1398,6 +1414,8 @@ save_memory 保存偏好或决策到长期记忆。先在回复末尾询问”�
 
 const permissionInstructions = {
 
+  read: "权限策略：只读分析。只能列出、读取和搜索项目文件；不能写入、删除、运行命令、访问网络、启动子 Agent 或请求交互式确认。",
+
   plan: "权限策略：计划模式。可读取、搜索、生成修改方案，但不能运行命令或直接写入文件。",
 
   accept: "权限策略：接受编辑模式。可执行命令和写入文件，但操作前需用户确认。",
@@ -1992,8 +2010,8 @@ const I18N = {
     permNotifyEdit: "修改方案", permNotifyWrite: "文件写入", permNotifyPending: "待确认", permNotifyTitle: "Agent 请求确认",
     auto: "自动", plan: "计划", request: "请求",
     thinkingAuto: "自动", thinkingOff: "关闭", thinkingHigh: "高", thinkingMax: "最高",
-    permPlan: "计划", permAccept: "接受编辑", permBypass: "自动",
-    permPlanTip: "仅规划，不执行写操作", permAcceptTip: "可读写文件，编辑需用户确认", permBypassTip: "自动执行所有操作，无需确认",
+    permRead: "只读分析", permPlan: "计划", permAccept: "接受编辑", permBypass: "自动",
+    permReadTip: "仅分析项目，不修改任何内容", permPlanTip: "仅规划，不执行写操作", permAcceptTip: "可读写文件，编辑需用户确认", permBypassTip: "自动执行所有操作，无需确认",
     permTitle: "权限策略",
     addFile: "选择项目文件并插入路径",
     pin: "置顶", unpin: "取消置顶", rename: "重命名", delete: "删除",
@@ -2194,8 +2212,8 @@ const I18N = {
     permNotifyEdit: "Edit proposal", permNotifyWrite: "File write", permNotifyPending: "Confirm", permNotifyTitle: "Agent Request",
     auto: "Auto", plan: "Plan", request: "Accept",
     thinkingAuto: "Auto", thinkingOff: "Off", thinkingHigh: "High", thinkingMax: "Max",
-    permPlan: "Plan", permAccept: "Accept edits", permBypass: "Auto",
-    permPlanTip: "Plan only, no writes", permAcceptTip: "Read & write, edits need confirmation", permBypassTip: "Auto-execute all",
+    permRead: "Read only", permPlan: "Plan", permAccept: "Accept edits", permBypass: "Auto",
+    permReadTip: "Analyze the project without changing it", permPlanTip: "Plan only, no writes", permAcceptTip: "Read & write, edits need confirmation", permBypassTip: "Auto-execute all",
     permTitle: "Permissions", addFile: "Select a project file to insert its path",
     pin: "Pin", unpin: "Unpin", rename: "Rename", delete: "Delete",
     chatLabel: "Chats", pinnedLabel: "Pinned",
@@ -6264,7 +6282,7 @@ async function loadSession(sessionId) {
 
 
 
-async function saveSessionState(sessionId, messages, stats, title) {
+async function saveSessionState(sessionId, messages, stats, title, options = {}) {
 
   if (!sessionId) return;
 
@@ -6281,6 +6299,17 @@ async function saveSessionState(sessionId, messages, stats, title) {
     lastUsage: getSessionLastUsage(sessionId),
     runState: { ...getSessionRunState(sessionId) },
   };
+  if (options.persistMessages) {
+    payload.messages = (messages || []).map((msg) => ({
+      role: msg.role,
+      content: msg.content || "",
+      thought: msg.thought || "",
+      meta: msg.meta || {},
+      _images: msg._images || undefined,
+      _model: msg._model || undefined,
+      _time: msg._time || undefined,
+    }));
+  }
 
   const previous = state._sessionSaveChains[sessionId] || Promise.resolve();
   const savePromise = previous
@@ -8604,15 +8633,16 @@ async function withSessionRecoveryLock(sessionId, worker) {
 
 function prepareMessagesForRunRecovery(messages, runState) {
   const source = Array.isArray(messages) ? messages.filter(Boolean) : [];
+  const hasServerAgent = runState?.executionOwner === "server-agent" && Boolean(runState?.agentRunId);
   const hasRuntimeRun = runState?.phase === "model" && Boolean(runState?.runtimeRunId);
   const cleaned = source
-    .filter((msg) => hasRuntimeRun || !msg.streaming)
+    .filter((msg) => hasRuntimeRun || hasServerAgent || !msg.streaming)
     .filter((msg) => msg.meta?.kind !== "key-fallback")
     .filter((msg) => msg.meta?.kind !== "run-recovery");
 
   // The local runtime still owns this upstream stream. Keep the in-progress
   // assistant row and reattach instead of adding a synthetic recovery prompt.
-  if (hasRuntimeRun) return cleaned;
+  if (hasRuntimeRun || hasServerAgent) return cleaned;
 
   if (runState?.phase === "tools" && !runState?.resumedFromUserInput) {
     for (let index = cleaned.length - 1; index >= 0; index -= 1) {
@@ -8669,6 +8699,7 @@ function buildRecoveredRunContext(session, runState) {
   ctx.maxTokens = Number(runState.maxTokens || ctx.maxTokens || getEffectiveMaxTokens(ctx.model));
   ctx.toolPreset = runState.toolPreset || ctx.toolPreset || "default";
   ctx.permissionProfile = runState.permissionProfile || ctx.permissionProfile || "accept";
+  ctx.executionOwner = runState.executionOwner || (ctx.permissionProfile === "read" ? "server-agent" : "browser");
   ctx.thinkingLevel = runState.thinkingLevel || ctx.thinkingLevel || "auto";
   ctx.allowedToolNames = getAllowedToolNames(ctx.toolPreset);
   ctx.tools = getNativeTools(ctx.toolPreset, ctx.allowedToolNames);
@@ -8677,8 +8708,12 @@ function buildRecoveredRunContext(session, runState) {
   ctx._taskPrompt = runState.taskPrompt || "";
   ctx.run = ensureSessionRun(sessionId);
   ctx.runtimeRunId = String(runState.runtimeRunId || "");
+  ctx.agentRunId = String(runState.agentRunId || "");
+  ctx.agentEventCursor = Number(runState.agentEventCursor || 0);
   ctx._reuseRuntimeAssistant = Boolean(ctx.runtimeRunId);
   ctx.run.runtimeRunId = ctx.runtimeRunId;
+  ctx.run.agentRunId = ctx.agentRunId;
+  ctx.run.agentEventCursor = ctx.agentEventCursor;
   ctx.run.model = ctx.model;
   ctx.run._activeCtx = ctx;
   return ctx;
@@ -8694,7 +8729,7 @@ async function resumePersistedSessionRun(summary) {
     if (!["running", "waiting-network", "resuming"].includes(latestRunState.status)) return;
 
     const updatedAt = Date.parse(latestRunState.updatedAt || latestRunState.startedAt || 0);
-    if (Number.isFinite(updatedAt) && updatedAt > 0 && Date.now() - updatedAt > 6 * 60 * 60 * 1000) {
+    if (latestRunState.executionOwner !== "server-agent" && Number.isFinite(updatedAt) && updatedAt > 0 && Date.now() - updatedAt > 6 * 60 * 60 * 1000) {
       setSessionRunState(summary.id, { ...latestRunState, status: "failed", lastError: "Saved task recovery expired" });
       await saveSessionState(summary.id, session.messages || [], session.stats || {}, session.title);
       return;
@@ -8714,7 +8749,7 @@ async function resumePersistedSessionRun(summary) {
 
     let recoveryError = null;
     try {
-      await runAgentLoop(ctx);
+      await executeRunContext(ctx);
       await clearRunCheckpoint(ctx);
     } catch (error) {
       recoveryError = error;
@@ -9256,21 +9291,16 @@ function mapMessageForApi(msg, includeNativeTools = true) {
 
 
 
-async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx = null) {
-
+async function buildModelRequestPayload(ctx = null, useNativeTools = true, toolOverride = null) {
   const model = ctx?.model || getSelectedModel();
-
-  const tools = useNativeTools ? (ctx?.tools || getNativeTools()) : [];
-
+  const tools = Array.isArray(toolOverride)
+    ? toolOverride
+    : (useNativeTools ? (ctx?.tools || getNativeTools()) : []);
   const sessionId = ctx?.sessionId || state.sessionId;
-  const skipRender = ctx?.isSubAgent;
-  const run = ctx?.run || ensureSessionRun(sessionId);
-
-  // Capture messages at stream start (closure survives session switches)
-  let _streamMsgs = ctx?.messages || getSessionMessages(sessionId);
-  const _modelMsgs = ctx?.isSubAgent
-    ? _streamMsgs
-    : getModelContextMessages(_streamMsgs);
+  const streamMessages = ctx?.messages || getSessionMessages(sessionId);
+  const modelMessages = ctx?.isSubAgent
+    ? streamMessages
+    : getModelContextMessages(streamMessages);
 
   const payload = {
 
@@ -9290,7 +9320,7 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
       ...(ctx?.isSubAgent ? [] : [{
         role: "system",
         content: await getSystemPrompt({
-          messages: _modelMsgs,
+          messages: modelMessages,
           explicitSkill: ctx?.explicitSkill,
           toolPreset: ctx?.toolPreset,
           permissionProfile: ctx?.permissionProfile,
@@ -9305,7 +9335,7 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
         let pendingToolCallIds = new Set();
         let lastAssistantWithCallsIdx = -1;
 
-        for (const msg of _modelMsgs) {
+        for (const msg of modelMessages) {
 
           if (!msg || msg.streaming) continue;
 
@@ -9469,6 +9499,21 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
     // off/auto: don't send reasoning_effort (off disables, auto uses model default)
 
   }
+
+  return { payload, tools, model, sessionId, streamMessages };
+}
+
+
+
+async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx = null) {
+
+  const prepared = await buildModelRequestPayload(ctx, useNativeTools);
+  const { payload, tools, model, sessionId } = prepared;
+  const skipRender = ctx?.isSubAgent;
+  const run = ctx?.run || ensureSessionRun(sessionId);
+
+  // Capture messages at stream start (closure survives session switches)
+  let _streamMsgs = prepared.streamMessages;
 
 
 
@@ -10485,6 +10530,12 @@ function updateBackgroundJob(job, status, detail = "") {
 
 function cancelSessionRun(run) {
   if (!run) return;
+  const agentRunId = String(run.agentRunId || run._activeCtx?.agentRunId || "");
+  if (agentRunId) {
+    window.AgentRuntime?.cancelAgentRun(agentRunId).catch(() => {});
+    run.agentRunId = "";
+    if (run._activeCtx) run._activeCtx.agentRunId = "";
+  }
   const runtimeRunId = String(run.runtimeRunId || "");
   if (runtimeRunId) {
     window.AgentRuntime?.cancelRun(runtimeRunId).catch(() => {});
@@ -10747,6 +10798,331 @@ async function mapWithConcurrency(items, limit, worker) {
   });
   await Promise.all(runners);
   return results;
+}
+
+const SERVER_AGENT_READ_TOOLS = Object.freeze(["list_files", "read_file", "search_files", "glob_files"]);
+
+function isServerOwnedRun(ctx) {
+  return !ctx?.isSubAgent && ctx?.executionOwner === "server-agent";
+}
+
+function findAgentProjectionMessage(ctx, eventType, eventSeq) {
+  return ctx.messages.find((msg) => (
+    msg?.meta?.agentRunId === ctx.agentRunId
+    && msg?.meta?.agentEventType === eventType
+    && Number(msg?.meta?.agentEventSeq || 0) === Number(eventSeq || 0)
+  ));
+}
+
+function agentEventMeta(ctx, event, eventType = event?.type) {
+  return {
+    agentRunId: ctx.agentRunId,
+    agentEventType: eventType,
+    agentEventSeq: Number(event?.seq || 0),
+  };
+}
+
+function findAgentAssistantByRuntime(ctx, runtimeRunId) {
+  return ctx.messages.find((msg) => (
+    msg?.role === "assistant"
+    && msg?.meta?.agentRunId === ctx.agentRunId
+    && msg?.meta?.agentRuntimeRunId === runtimeRunId
+  ));
+}
+
+async function projectAgentModelStarted(ctx, event) {
+  const runtimeRunId = String(event?.data?.runtimeRunId || "");
+  if (!runtimeRunId) return;
+
+  let assistant = findAgentAssistantByRuntime(ctx, runtimeRunId);
+  if (assistant && !assistant.streaming) return;
+
+  if (!assistant) {
+    assistant = {
+      role: "assistant",
+      content: "",
+      streaming: true,
+      _streamProjection: "pending",
+      _model: ctx.model || getSelectedModel(),
+      meta: {
+        ...agentEventMeta(ctx, event, "model_started"),
+        agentRuntimeRunId: runtimeRunId,
+      },
+    };
+    ctx.messages.push(assistant);
+  } else {
+    assistant.meta = {
+      ...(assistant.meta || {}),
+      ...agentEventMeta(ctx, event, "model_started"),
+      agentRuntimeRunId: runtimeRunId,
+    };
+  }
+
+  const assistantIndex = ctx.messages.indexOf(assistant);
+  ctx.runtimeRunId = runtimeRunId;
+  ctx.run.runtimeRunId = runtimeRunId;
+  setSessionMessages(ctx.sessionId, ctx.messages);
+  renderSessionMessages(ctx.sessionId);
+  await persistRunCheckpoint(ctx, "running", "model", { runtimeRunId });
+
+  ctx.responseUsage = { input: 0, output: 0, cache: 0 };
+  try {
+    // The server Agent owns this model round. Attach only to its child runtime;
+    // never use callModelOnce here because its retry path could create a second
+    // independent upstream request.
+    await _callModelOnceAttempt(assistantIndex, true, ctx);
+    const turnUsage = { ...(ctx.responseUsage || {}) };
+    const projected = ctx.messages[assistantIndex];
+    if (projected) {
+      const hasUsage = ["input", "output", "cache"].some((key) => Number(turnUsage[key] || 0) > 0);
+      projected.meta = {
+        ...(projected.meta || {}),
+        ...agentEventMeta(ctx, event, "model_started"),
+        agentRuntimeRunId: runtimeRunId,
+        ...(hasUsage ? { _usage: turnUsage } : {}),
+      };
+    }
+  } catch (error) {
+    if (error?.name === "AbortError") throw error;
+    // Durable model_completed contains the complete response. If the short-lived
+    // child runtime has expired, discard only its empty/partial projection and
+    // let that event rebuild the round without issuing another model request.
+    const projectedIndex = ctx.messages.findIndex((msg) => (
+      msg?.role === "assistant"
+      && msg?.meta?.agentRunId === ctx.agentRunId
+      && msg?.meta?.agentRuntimeRunId === runtimeRunId
+      && msg?.streaming
+    ));
+    if (projectedIndex >= 0) ctx.messages.splice(projectedIndex, 1);
+    ctx.runtimeRunId = "";
+    ctx.run.runtimeRunId = "";
+  } finally {
+    ctx.responseUsage = null;
+    setSessionMessages(ctx.sessionId, ctx.messages);
+    renderSessionMessages(ctx.sessionId);
+  }
+}
+
+function projectAgentModelCompleted(ctx, event) {
+  const data = event?.data || {};
+  const runtimeRunId = String(data.runtimeRunId || "");
+  const toolCalls = Array.isArray(data.toolCalls) ? data.toolCalls : [];
+  const combined = data.reasoning
+    ? `<think>${String(data.reasoning)}</think>\n${String(data.content || "")}`
+    : String(data.content || "");
+  const projectedContent = splitThoughtContent(combined);
+  const completedAt = String(data.completedAt || event?.createdAt || new Date().toISOString());
+  let assistant = findAgentAssistantByRuntime(ctx, runtimeRunId);
+
+  if (!assistant) {
+    assistant = {
+      role: "assistant",
+      thought: projectedContent.thought,
+      content: projectedContent.content || toolProgressSummary(toolCalls) || "(empty response)",
+      streaming: false,
+      _model: ctx.model || getSelectedModel(),
+      _time: completedAt,
+      meta: {
+        ...agentEventMeta(ctx, event, "model_completed"),
+        agentRuntimeRunId: runtimeRunId,
+        toolCalls,
+      },
+    };
+    ctx.messages.push(assistant);
+  } else {
+    assistant.thought = projectedContent.thought || assistant.thought || "";
+    assistant.content = projectedContent.content || assistant.content || toolProgressSummary(toolCalls) || "(empty response)";
+    assistant.streaming = false;
+    assistant._time = assistant._time || completedAt;
+    delete assistant._streamProjection;
+    assistant.meta = {
+      ...(assistant.meta || {}),
+      ...agentEventMeta(ctx, event, "model_completed"),
+      agentRuntimeRunId: runtimeRunId,
+      toolCalls,
+    };
+  }
+
+  if (!assistant.meta._usage) {
+    const usage = data.usage || {};
+    assistant.meta._usage = {
+      input: Number(usage.prompt_tokens ?? usage.input ?? 0),
+      output: Number(usage.completion_tokens ?? usage.output ?? 0),
+      cache: Number(usage.prompt_cache_hit_tokens ?? usage.cache_read_tokens ?? usage.cache ?? 0),
+    };
+    setSessionLastUsage(ctx.sessionId, usage);
+    updateUsage(usage, ctx.sessionId, ctx);
+  }
+  ctx.runtimeRunId = "";
+  ctx.run.runtimeRunId = "";
+}
+
+function projectAgentToolStarted(ctx, event) {
+  if (findAgentProjectionMessage(ctx, "tool_started", event?.seq)) return;
+  const data = event?.data || {};
+  const call = {
+    id: String(data.toolCallId || ""),
+    type: "function",
+    function: {
+      name: String(data.name || ""),
+      arguments: typeof data.arguments === "string" ? data.arguments : JSON.stringify(data.arguments || {}),
+    },
+  };
+  const tool = normalizeNativeToolCall(call);
+  ctx.messages.push({
+    role: "tool-call",
+    content: formatToolCall(tool),
+    meta: {
+      ...agentEventMeta(ctx, event, "tool_started"),
+      action: tool.action,
+      tool,
+      toolCallId: tool._toolCallId,
+      native: true,
+    },
+  });
+}
+
+function projectAgentToolCompleted(ctx, event) {
+  if (findAgentProjectionMessage(ctx, "tool_completed", event?.seq)) return;
+  const data = event?.data || {};
+  const toolCallId = String(data.toolCallId || "");
+  let callMessage = ctx.messages.find((msg) => msg?.role === "tool-call" && msg?.meta?.toolCallId === toolCallId);
+  if (!callMessage) {
+    const syntheticStart = {
+      ...event,
+      data: { toolCallId, name: data.name || "", arguments: "{}" },
+    };
+    projectAgentToolStarted(ctx, syntheticStart);
+    callMessage = ctx.messages[ctx.messages.length - 1];
+    callMessage.meta.agentEventType = "tool_completed_call";
+  }
+  const result = data.result || {};
+  ctx.messages.push({
+    role: "tool-result",
+    content: formatToolResult(result),
+    meta: {
+      ...agentEventMeta(ctx, event, "tool_completed"),
+      action: String(data.name || callMessage?.meta?.action || ""),
+      path: String(result.path || ""),
+      toolCallId,
+      native: true,
+      replayed: Boolean(data.replayed),
+    },
+  });
+}
+
+async function projectAgentEvent(ctx, event) {
+  const eventType = String(event?.type || "");
+  if (eventType === "model_started") await projectAgentModelStarted(ctx, event);
+  else if (eventType === "model_completed") projectAgentModelCompleted(ctx, event);
+  else if (eventType === "tool_started") projectAgentToolStarted(ctx, event);
+  else if (eventType === "tool_completed") projectAgentToolCompleted(ctx, event);
+
+  ctx.agentEventCursor = Math.max(Number(ctx.agentEventCursor || 0), Number(event?.seq || 0));
+  ctx.run.agentEventCursor = ctx.agentEventCursor;
+  setSessionMessages(ctx.sessionId, ctx.messages);
+  renderSessionMessages(ctx.sessionId);
+  await persistRunCheckpoint(ctx, "running", eventType.startsWith("tool_") ? "tools" : "model", {
+    agentEventCursor: ctx.agentEventCursor,
+    runtimeRunId: ctx.runtimeRunId || "",
+  });
+}
+
+async function runServerAgentLoop(ctx) {
+  if (!window.AgentRuntime?.createAgentRun || !window.AgentRuntime?.watchAgentRun) {
+    throw new Error("Server Agent runtime is unavailable");
+  }
+  ctx.messages = Array.isArray(ctx.messages) ? ctx.messages.filter(Boolean) : [];
+  ctx.executionOwner = "server-agent";
+  ctx.allowedToolNames = new Set(SERVER_AGENT_READ_TOOLS);
+  const safeTools = nativeTools.filter((tool) => SERVER_AGENT_READ_TOOLS.includes(tool.function?.name));
+  ctx.tools = safeTools;
+  ctx.run = ctx.run || ensureSessionRun(ctx.sessionId);
+  ctx.run._activeCtx = ctx;
+  if (!ctx.run.abortController || ctx.run.abortController.signal.aborted) {
+    ctx.run.abortController = new AbortController();
+  }
+  if (ctx.sessionId === state.sessionId) state.abortController = ctx.run.abortController;
+
+  const baseUrl = els.baseUrl.value.trim() || "http://localhost:3000";
+  const keys = getFallbackKeys(ctx.model || getSelectedModel());
+  if (!ctx.agentRunId) {
+    const prepared = await buildModelRequestPayload(ctx, true, safeTools);
+    const created = await window.AgentRuntime.createAgentRun({
+      sessionId: ctx.sessionId,
+      payload: prepared.payload,
+      baseUrl,
+      keys,
+      allowedTools: SERVER_AGENT_READ_TOOLS,
+      maxRounds: MAX_TOOL_ROUNDS,
+      signal: ctx.run.abortController.signal,
+    });
+    ctx.agentRunId = String(created.agentRunId || "");
+    if (!ctx.agentRunId) throw new Error("Server Agent did not return an agentRunId");
+    ctx.run.agentRunId = ctx.agentRunId;
+    ctx.agentEventCursor = 0;
+    ctx.run.agentEventCursor = 0;
+    await persistRunCheckpoint(ctx, "running", "model", {
+      executionOwner: "server-agent",
+      agentRunId: ctx.agentRunId,
+      agentEventCursor: 0,
+    });
+  }
+
+  while (true) {
+    let snapshot = await window.AgentRuntime.getAgentRun(ctx.agentRunId, {
+      cursor: ctx.agentEventCursor || 0,
+      signal: ctx.run.abortController.signal,
+    });
+    if (snapshot.status === "waiting_credentials") {
+      await window.AgentRuntime.resumeAgentRun(ctx.agentRunId, {
+        keys,
+        baseUrl,
+        signal: ctx.run.abortController.signal,
+      });
+    }
+
+    snapshot = await window.AgentRuntime.watchAgentRun({
+      agentRunId: ctx.agentRunId,
+      cursor: ctx.agentEventCursor || 0,
+      signal: ctx.run.abortController.signal,
+      onEvent: (event) => projectAgentEvent(ctx, event),
+      onReconnect({ attempt, nextRetryAt, error }) {
+        ctx.run.recovery = {
+          source: "agent-poll",
+          attempt,
+          maxAttempts: 0,
+          nextRetryAt,
+          message: error?.message || String(error || ""),
+        };
+        if (ctx.sessionId === state.sessionId) renderSessionMessages(ctx.sessionId);
+      },
+      onReconnected() {
+        if (ctx.run.recovery?.source !== "agent-poll") return;
+        ctx.run.recovery = null;
+        if (ctx.sessionId === state.sessionId) renderSessionMessages(ctx.sessionId);
+      },
+    });
+
+    ctx.agentEventCursor = Number(snapshot.nextCursor ?? ctx.agentEventCursor ?? 0);
+    ctx.run.agentEventCursor = ctx.agentEventCursor;
+    if (snapshot.status === "waiting_credentials") continue;
+    if (snapshot.status === "completed") {
+      const result = snapshot.result || {};
+      ctx.agentRunId = "";
+      ctx.agentEventCursor = 0;
+      ctx.run.agentRunId = "";
+      ctx.run.agentEventCursor = 0;
+      return result;
+    }
+    if (snapshot.status === "cancelled") throw new DOMException("Aborted", "AbortError");
+    throw new Error(snapshot.error || `Server Agent ${snapshot.status}`);
+  }
+}
+
+async function executeRunContext(ctx) {
+  if (isServerOwnedRun(ctx)) return runServerAgentLoop(ctx);
+  return runAgentLoop(ctx);
 }
 
 async function runAgentLoop(ctx = null) {
@@ -11802,7 +12178,7 @@ async function sendMessage(userText) {
 
   let loopError = null;
   try {
-    await runAgentLoop(ctx);
+    await executeRunContext(ctx);
   } catch (err) {
     loopError = err;
 
@@ -11827,7 +12203,11 @@ async function sendMessage(userText) {
         // Retry
         loopError = null;
         try {
-          await runAgentLoop(ctx);
+          ctx.agentRunId = "";
+          ctx.agentEventCursor = 0;
+          run.agentRunId = "";
+          run.agentEventCursor = 0;
+          await executeRunContext(ctx);
           // Annotate the assistant response
           const lastAsst = [...ctx.messages].reverse().find((m) => m && m.role === "assistant");
           if (lastAsst) {
@@ -11945,7 +12325,7 @@ ${r.result}`,
     setStreaming(true, sessionId);
     let drainError = null;
     try {
-      await runAgentLoop(ctx);
+      await executeRunContext(ctx);
     } catch (err) {
       drainError = err;
     }
@@ -12037,7 +12417,7 @@ function getPermLevel() {
 
 function setPermLevel(value) {
 
-  const labels = { plan: t("permPlan"), accept: t("permAccept"), bypass: t("permBypass") };
+  const labels = { read: t("permRead"), plan: t("permPlan"), accept: t("permAccept"), bypass: t("permBypass") };
 
   els.permPillBtn.dataset.value = value;
 
@@ -14843,7 +15223,7 @@ async function init() {
         title: els.sessionTitle.value.trim() || "Untitled",
         messages: serialized,
         stats: { ...(state.stats || {}) },
-        runState: {},
+        runState: getSessionRunState(sid),
       });
       navigator.sendBeacon(
         `/api/sessions/${encodeURIComponent(sid)}`,

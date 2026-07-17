@@ -79,7 +79,7 @@ class TestFrontendRefreshRecovery(unittest.TestCase):
         self.assertIn("function prepareMessagesForRunRecovery(messages, runState)", APP_SOURCE)
         self.assertIn('runState?.phase === "model"', APP_SOURCE)
         self.assertIn("Boolean(runState?.runtimeRunId)", APP_SOURCE)
-        self.assertIn("if (hasRuntimeRun) return cleaned", APP_SOURCE)
+        self.assertIn("if (hasRuntimeRun || hasServerAgent) return cleaned", APP_SOURCE)
         self.assertIn("ctx._reuseRuntimeAssistant = Boolean(ctx.runtimeRunId)", APP_SOURCE)
         self.assertIn("Before repeating any write, command, network request", APP_SOURCE)
         self.assertIn('meta: { _system: true, kind: "run-recovery" }', APP_SOURCE)
@@ -98,6 +98,48 @@ class TestFrontendRefreshRecovery(unittest.TestCase):
         models_pos = APP_SOURCE.index("await refreshModels();")
         resume_pos = APP_SOURCE.index("resumePersistedRuns().catch", models_pos)
         self.assertGreater(resume_pos, models_pos)
+
+    def test_server_agent_checkpoint_survives_reload(self):
+        for expected in (
+            'executionOwner: String(',
+            'agentRunId: String(',
+            'agentEventCursor: Number(',
+            'runState: getSessionRunState(sid)',
+            'runState: { ...getSessionRunState(prevId) }',
+            'persistMessages: ctx.executionOwner === "server-agent"',
+            'if (options.persistMessages)',
+            'ctx.executionOwner = runState.executionOwner',
+            'ctx.agentRunId = String(runState.agentRunId',
+            'await executeRunContext(ctx)',
+        ):
+            self.assertIn(expected, APP_SOURCE)
+
+    def test_read_only_profile_has_single_server_execution_owner(self):
+        self.assertIn('read: new Set(["list_files", "read_file", "search_files", "glob_files"])', APP_SOURCE)
+        self.assertIn('executionOwner: permissionProfile === "read" ? "server-agent" : "browser"', APP_SOURCE)
+        self.assertIn('if (isServerOwnedRun(ctx)) return runServerAgentLoop(ctx)', APP_SOURCE)
+        self.assertIn('await _callModelOnceAttempt(assistantIndex, true, ctx)', APP_SOURCE)
+        server_projection = APP_SOURCE[
+            APP_SOURCE.index("async function projectAgentModelStarted"):
+            APP_SOURCE.index("function projectAgentModelCompleted")
+        ]
+        self.assertNotIn("callModelOnce(", server_projection)
+
+    def test_server_agent_cancellation_covers_parent_and_child_runs(self):
+        cancel_start = APP_SOURCE.index("function cancelSessionRun(run)")
+        cancel_end = APP_SOURCE.index("function backgroundActiveForSession", cancel_start)
+        cancel = APP_SOURCE[cancel_start:cancel_end]
+        self.assertIn("cancelAgentRun(agentRunId)", cancel)
+        self.assertIn("cancelRun(runtimeRunId)", cancel)
+
+    def test_durable_model_projection_always_has_completion_time(self):
+        projection_start = APP_SOURCE.index("function projectAgentModelCompleted")
+        projection_end = APP_SOURCE.index("function projectAgentToolStarted", projection_start)
+        projection = APP_SOURCE[projection_start:projection_end]
+        self.assertIn("const projectedContent = splitThoughtContent(combined)", projection)
+        self.assertIn("data.completedAt || event?.createdAt", projection)
+        self.assertIn("_time: completedAt", projection)
+        self.assertIn("assistant._time = assistant._time || completedAt", projection)
 
 
 class TestServerRunStatePersistence(unittest.TestCase):

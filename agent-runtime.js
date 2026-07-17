@@ -46,6 +46,90 @@
     });
   }
 
+  async function createAgentRun({
+    sessionId,
+    payload,
+    baseUrl,
+    keys,
+    allowedTools,
+    maxRounds,
+    signal,
+  }) {
+    return apiJson("/api/agent/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId, payload, baseUrl, keys, allowedTools, maxRounds }),
+      signal,
+    });
+  }
+
+  async function getAgentRun(agentRunId, { cursor = 0, wait = 0, signal } = {}) {
+    return apiJson(
+      `/api/agent/runs/${encodeURIComponent(agentRunId)}?cursor=${Number(cursor) || 0}&wait=${Number(wait) || 0}`,
+      { signal },
+    );
+  }
+
+  async function resumeAgentRun(agentRunId, { keys = [], baseUrl = "", signal } = {}) {
+    return apiJson(`/api/agent/runs/${encodeURIComponent(agentRunId)}/resume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keys, baseUrl }),
+      signal,
+    });
+  }
+
+  async function watchAgentRun({
+    agentRunId,
+    cursor = 0,
+    signal,
+    onEvent,
+    onSnapshot,
+    onReconnect,
+    onReconnected,
+  } = {}) {
+    let activeCursor = Math.max(0, Number(cursor) || 0);
+    let failures = 0;
+
+    while (true) {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      let snapshot;
+      try {
+        snapshot = await getAgentRun(agentRunId, { cursor: activeCursor, wait: 25, signal });
+        if (failures > 0) onReconnected?.({ attempts: failures });
+        failures = 0;
+      } catch (error) {
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        if (Number(error?.status) === 404) throw error;
+        const delay = POLL_DELAYS[Math.min(failures, POLL_DELAYS.length - 1)];
+        failures += 1;
+        onReconnect?.({
+          attempt: failures,
+          delayMs: delay,
+          nextRetryAt: Date.now() + delay,
+          error,
+        });
+        await sleep(delay, signal);
+        continue;
+      }
+
+      const events = Array.isArray(snapshot.events) ? snapshot.events : [];
+      for (const event of events) {
+        const seq = Number(event?.seq || 0);
+        if (seq <= activeCursor) continue;
+        // Advance the cursor only after the event projection succeeds. A page
+        // reload can then safely replay the same durable event.
+        await onEvent?.(event, snapshot);
+        activeCursor = seq;
+      }
+      await onSnapshot?.(snapshot, activeCursor);
+
+      if (["completed", "failed", "cancelled", "waiting_credentials"].includes(snapshot.status)) {
+        return { ...snapshot, nextCursor: activeCursor };
+      }
+    }
+  }
+
   function openSseResponse({
     runId = "",
     sessionId = "",
@@ -138,5 +222,18 @@
     return apiJson(`/api/runtime/runs/${encodeURIComponent(runId)}`, { method: "DELETE" });
   }
 
-  global.AgentRuntime = Object.freeze({ openSseResponse, cancelRun });
+  async function cancelAgentRun(agentRunId) {
+    if (!agentRunId) return { ok: true };
+    return apiJson(`/api/agent/runs/${encodeURIComponent(agentRunId)}`, { method: "DELETE" });
+  }
+
+  global.AgentRuntime = Object.freeze({
+    openSseResponse,
+    cancelRun,
+    createAgentRun,
+    getAgentRun,
+    resumeAgentRun,
+    watchAgentRun,
+    cancelAgentRun,
+  });
 })(window);

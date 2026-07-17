@@ -113,7 +113,7 @@ class TestSubAgentFrontend(unittest.TestCase):
         self.assertIn('msg.meta?.detachedFromMain', self.source)
         self.assertIn('function getModelContextMessages(messages)', self.source)
         self.assertIn('.filter((msg) => !isDetachedFromMainContext(msg))', self.source)
-        self.assertIn('getModelContextMessages(_streamMsgs)', self.source)
+        self.assertIn('getModelContextMessages(streamMessages)', self.source)
         self.assertGreaterEqual(self.source.count('detachedFromMain: true'), 3)
 
     def test_legacy_background_notifications_stay_out_of_model_context(self):

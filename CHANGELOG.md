@@ -14,6 +14,23 @@
 
 ---
 
+## 2026-07-18 06:25 · Codex
+
+### 将只读 AgentRun 接入正式界面：单一执行所有权、流式投影与持久恢复
+
+- **显式只读入口**：权限选择器新增“只读分析 / Read only”，严格只暴露 `list_files`、`read_file`、`search_files`、`glob_files` 四个无副作用工具；该档位将整次任务交给服务端 AgentRun，计划、接受编辑和自动模式继续使用原浏览器 `runAgentLoop()`，不做静默降级，避免同一工具调用被前后端重复消费。
+- **任务客户端协议**：扩展 `agent-runtime.js`，补齐 AgentRun 创建、游标长轮询、服务重启凭据恢复和父任务取消；事件处理串行完成后才推进游标，网络抖动继续使用有界退避并在原状态栏展示重连状态。
+- **保持 SSE 流畅度**：服务端每个模型轮次产生 `model_started` 后，前端只附着该轮已有的 `runtimeRunId` 并复用现有 SSE 解析/渲染，不额外请求模型；若短期子运行时已过期，则由持久 `model_completed` 事件回填完整思考、回答、工具调用和用量。
+- **持久事件投影**：模型和工具事件按序映射为正式会话消息，以 `agentRunId + 事件类型 + seq` 去重；会话检查点新增 `executionOwner`、`agentRunId`、`agentEventCursor` 和活动子运行 ID，事件游标与对应消息快照进入同一有序保存链，异常退出后不会出现游标领先于消息的缺口。持久 `model_completed` 回填会拆分思考/回答，并以服务端 `completedAt` 补齐模型消息时间戳。
+- **恢复与会话隔离**：只读任务不再生成浏览器侧恢复提示，刷新后直接续接 AgentRun；服务重启进入 `waiting_credentials` 时由前端重新注入内存态 Key。切换会话和 `beforeunload` 保存不再清空活动检查点，后台任务完成时也不会误用前台会话标题。
+- **统一取消语义**：停止任务会先取消 AgentRun 父任务，再取消当前子模型运行并中止本地轮询；服务端终态取消继续保持幂等，页面切换与新建会话不触发取消。
+- **文档同步**：更新项目 README、服务端循环迁移计划、架构记忆和 TODO，将下一阶段收敛为服务端权限/问卷等待协议、写入工具幂等迁移和子任务调度。
+- **验证结果**：`app.js` 与 `agent-runtime.js` JavaScript 语法检查、AgentRun/模型运行时/会话恢复定向测试和 `git diff --check` 通过；新增客户端游标顺序、显式所有权、检查点恢复、持久消息时间戳与父子取消回归，最终全量回归 `495 passed, 6 subtests passed`。
+
+**涉及文件**：`agent-runtime.js`、`app.js`、`index.html`、`tests/test_frontend_modules.py`、`tests/test_p0_stability.py`、`tests/test_subagent_frontend.py`、`README.md`、`docs/SERVER_AGENT_LOOP_PLAN.md`、`data/memory/code-architecture.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 06:02 · Codex
 
 ### 建立持久化只读 AgentRun：服务端可独立完成多轮模型与工具循环

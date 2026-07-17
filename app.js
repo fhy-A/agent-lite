@@ -98,6 +98,7 @@ const state = {
   _sessionLastUsage: {},
   _sessionSaveChains: {},
   _activeRun: null,
+  _foregroundNavigationSeq: 0,
 
   _backgroundDispatcher: {
     jobs: [],
@@ -5795,13 +5796,14 @@ function showDeleteConfirm(sessionId, title) {
     cleanup();
     await apiJson(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
     if (state.sessionId === sessionId) {
+      invalidateForegroundSessionNavigation();
       state.sessionId = null;
       state.messages = [];
       state.pendingEdits = {};
       state.stats = { input: 0, output: 0, cache: 0 };
       state.responseUsage = null;
       els.sessionTitle.value = "";
-      localStorage.removeItem("code-last-session");
+      rememberWelcomeForeground();
       syncActiveStreamingState();
       renderMessages();
       updateSendButtonState();
@@ -6062,6 +6064,21 @@ function closeAllSessionMenus() {
 
 }
 
+function invalidateForegroundSessionNavigation() {
+  state._foregroundNavigationSeq = (state._foregroundNavigationSeq || 0) + 1;
+}
+
+function rememberWelcomeForeground() {
+  localStorage.setItem("code-foreground-view", "welcome");
+  localStorage.removeItem("code-last-session");
+}
+
+function rememberSessionForeground(sessionId) {
+  if (!sessionId) return;
+  localStorage.setItem("code-foreground-view", "session");
+  localStorage.setItem("code-last-session", sessionId);
+}
+
 
 
 async function refreshSessions() {
@@ -6120,7 +6137,7 @@ async function createSession(title = t("sessionTitleDefault")) {
 
   els.sessionTitle.value = session.title || t("sessionTitleDefault");
 
-  localStorage.setItem("code-last-session", session.id);
+  rememberSessionForeground(session.id);
 
   await refreshSessions();
 
@@ -6143,6 +6160,9 @@ async function loadSession(sessionId) {
   if (state._lastSwitchTime && now - state._lastSwitchTime < 300) return;
   state._lastSwitchTime = now;
 
+  const foregroundNavigationSeq = (state._foregroundNavigationSeq || 0) + 1;
+  state._foregroundNavigationSeq = foregroundNavigationSeq;
+
   // Close branch panel on session switch (unless from branch tree itself)
   if (state.branchPanelOpen && !state._keepBranchOpen) {
     els.branchPanel.classList.remove("open");
@@ -6152,6 +6172,7 @@ async function loadSession(sessionId) {
   state._keepBranchOpen = false;
 
   if (sessionId === state.sessionId) {
+    rememberSessionForeground(sessionId);
     syncActiveStreamingState();
     resetRenderCache();
     renderMessages();
@@ -6167,7 +6188,8 @@ async function loadSession(sessionId) {
   cacheActiveSessionState();
 
   const session = await apiJson(`/api/sessions/${encodeURIComponent(sessionId)}`);
-  if (loadSeq !== state._sessionLoadSeq) return;
+  if (loadSeq !== state._sessionLoadSeq
+      || foregroundNavigationSeq !== state._foregroundNavigationSeq) return;
 
   // Track unread: only mark if messages arrived while user was away
   if (prevId && prevId !== session.id) {
@@ -6229,7 +6251,7 @@ async function loadSession(sessionId) {
 
   els.sessionTitle.value = session.title || t("untitledSession");
 
-  localStorage.setItem("code-last-session", session.id);
+  rememberSessionForeground(session.id);
 
   renderSessions();
 
@@ -14484,6 +14506,7 @@ els.newChat.addEventListener("click", () => {
   // Starting a new conversation only changes the foreground view. Any task
   // bound to the previous session keeps its own controller, queue and cache.
   cacheActiveSessionState();
+  invalidateForegroundSessionNavigation();
   state.messageQueue = [];
 
   state.sessionId = null;
@@ -14499,7 +14522,7 @@ els.newChat.addEventListener("click", () => {
 
   els.sessionTitle.value = "";
 
-  localStorage.removeItem("code-last-session");
+  rememberWelcomeForeground();
 
   syncActiveStreamingState();
 
@@ -14752,13 +14775,22 @@ async function init() {
 
   await refreshSessions();
 
-  // Restore last active session if any, otherwise stay on welcome page
+  // Restore the last foreground session only when the user last left a
+  // session selected. Background runs are resumed independently below and
+  // must never decide which foreground view is shown.
 
+  const foregroundView = localStorage.getItem("code-foreground-view");
   const lastId = localStorage.getItem("code-last-session");
 
-  if (lastId && state.sessions.some((s) => s.id === lastId)) {
+  if (foregroundView !== "welcome"
+      && lastId
+      && state.sessions.some((s) => s.id === lastId)) {
 
     await loadSession(lastId);
+
+  } else if (foregroundView === "welcome" || !lastId) {
+
+    rememberWelcomeForeground();
 
   }
 

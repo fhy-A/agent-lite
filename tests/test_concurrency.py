@@ -450,10 +450,35 @@ class TestDispatcherLimits(unittest.TestCase):
         end = self.source.index('els.exportChat.addEventListener', start)
         handler = self.source[start:end]
         self.assertIn('cacheActiveSessionState();', handler)
+        self.assertIn('invalidateForegroundSessionNavigation();', handler)
+        self.assertIn('rememberWelcomeForeground();', handler)
         self.assertIn('syncActiveStreamingState();', handler)
         self.assertNotIn('state.isStreaming) { showToast', handler)
         self.assertNotIn('run.abortController.abort()', handler)
         self.assertNotIn('run.messageQueue = []', handler)
+
+    def test_welcome_refresh_only_changes_foreground_navigation(self):
+        load_start = self.source.index('async function loadSession(sessionId)')
+        load_end = self.source.index('async function saveSessionState', load_start)
+        load_block = self.source[load_start:load_end]
+        self.assertIn('foregroundNavigationSeq !== state._foregroundNavigationSeq', load_block)
+        self.assertIn('rememberSessionForeground(session.id);', load_block)
+        self.assertNotIn('abortController.abort()', load_block)
+        self.assertNotIn('setStreaming(false', load_block)
+        self.assertNotIn('run.messageQueue = []', load_block)
+
+        init_start = self.source.index('async function init()')
+        init_block = self.source[init_start:]
+        self.assertIn('const foregroundView = localStorage.getItem("code-foreground-view");', init_block)
+        self.assertIn('foregroundView !== "welcome"', init_block)
+
+        resume_start = self.source.index('async function resumePersistedRuns()')
+        resume_end = self.source.index('function createModelRequestError', resume_start)
+        resume_block = self.source[resume_start:resume_end]
+        self.assertIn('resumePersistedSessionRun(session)', resume_block)
+        self.assertNotIn('loadSession(', resume_block)
+        self.assertNotIn('code-foreground-view', resume_block)
+        self.assertNotIn('abortController.abort()', resume_block)
 
 
 if __name__ == "__main__":

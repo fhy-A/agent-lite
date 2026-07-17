@@ -115,7 +115,7 @@ class TestFrontendRefreshRecovery(unittest.TestCase):
             self.assertIn(expected, APP_SOURCE)
 
     def test_read_only_profile_has_single_server_execution_owner(self):
-        self.assertIn('read: new Set(["list_files", "read_file", "search_files", "glob_files"])', APP_SOURCE)
+        self.assertIn('read: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files"])', APP_SOURCE)
         self.assertIn('executionOwner: permissionProfile === "read" ? "server-agent" : "browser"', APP_SOURCE)
         self.assertIn('if (isServerOwnedRun(ctx)) return runServerAgentLoop(ctx)', APP_SOURCE)
         self.assertIn('await _callModelOnceAttempt(assistantIndex, true, ctx)', APP_SOURCE)

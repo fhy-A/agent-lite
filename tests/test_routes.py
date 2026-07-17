@@ -157,9 +157,15 @@ class TestFileTools(TestServerFixture):
 
     def test_read_only_registry_is_background_safe_and_idempotent(self):
         self.assertEqual(set(server_mod.SERVER_TOOL_REGISTRY), {
-            "list_files", "read_file", "search_files", "glob_files",
+            "request_user_input", "list_files", "read_file", "search_files", "glob_files",
         })
-        for spec in server_mod.SERVER_TOOL_REGISTRY.values():
+        interaction = server_mod.SERVER_TOOL_REGISTRY["request_user_input"]
+        self.assertEqual(interaction["effect"], "interaction")
+        self.assertTrue(interaction["idempotent"])
+        self.assertFalse(interaction["background"])
+        for name, spec in server_mod.SERVER_TOOL_REGISTRY.items():
+            if name == "request_user_input":
+                continue
             self.assertEqual(spec["effect"], "read")
             self.assertTrue(spec["idempotent"])
             self.assertTrue(spec["background"])

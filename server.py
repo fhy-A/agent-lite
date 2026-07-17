@@ -63,6 +63,7 @@ _agent_runs = {}
 _agent_run_lock = threading.RLock()
 _AGENT_RUN_TERMINAL = {"completed", "failed", "cancelled"}
 _AGENT_RUN_ACTIVE = {"model", "tools"}
+_AGENT_RUN_WAITING = {"waiting_credentials", "waiting_user_input"}
 _AGENT_RUN_DEFAULT_MAX_ROUNDS = 12
 _AGENT_RUN_MAX_ROUNDS = 50
 _AGENT_TOOL_MESSAGE_LIMIT = 12000
@@ -499,11 +500,17 @@ def _agent_selected_tools(payload, allowed_tools=None):
         if name in seen:
             continue
         spec = SERVER_TOOL_REGISTRY.get(name) or {}
-        if (
-            spec.get("effect") != "read"
-            or not spec.get("idempotent")
-            or not spec.get("background")
-        ):
+        safe_read = (
+            spec.get("effect") == "read"
+            and spec.get("idempotent")
+            and spec.get("background")
+        )
+        safe_interaction = (
+            spec.get("effect") == "interaction"
+            and spec.get("idempotent")
+            and not spec.get("background")
+        )
+        if not (safe_read or safe_interaction):
             continue
         definition = _agent_registry_tool_definition(name)
         if definition:
@@ -527,6 +534,7 @@ def _agent_run_record(run):
         "tools": _json_clone(run.get("tools") or []),
         "rounds": _json_clone(run.get("rounds") or []),
         "pendingToolCalls": _json_clone(run.get("pending_tool_calls") or []),
+        "pendingInput": _json_clone(run.get("pending_input")),
         "toolExecutions": _json_clone(run.get("tool_executions") or {}),
         "usage": _json_clone(run.get("usage") or {}),
         "result": _json_clone(run.get("result") or {}),
@@ -581,6 +589,7 @@ def _agent_snapshot(run, cursor=0):
             "allowedTools": tools,
             "activeRuntimeRunId": run.get("active_runtime_id", ""),
             "pendingToolCalls": _json_clone(run.get("pending_tool_calls") or []),
+            "pendingInput": _json_clone(run.get("pending_input")),
             "toolExecutions": _agent_public_tool_executions(run),
             "usage": _json_clone(run.get("usage") or {}),
             "result": _json_clone(run.get("result") or {}),
@@ -660,6 +669,9 @@ def _agent_run_from_record(record):
     if persisted_status in _AGENT_RUN_TERMINAL:
         status = persisted_status
         resume_status = ""
+    elif persisted_status == "waiting_user_input" and isinstance(record.get("pendingInput"), dict):
+        status = "waiting_user_input"
+        resume_status = ""
     else:
         resume_status = str(record.get("resumeStatus") or persisted_status)
         if resume_status not in _AGENT_RUN_ACTIVE:
@@ -685,6 +697,7 @@ def _agent_run_from_record(record):
         "tools": list(record.get("tools") or []),
         "rounds": list(record.get("rounds") or []),
         "pending_tool_calls": list(record.get("pendingToolCalls") or []),
+        "pending_input": _json_clone(record.get("pendingInput")) if isinstance(record.get("pendingInput"), dict) else None,
         "tool_executions": dict(record.get("toolExecutions") or {}),
         "usage": dict(record.get("usage") or {}),
         "result": dict(record.get("result") or {}),
@@ -819,6 +832,228 @@ def _agent_has_current_tool_message(run, call_id):
     )
 
 
+def _agent_input_text(value, field, limit, required=False):
+    text = str(value or "").strip()
+    if required and not text:
+        raise ValueError(f"{field} is required")
+    if len(text) > limit:
+        raise ValueError(f"{field} exceeds {limit} characters")
+    return text
+
+
+def _normalize_agent_input_request(call):
+    arguments = call.get("arguments")
+    if call.get("parseError") or not isinstance(arguments, dict):
+        raise ValueError(call.get("parseError") or "tool arguments must be an object")
+    source_questions = arguments.get("questions")
+    if not isinstance(source_questions, list) or not 1 <= len(source_questions) <= 3:
+        raise ValueError("request_user_input requires 1 to 3 questions")
+
+    questions = []
+    question_ids = set()
+    for index, source in enumerate(source_questions):
+        if not isinstance(source, dict):
+            raise ValueError(f"questions[{index}] must be an object")
+        question_id = _agent_input_text(source.get("id"), f"questions[{index}].id", 80, True)
+        if question_id in question_ids:
+            raise ValueError(f"duplicate question id: {question_id}")
+        question_ids.add(question_id)
+        question_type = str(source.get("type") or "single").strip()
+        if question_type not in {"single", "multiple", "text"}:
+            raise ValueError(f"questions[{index}].type is invalid")
+
+        options = []
+        option_values = set()
+        if question_type != "text":
+            source_options = source.get("options")
+            if not isinstance(source_options, list) or not 1 <= len(source_options) <= 8:
+                raise ValueError(f"questions[{index}].options requires 1 to 8 choices")
+            for option_index, source_option in enumerate(source_options):
+                if not isinstance(source_option, dict):
+                    raise ValueError(f"questions[{index}].options[{option_index}] must be an object")
+                value = _agent_input_text(
+                    source_option.get("value"),
+                    f"questions[{index}].options[{option_index}].value",
+                    120,
+                    True,
+                )
+                if value in option_values:
+                    raise ValueError(f"duplicate option value in {question_id}: {value}")
+                option_values.add(value)
+                options.append({
+                    "value": value,
+                    "label": _agent_input_text(
+                        source_option.get("label"),
+                        f"questions[{index}].options[{option_index}].label",
+                        160,
+                        True,
+                    ),
+                    "description": _agent_input_text(
+                        source_option.get("description"),
+                        f"questions[{index}].options[{option_index}].description",
+                        300,
+                    ),
+                })
+        questions.append({
+            "id": question_id,
+            "prompt": _agent_input_text(source.get("prompt"), f"questions[{index}].prompt", 500, True),
+            "type": question_type,
+            "required": source.get("required") is not False,
+            "allowOther": bool(source.get("allowOther")),
+            "options": options,
+        })
+
+    call_id = str(call.get("id") or "")
+    return {
+        "requestId": f"user-input-{call_id}",
+        "toolCallId": call_id,
+        "title": _agent_input_text(arguments.get("title"), "title", 160) or "需要你的确认",
+        "reason": _agent_input_text(arguments.get("reason"), "reason", 500),
+        "questions": questions,
+        "createdAt": now_iso(),
+    }
+
+
+def _normalize_agent_input_result(pending_input, answers):
+    if not isinstance(answers, list):
+        raise ValueError("answers must be an array")
+    answer_map = {}
+    for index, source in enumerate(answers):
+        if not isinstance(source, dict):
+            raise ValueError(f"answers[{index}] must be an object")
+        answer_id = _agent_input_text(source.get("id"), f"answers[{index}].id", 80, True)
+        if answer_id in answer_map:
+            raise ValueError(f"duplicate answer id: {answer_id}")
+        answer_map[answer_id] = source
+
+    normalized = []
+    questions = list(pending_input.get("questions") or [])
+    expected_ids = {str(question.get("id") or "") for question in questions}
+    unknown_ids = set(answer_map) - expected_ids
+    if unknown_ids:
+        raise ValueError(f"unknown answer id: {sorted(unknown_ids)[0]}")
+
+    for question in questions:
+        question_id = str(question.get("id") or "")
+        source = answer_map.get(question_id)
+        if not isinstance(source, dict):
+            raise ValueError(f"answer is required for question: {question_id}")
+        status = str(source.get("status") or "resolved")
+        if status not in {"resolved", "canceled"}:
+            raise ValueError(f"invalid answer status for question: {question_id}")
+
+        question_type = str(question.get("type") or "single")
+        values = []
+        text = ""
+        other = _agent_input_text(source.get("other"), f"answers[{question_id}].other", 1000)
+        if status == "canceled":
+            answer_text = f"Canceled: {other}" if other else "Canceled"
+        elif question_type == "text":
+            text = _agent_input_text(source.get("text"), f"answers[{question_id}].text", 4000)
+            if question.get("required") and not text:
+                raise ValueError(f"answer is required for question: {question_id}")
+            answer_text = text
+        else:
+            source_values = source.get("values") or []
+            if not isinstance(source_values, list):
+                raise ValueError(f"answers[{question_id}].values must be an array")
+            values = [_agent_input_text(value, f"answers[{question_id}].values", 120, True) for value in source_values]
+            if len(values) != len(set(values)):
+                raise ValueError(f"duplicate choices for question: {question_id}")
+            if question_type == "single" and len(values) > 1:
+                raise ValueError(f"only one choice is allowed for question: {question_id}")
+            option_map = {
+                str(option.get("value") or ""): str(option.get("label") or option.get("value") or "")
+                for option in question.get("options") or []
+            }
+            invalid_values = [value for value in values if value not in option_map]
+            if invalid_values:
+                raise ValueError(f"invalid choice for question {question_id}: {invalid_values[0]}")
+            if other and not question.get("allowOther"):
+                raise ValueError(f"custom answer is not allowed for question: {question_id}")
+            if question.get("required") and not values and not other:
+                raise ValueError(f"answer is required for question: {question_id}")
+            labels = [option_map[value] for value in values]
+            if other:
+                labels.append(other)
+            answer_text = "、".join(labels)
+
+        normalized.append({
+            "id": question_id,
+            "prompt": str(question.get("prompt") or ""),
+            "type": question_type,
+            "status": status,
+            "values": values if question_type != "text" else None,
+            "text": text if question_type == "text" else None,
+            "other": other,
+            "answer": answer_text,
+        })
+
+    return {
+        "ok": True,
+        "action": "request_user_input",
+        "requestId": str(pending_input.get("requestId") or ""),
+        "title": str(pending_input.get("title") or ""),
+        "answers": normalized,
+        "summary": "\n".join(f"{answer['prompt']}：{answer['answer']}" for answer in normalized),
+    }
+
+
+def _submit_agent_input(run, answers):
+    with run["condition"]:
+        if run["status"] != "waiting_user_input":
+            raise ValueError(f"Agent run is not waiting for user input: {run['status']}")
+        pending_input = _json_clone(run.get("pending_input"))
+    if not isinstance(pending_input, dict):
+        raise ValueError("Agent run has no pending user input")
+    result = _normalize_agent_input_result(pending_input, answers)
+    call_id = str(pending_input.get("toolCallId") or "")
+
+    with run["condition"]:
+        if run["status"] != "waiting_user_input" or str((run.get("pending_input") or {}).get("requestId") or "") != result["requestId"]:
+            raise ValueError("Agent user-input request changed before submission")
+        execution = run.get("tool_executions", {}).get(call_id)
+        if not isinstance(execution, dict):
+            raise ValueError("Agent user-input tool execution is missing")
+        execution["status"] = "completed"
+        execution["result"] = _json_clone(result)
+        execution["error"] = ""
+        execution["completedAt"] = now_iso()
+        if not _agent_has_current_tool_message(run, call_id):
+            run["messages"].append({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "name": "request_user_input",
+                "content": _agent_tool_message_content(result),
+            })
+        run["pending_tool_calls"] = [
+            pending for pending in run.get("pending_tool_calls") or []
+            if pending.get("id") != call_id
+        ]
+        run["pending_input"] = None
+        run["keys"] = []
+        run["status"] = "waiting_credentials"
+        run["resume_status"] = "model"
+        run["updated_at"] = now_iso()
+        run["condition"].notify_all()
+
+    _append_agent_event(run, "user_input_submitted", {
+        "requestId": result["requestId"],
+        "toolCallId": call_id,
+    })
+    _append_agent_event(run, "tool_completed", {
+        "toolCallId": call_id,
+        "name": "request_user_input",
+        "result": result,
+        "replayed": False,
+    })
+    _append_agent_event(run, "waiting_credentials", {
+        "resumeStatus": "model",
+        "reason": "user_input_submitted",
+    })
+    return result
+
+
 def _execute_agent_pending_tools(run):
     allowed_names = {
         str((definition.get("function") or {}).get("name") or "")
@@ -860,6 +1095,17 @@ def _execute_agent_pending_tools(run):
                 spec = SERVER_TOOL_REGISTRY.get(name) or {}
                 if name not in allowed_names:
                     raise ValueError(f"tool is not allowed for this Agent run: {name}")
+                if spec.get("effect") == "interaction":
+                    if len(run.get("pending_tool_calls") or []) != 1:
+                        raise ValueError("request_user_input must be the only tool call in its model turn")
+                    pending_input = _normalize_agent_input_request(call)
+                    execution["status"] = "waiting_user_input"
+                    execution["result"] = None
+                    run["pending_input"] = pending_input
+                    run["keys"] = []
+                    _append_agent_event(run, "user_input_required", pending_input)
+                    _set_agent_status(run, "waiting_user_input")
+                    return False
                 if (
                     spec.get("effect") != "read"
                     or not spec.get("idempotent")
@@ -909,6 +1155,7 @@ def _agent_wait_for_model(run, model_run):
 
 
 def _agent_run_worker(run):
+    current_worker = threading.current_thread()
     try:
         while run["status"] not in _AGENT_RUN_TERMINAL:
             if run["cancel_event"].is_set():
@@ -1002,9 +1249,10 @@ def _agent_run_worker(run):
         _finish_agent_run(run, "failed", str(exc))
     finally:
         with run["condition"]:
-            run["keys"] = []
-            run["active_runtime_id"] = ""
-            run["worker"] = None
+            if run.get("worker") is current_worker:
+                run["keys"] = []
+                run["active_runtime_id"] = ""
+                run["worker"] = None
 
 
 def _start_agent_worker(run):
@@ -1048,6 +1296,7 @@ def _create_agent_run(session_id, payload, base_url, keys, allowed_tools=None, m
         "tools": tools,
         "rounds": [],
         "pending_tool_calls": [],
+        "pending_input": None,
         "tool_executions": {},
         "usage": {},
         "result": {},
@@ -2748,6 +2997,53 @@ def execute_glob_files_tool(body):
 
 
 _SERVER_TOOL_DEFINITIONS = {
+    "request_user_input": {
+        "type": "function",
+        "function": {
+            "name": "request_user_input",
+            "description": "Ask the user for a critical decision that cannot be safely inferred or discovered. Ask one question by default and continue the original task after the answer.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Short questionnaire title."},
+                    "reason": {"type": "string", "description": "Why this decision is needed."},
+                    "questions": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 3,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "prompt": {"type": "string"},
+                                "type": {"type": "string", "enum": ["single", "multiple", "text"]},
+                                "required": {"type": "boolean"},
+                                "allowOther": {"type": "boolean"},
+                                "options": {
+                                    "type": "array",
+                                    "maxItems": 8,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "value": {"type": "string"},
+                                            "label": {"type": "string"},
+                                            "description": {"type": "string"},
+                                        },
+                                        "required": ["value", "label"],
+                                        "additionalProperties": False,
+                                    },
+                                },
+                            },
+                            "required": ["id", "prompt", "type"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["questions"],
+                "additionalProperties": False,
+            },
+        },
+    },
     "list_files": {
         "type": "function",
         "function": {
@@ -2821,6 +3117,13 @@ _SERVER_TOOL_DEFINITIONS = {
 
 
 SERVER_TOOL_REGISTRY = {
+    "request_user_input": {
+        "execute": None,
+        "definition": _SERVER_TOOL_DEFINITIONS["request_user_input"],
+        "effect": "interaction",
+        "idempotent": True,
+        "background": False,
+    },
     "list_files": {
         "execute": execute_list_files_tool,
         "definition": _SERVER_TOOL_DEFINITIONS["list_files"],
@@ -2858,6 +3161,8 @@ def execute_registered_tool(action, payload):
         raise ValueError(f"unknown server tool: {action}")
     if not isinstance(payload, dict):
         raise ValueError("tool payload must be an object")
+    if not callable(spec.get("execute")):
+        raise ValueError(f"server tool is controlled by the Agent runtime: {action}")
     return spec["execute"](payload)
 
 
@@ -3504,6 +3809,20 @@ class CodeHandler(BaseHTTPRequestHandler):
                     return
                 _resume_agent_run(run, keys or [], body.get("baseUrl") or "")
                 self.send_json({"agentRunId": run["id"], "status": run["status"]})
+                return
+            if route.startswith("/api/agent/runs/") and route.endswith("/input"):
+                run_id = route.rsplit("/", 2)[-2]
+                run = _get_agent_run(run_id)
+                if not run:
+                    self.send_json({"error": "Agent run not found"}, 404)
+                    return
+                body = self.read_body_json()
+                result = _submit_agent_input(run, body.get("answers"))
+                self.send_json({
+                    "agentRunId": run["id"],
+                    "status": run["status"],
+                    "result": result,
+                })
                 return
             if self.path.rstrip("/") == "/api/runtime/runs":
                 body = self.read_body_json()

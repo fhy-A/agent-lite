@@ -79,6 +79,15 @@
     });
   }
 
+  async function submitAgentInput(agentRunId, { answers = [], signal } = {}) {
+    return apiJson(`/api/agent/runs/${encodeURIComponent(agentRunId)}/input`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answers }),
+      signal,
+    });
+  }
+
   async function watchAgentRun({
     agentRunId,
     cursor = 0,
@@ -124,7 +133,7 @@
       }
       await onSnapshot?.(snapshot, activeCursor);
 
-      if (["completed", "failed", "cancelled", "waiting_credentials"].includes(snapshot.status)) {
+      if (["completed", "failed", "cancelled", "waiting_credentials", "waiting_user_input"].includes(snapshot.status)) {
         return { ...snapshot, nextCursor: activeCursor };
       }
     }
@@ -233,6 +242,7 @@
     createAgentRun,
     getAgentRun,
     resumeAgentRun,
+    submitAgentInput,
     watchAgentRun,
     cancelAgentRun,
   });

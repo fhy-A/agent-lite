@@ -47,8 +47,47 @@ class _AgentUpstream(BaseHTTPRequestHandler):
             message.get("role") == "user" and message.get("content") == "repeat tool id"
             for message in messages
         )
+        asks_user = any(
+            message.get("role") == "user" and message.get("content") == "ask for target"
+            for message in messages
+        )
         should_call_tool = tool_result_count == 0 or (repeat_id and tool_result_count < 2)
-        if not should_call_tool:
+        if asks_user and tool_result_count == 0:
+            arguments = {
+                "title": "Choose a target",
+                "reason": "The target cannot be inferred from the project.",
+                "questions": [{
+                    "id": "target",
+                    "prompt": "Which target should be analyzed?",
+                    "type": "single",
+                    "required": True,
+                    "allowOther": False,
+                    "options": [
+                        {"value": "api", "label": "API", "description": "Analyze the API."},
+                        {"value": "ui", "label": "UI", "description": "Analyze the UI."},
+                    ],
+                }],
+            }
+            frames = [{
+                "choices": [{
+                    "delta": {"tool_calls": [{
+                        "index": 0,
+                        "id": "agent-question-1",
+                        "type": "function",
+                        "function": {
+                            "name": "request_user_input",
+                            "arguments": json.dumps(arguments),
+                        },
+                    }]},
+                    "finish_reason": "tool_calls",
+                }],
+            }]
+        elif asks_user:
+            frames = [
+                {"choices": [{"delta": {"content": "questionnaire task complete"}, "finish_reason": "stop"}]},
+                {"choices": [], "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}},
+            ]
+        elif not should_call_tool:
             frames = [
                 {"choices": [{"delta": {"content": "read-only task complete"}, "finish_reason": "stop"}]},
                 {"choices": [], "usage": {"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11}},
@@ -146,6 +185,19 @@ class TestDurableAgentRuntime(unittest.TestCase):
                 run["condition"].wait(timeout=0.05)
         self.assertIn(run["status"], server_mod._AGENT_RUN_TERMINAL)
 
+    def _wait_status(self, run, expected, timeout=5):
+        deadline = time.time() + timeout
+        with run["condition"]:
+            while run["status"] != expected and time.time() < deadline:
+                run["condition"].wait(timeout=0.05)
+        self.assertEqual(run["status"], expected)
+
+    def _wait_worker_idle(self, run, timeout=2):
+        deadline = time.time() + timeout
+        while run.get("worker") is not None and time.time() < deadline:
+            time.sleep(0.01)
+        self.assertIsNone(run.get("worker"))
+
     def test_agent_continues_without_browser_polling_and_executes_read_only_loop(self):
         run = server_mod._create_agent_run(
             "session-agent",
@@ -192,6 +244,66 @@ class TestDurableAgentRuntime(unittest.TestCase):
         self.assertNotIn("agent-secret-key", persisted)
         self.assertNotIn("agent-secret-key", json.dumps(snapshot))
         self.assertEqual(_AgentUpstream.authorizations, ["Bearer agent-secret-key"] * 2)
+
+    def test_agent_questionnaire_waits_durably_and_continues_after_valid_answer(self):
+        run = server_mod._create_agent_run(
+            "question-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "ask for target"}],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["request_user_input"]],
+            },
+            self.base_url,
+            ["question-secret-key"],
+            allowed_tools=["request_user_input"],
+        )
+        self._wait_status(run, "waiting_user_input")
+        self._wait_worker_idle(run)
+
+        waiting = server_mod._agent_snapshot(run, 0)
+        self.assertEqual(waiting["pendingInput"]["requestId"], "user-input-agent-question-1")
+        self.assertEqual(waiting["pendingInput"]["questions"][0]["id"], "target")
+        self.assertEqual(waiting["toolExecutions"][0]["status"], "waiting_user_input")
+        self.assertEqual(run["keys"], [])
+        persisted = server_mod._agent_run_path(run["id"]).read_text(encoding="utf-8")
+        self.assertIn('"status": "waiting_user_input"', persisted)
+        self.assertNotIn("question-secret-key", persisted)
+
+        with self.assertRaisesRegex(ValueError, "invalid choice"):
+            server_mod._submit_agent_input(run, [{
+                "id": "target",
+                "status": "resolved",
+                "values": ["invalid"],
+            }])
+        self.assertEqual(run["status"], "waiting_user_input")
+
+        result = server_mod._submit_agent_input(run, [{
+            "id": "target",
+            "status": "resolved",
+            "values": ["api"],
+        }])
+        self.assertEqual(result["answers"][0]["answer"], "API")
+        self.assertEqual(run["status"], "waiting_credentials")
+        server_mod._resume_agent_run(run, ["question-resume-key"])
+        self._wait_terminal(run)
+
+        snapshot = server_mod._agent_snapshot(run, 0)
+        self.assertEqual(snapshot["status"], "completed")
+        self.assertEqual(snapshot["result"]["content"], "questionnaire task complete")
+        self.assertIsNone(snapshot["pendingInput"])
+        self.assertEqual(snapshot["toolExecutions"][0]["status"], "completed")
+        self.assertTrue(any(
+            message.get("role") == "tool"
+            and message.get("tool_call_id") == "agent-question-1"
+            and '"api"' in message.get("content", "")
+            for message in run["messages"]
+        ))
+        event_types = [event["type"] for event in snapshot["events"]]
+        for expected in (
+            "user_input_required", "user_input_submitted", "tool_completed",
+            "waiting_credentials", "resumed", "completed",
+        ):
+            self.assertIn(expected, event_types)
 
     def test_restart_recovery_reuses_completed_tool_execution(self):
         run_id = uuid.uuid4().hex
@@ -278,6 +390,40 @@ class TestDurableAgentRuntime(unittest.TestCase):
         ))
         persisted = server_mod._agent_run_path(run_id).read_text(encoding="utf-8")
         self.assertNotIn("restart-secret-key", persisted)
+
+    def test_restart_preserves_pending_questionnaire_before_credentials_resume(self):
+        run = server_mod._create_agent_run(
+            "question-restart-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "ask for target"}],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["request_user_input"]],
+            },
+            self.base_url,
+            ["question-before-restart-key"],
+            allowed_tools=["request_user_input"],
+        )
+        self._wait_status(run, "waiting_user_input")
+        self._wait_worker_idle(run)
+        run_id = run["id"]
+        with server_mod._agent_run_lock:
+            server_mod._agent_runs.pop(run_id, None)
+
+        loaded = server_mod._get_agent_run(run_id)
+        self.assertEqual(loaded["status"], "waiting_user_input")
+        self.assertEqual(loaded["pending_input"]["toolCallId"], "agent-question-1")
+        self.assertEqual(loaded["keys"], [])
+
+        server_mod._submit_agent_input(loaded, [{
+            "id": "target",
+            "status": "resolved",
+            "values": ["ui"],
+        }])
+        self.assertEqual(loaded["status"], "waiting_credentials")
+        server_mod._resume_agent_run(loaded, ["question-after-restart-key"])
+        self._wait_terminal(loaded)
+        self.assertEqual(loaded["result"]["content"], "questionnaire task complete")
+        self.assertEqual(_AgentUpstream.calls, 2)
 
     def test_repeated_tool_call_id_reuses_execution_but_keeps_protocol_pair(self):
         original_execute = server_mod.execute_registered_tool
@@ -412,6 +558,78 @@ class TestDurableAgentRuntime(unittest.TestCase):
             cancel = requests.delete(f"{base}/api/agent/runs/{run_id}", timeout=3)
             self.assertEqual(cancel.status_code, 200)
             self.assertEqual(cancel.json()["status"], "completed")
+        finally:
+            http_server.shutdown()
+            http_server.server_close()
+            thread.join(timeout=2)
+
+    def test_http_questionnaire_submit_endpoint_resumes_same_agent_run(self):
+        server_mod.ThreadingHTTPServer.daemon_threads = True
+        http_server = server_mod.ThreadingHTTPServer(
+            ("127.0.0.1", 0), server_mod.CodeHandler,
+        )
+        thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{http_server.server_address[1]}"
+        try:
+            created = requests.post(
+                base + "/api/agent/runs",
+                json={
+                    "sessionId": "http-question-agent",
+                    "payload": {
+                        "model": "test-model",
+                        "messages": [{"role": "user", "content": "ask for target"}],
+                        "tools": [server_mod._SERVER_TOOL_DEFINITIONS["request_user_input"]],
+                    },
+                    "allowedTools": ["request_user_input"],
+                    "baseUrl": self.base_url,
+                    "keys": ["http-question-key"],
+                },
+                timeout=5,
+            )
+            self.assertEqual(created.status_code, 201)
+            run_id = created.json()["agentRunId"]
+
+            deadline = time.time() + 5
+            snapshot = {}
+            while time.time() < deadline:
+                snapshot = requests.get(
+                    f"{base}/api/agent/runs/{run_id}?cursor=0&wait=1",
+                    timeout=3,
+                ).json()
+                if snapshot.get("status") == "waiting_user_input":
+                    break
+            self.assertEqual(snapshot.get("status"), "waiting_user_input")
+            self.assertEqual(snapshot.get("pendingInput", {}).get("toolCallId"), "agent-question-1")
+
+            submitted = requests.post(
+                f"{base}/api/agent/runs/{run_id}/input",
+                json={"answers": [{
+                    "id": "target",
+                    "status": "resolved",
+                    "values": ["ui"],
+                }]},
+                timeout=3,
+            )
+            self.assertEqual(submitted.status_code, 200)
+            self.assertEqual(submitted.json()["status"], "waiting_credentials")
+
+            resumed = requests.post(
+                f"{base}/api/agent/runs/{run_id}/resume",
+                json={"keys": ["http-question-resume-key"], "baseUrl": self.base_url},
+                timeout=3,
+            )
+            self.assertEqual(resumed.status_code, 200)
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                snapshot = requests.get(
+                    f"{base}/api/agent/runs/{run_id}?cursor=0&wait=1",
+                    timeout=3,
+                ).json()
+                if snapshot.get("status") in server_mod._AGENT_RUN_TERMINAL:
+                    break
+            self.assertEqual(snapshot.get("status"), "completed")
+            self.assertEqual(snapshot.get("result", {}).get("content"), "questionnaire task complete")
         finally:
             http_server.shutdown()
             http_server.server_close()

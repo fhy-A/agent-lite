@@ -14,6 +14,21 @@
 
 ---
 
+## 2026-07-18 07:02 · Codex
+
+### 完成只读 AgentRun 的持久问卷闭环：服务端暂停、刷新恢复与原任务续跑
+
+- **暂停型交互协议**：服务端工具注册表新增 `request_user_input`，明确声明为 `effect=interaction`、`idempotent=true`、`background=false`，不会进入普通后台工具执行器；AgentRun 新增 `waiting_user_input` 状态和 `pendingInput` 快照，模型提出问卷后先持久化问题、工具调用和事件，再暂停运行。
+- **回答校验与续跑**：新增 `POST /api/agent/runs/{id}/input`，按持久问题逐项校验问题 ID、单选/多选值、自定义答案、必填项和取消状态；合法答案补成原 `tool_call_id` 的正式工具结果，非法或过期提交不会改变运行状态。回答完成后任务进入 `waiting_credentials`，由前端重新注入仅存内存的 Key 并继续下一轮模型调用。
+- **重启与凭据边界**：服务重启后 `waiting_user_input` 保持可回答，不会被错误转换为普通模型恢复；活动模型/工具任务仍按原协议进入 `waiting_credentials`。等待问卷时主动清空 Key，AgentRun 文件、事件和公开快照均不包含凭据。
+- **正式界面接入**：“只读分析”现在向模型暴露四个只读工具和问卷控制工具；前端复用现有逐题问卷面板，将稳定的 `requestId`、`agentRunId` 和进度写入会话检查点。页面刷新、切换会话或服务重启后可继续回答；提交成功后恢复同一个 AgentRun，不在浏览器本地伪造或重复执行工具结果。
+- **迁移边界保持**：计划、接受编辑和自动模式继续使用浏览器 Agent 循环；写入、删除、命令、网络、权限确认和子任务没有提前迁入服务端。下一阶段聚焦副作用权限决定和写入幂等协议。
+- **验证结果**：新增持久问卷、非法答案拒绝、服务重启恢复、真实 HTTP 提交续跑和前端恢复路径回归；Python/JavaScript 语法检查、`git diff --check` 通过，相关定向回归 `235 passed, 4 subtests passed`，最终全量回归 `499 passed, 6 subtests passed`。
+
+**涉及文件**：`server.py`、`agent-runtime.js`、`app.js`、`tests/test_agent_runtime.py`、`tests/test_frontend_modules.py`、`tests/test_p0_stability.py`、`tests/test_routes.py`、`README.md`、`docs/SERVER_AGENT_LOOP_PLAN.md`、`data/memory/code-architecture.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 06:25 · Codex
 
 ### 将只读 AgentRun 接入正式界面：单一执行所有权、流式投影与持久恢复

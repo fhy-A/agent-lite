@@ -703,7 +703,7 @@ const MAX_TOOL_ROUNDS = 200;
 
 const toolPolicy = {
 
-  read: new Set(["list_files", "read_file", "search_files", "glob_files"]),
+  read: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files"]),
 
   plan: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "task", "use_skill", "read_skill_resource"]),
 
@@ -1414,7 +1414,7 @@ save_memory 保存偏好或决策到长期记忆。先在回复末尾询问”�
 
 const permissionInstructions = {
 
-  read: "权限策略：只读分析。只能列出、读取和搜索项目文件；不能写入、删除、运行命令、访问网络、启动子 Agent 或请求交互式确认。",
+  read: "权限策略：只读分析。只能列出、读取和搜索项目文件；遇到无法从上下文或文件中确认的关键决策时可以向用户提问。不能写入、删除、运行命令、访问网络或启动子 Agent。",
 
   plan: "权限策略：计划模式。可读取、搜索、生成修改方案，但不能运行命令或直接写入文件。",
 
@@ -8798,9 +8798,10 @@ function normalizeUserInputRequest(tool, ctx = null) {
     })
     .filter((question) => question.prompt && (question.type === "text" || question.options.length));
   return {
-    id: `user-input-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    id: String(tool._requestId || `user-input-${Date.now()}-${Math.random().toString(16).slice(2)}`),
     sessionId: ctx?.sessionId || state.sessionId,
     toolCallId: tool._toolCallId || "",
+    agentRunId: String(tool._agentRunId || ""),
     title: String(tool.title || t("questionnaireTitle")),
     reason: String(tool.reason || ""),
     questions,
@@ -8885,7 +8886,11 @@ async function requestUserInput(tool, ctx = null) {
   if (ctx?.isSubAgent) {
     return { ok: false, action: "request_user_input", error: "子 Agent 不能直接向用户提问。请在结果中说明：遇到了什么决策点、有哪些可选方案、你推荐哪个。主 Agent 会接管并向用户询问。" };
   }
-  const request = normalizeUserInputRequest(tool, ctx);
+  const normalized = normalizeUserInputRequest(tool, ctx);
+  const existing = getUserInputRequest(normalized.sessionId);
+  const request = existing?.id === normalized.id ? existing : normalized;
+  request.toolCallId = request.toolCallId || normalized.toolCallId;
+  request.agentRunId = request.agentRunId || normalized.agentRunId;
   if (!request.questions.length) {
     return { ok: false, action: "request_user_input", error: "No valid questionnaire questions were provided." };
   }
@@ -8911,6 +8916,15 @@ async function requestUserInput(tool, ctx = null) {
     if (!signal) return;
     const abortHandler = () => {
       request.questions.filter((question) => question.status === "pending").forEach((question) => { question.status = "canceled"; });
+      if (request.agentRunId) {
+        request.status = "aborted";
+        delete state.userInputRequests[request.sessionId];
+        const resolver = state._userInputResolvers.get(request.id);
+        state._userInputResolvers.delete(request.id);
+        if (request.sessionId === state.sessionId) renderMessages();
+        if (resolver) resolver(buildUserInputResult(request));
+        return;
+      }
       finishUserInputRequest(request).catch(() => resolve(buildUserInputResult(request)));
     };
     request.abortSignal = signal;
@@ -8919,8 +8933,54 @@ async function requestUserInput(tool, ctx = null) {
   });
 }
 
+async function finishServerAgentUserInputRequest(request) {
+  request._finishing = true;
+  const result = buildUserInputResult(request);
+  try {
+    if (!window.AgentRuntime?.submitAgentInput) throw new Error("Server Agent input runtime is unavailable");
+    await window.AgentRuntime.submitAgentInput(request.agentRunId, {
+      answers: result.answers,
+      signal: request.abortSignal,
+    });
+  } catch (error) {
+    request._finishing = false;
+    throw error;
+  }
+
+  request.status = "resolved";
+  request.resolvedAt = new Date().toISOString();
+  if (request.abortSignal && request.abortHandler) request.abortSignal.removeEventListener("abort", request.abortHandler);
+  appendUserInputSummary(request, result);
+  delete state.userInputRequests[request.sessionId];
+  const resolver = state._userInputResolvers.get(request.id);
+  state._userInputResolvers.delete(request.id);
+  const nextStatus = resolver ? "running" : "resuming";
+  const nextState = {
+    ...getSessionRunState(request.sessionId),
+    status: nextStatus,
+    phase: "model",
+    userInputRequest: null,
+    updatedAt: new Date().toISOString(),
+  };
+  setSessionRunState(request.sessionId, nextState);
+  await saveSessionState(request.sessionId, getSessionMessages(request.sessionId), getSessionStats(request.sessionId));
+  if (request.sessionId === state.sessionId) {
+    clearPermissionNotify();
+    renderMessages();
+  }
+  if (resolver) {
+    resolver(result);
+    return;
+  }
+
+  const summary = state.sessions.find((session) => session.id === request.sessionId) || { id: request.sessionId };
+  summary.runState = nextState;
+  resumePersistedSessionRun(summary).catch((error) => console.error("Failed to resume server questionnaire run:", error));
+}
+
 async function finishUserInputRequest(request) {
   if (!request || request._finishing || request.status !== "pending" || request.questions.some((question) => question.status === "pending")) return;
+  if (request.agentRunId) return finishServerAgentUserInputRequest(request);
   request._finishing = true;
   request.status = "resolved";
   request.resolvedAt = new Date().toISOString();
@@ -9001,7 +9061,7 @@ function renderUserInputQuestion(question, index) {
     </header>
     <div class="user-input-question-body">
       ${control}
-      ${question.type !== "text" ? `<input class="user-input-text" data-user-input-other type="text" placeholder="${escapeHtml(t("questionnaireOtherPlaceholder"))}" value="${escapeHtml(question.other || "")}" ${resolved ? "disabled" : ""} />` : ""}
+      ${question.type !== "text" && question.allowOther ? `<input class="user-input-text" data-user-input-other type="text" placeholder="${escapeHtml(t("questionnaireOtherPlaceholder"))}" value="${escapeHtml(question.other || "")}" ${resolved ? "disabled" : ""} />` : ""}
     </div>
     ${resolved ? "" : `<footer class="user-input-question-actions">
       <button type="button" class="user-input-skip" data-user-input-action="cancel">${escapeHtml(t("questionnaireCancel"))}</button>
@@ -10801,6 +10861,8 @@ async function mapWithConcurrency(items, limit, worker) {
 }
 
 const SERVER_AGENT_READ_TOOLS = Object.freeze(["list_files", "read_file", "search_files", "glob_files"]);
+const SERVER_AGENT_INTERACTION_TOOLS = Object.freeze(["request_user_input"]);
+const SERVER_AGENT_SAFE_TOOLS = Object.freeze([...SERVER_AGENT_INTERACTION_TOOLS, ...SERVER_AGENT_READ_TOOLS]);
 
 function isServerOwnedRun(ctx) {
   return !ctx?.isSubAgent && ctx?.executionOwner === "server-agent";
@@ -11022,10 +11084,23 @@ async function projectAgentEvent(ctx, event) {
   ctx.run.agentEventCursor = ctx.agentEventCursor;
   setSessionMessages(ctx.sessionId, ctx.messages);
   renderSessionMessages(ctx.sessionId);
-  await persistRunCheckpoint(ctx, "running", eventType.startsWith("tool_") ? "tools" : "model", {
+  const phase = eventType.startsWith("tool_") || eventType.startsWith("user_input_") ? "tools" : "model";
+  await persistRunCheckpoint(ctx, "running", phase, {
     agentEventCursor: ctx.agentEventCursor,
     runtimeRunId: ctx.runtimeRunId || "",
   });
+}
+
+async function requestServerAgentInput(ctx, pendingInput) {
+  if (!pendingInput || !Array.isArray(pendingInput.questions)) {
+    throw new Error("Server Agent is waiting for user input without a valid questionnaire");
+  }
+  return requestUserInput({
+    ...pendingInput,
+    _requestId: String(pendingInput.requestId || ""),
+    _toolCallId: String(pendingInput.toolCallId || ""),
+    _agentRunId: ctx.agentRunId,
+  }, ctx);
 }
 
 async function runServerAgentLoop(ctx) {
@@ -11034,8 +11109,8 @@ async function runServerAgentLoop(ctx) {
   }
   ctx.messages = Array.isArray(ctx.messages) ? ctx.messages.filter(Boolean) : [];
   ctx.executionOwner = "server-agent";
-  ctx.allowedToolNames = new Set(SERVER_AGENT_READ_TOOLS);
-  const safeTools = nativeTools.filter((tool) => SERVER_AGENT_READ_TOOLS.includes(tool.function?.name));
+  ctx.allowedToolNames = new Set(SERVER_AGENT_SAFE_TOOLS);
+  const safeTools = nativeTools.filter((tool) => SERVER_AGENT_SAFE_TOOLS.includes(tool.function?.name));
   ctx.tools = safeTools;
   ctx.run = ctx.run || ensureSessionRun(ctx.sessionId);
   ctx.run._activeCtx = ctx;
@@ -11053,7 +11128,7 @@ async function runServerAgentLoop(ctx) {
       payload: prepared.payload,
       baseUrl,
       keys,
-      allowedTools: SERVER_AGENT_READ_TOOLS,
+      allowedTools: SERVER_AGENT_SAFE_TOOLS,
       maxRounds: MAX_TOOL_ROUNDS,
       signal: ctx.run.abortController.signal,
     });
@@ -11107,6 +11182,10 @@ async function runServerAgentLoop(ctx) {
     ctx.agentEventCursor = Number(snapshot.nextCursor ?? ctx.agentEventCursor ?? 0);
     ctx.run.agentEventCursor = ctx.agentEventCursor;
     if (snapshot.status === "waiting_credentials") continue;
+    if (snapshot.status === "waiting_user_input") {
+      await requestServerAgentInput(ctx, snapshot.pendingInput);
+      continue;
+    }
     if (snapshot.status === "completed") {
       const result = snapshot.result || {};
       ctx.agentRunId = "";

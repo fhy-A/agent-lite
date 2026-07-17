@@ -22,9 +22,10 @@ class TestFrontendCoreModules(unittest.TestCase):
             "createAgentRun",
             "getAgentRun",
             "resumeAgentRun",
+            "submitAgentInput",
             "watchAgentRun",
             "cancelAgentRun",
-            'if (["completed", "failed", "cancelled", "waiting_credentials"].includes(snapshot.status))',
+            'if (["completed", "failed", "cancelled", "waiting_credentials", "waiting_user_input"].includes(snapshot.status))',
             "await onEvent?.(event, snapshot)",
         ):
             self.assertIn(expected, RUNTIME_SOURCE)
@@ -75,6 +76,20 @@ const order = [];
         )
         self.assertEqual(data["cursor"], 3)
         self.assertEqual(data["status"], "completed")
+
+    def test_server_agent_questionnaire_uses_durable_submit_and_reload_path(self):
+        self.assertIn(
+            'const SERVER_AGENT_INTERACTION_TOOLS = Object.freeze(["request_user_input"])',
+            APP_SOURCE,
+        )
+        self.assertIn("SERVER_AGENT_SAFE_TOOLS", APP_SOURCE)
+        self.assertIn('if (snapshot.status === "waiting_user_input")', APP_SOURCE)
+        self.assertIn("await requestServerAgentInput(ctx, snapshot.pendingInput)", APP_SOURCE)
+        self.assertIn("window.AgentRuntime.submitAgentInput(request.agentRunId", APP_SOURCE)
+        self.assertIn('status: nextStatus', APP_SOURCE)
+        self.assertIn('const nextStatus = resolver ? "running" : "resuming"', APP_SOURCE)
+        self.assertIn('agentRunId: String(tool._agentRunId || "")', APP_SOURCE)
+        self.assertIn("userInputRequest: serializeUserInputRequest(request)", APP_SOURCE)
 
     def test_read_only_permission_is_user_visible(self):
         self.assertIn('data-value="read"', INDEX_SOURCE)

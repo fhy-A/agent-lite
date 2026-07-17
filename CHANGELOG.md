@@ -14,6 +14,20 @@
 
 ---
 
+## 2026-07-18 04:53 · Codex
+
+### 完成 Code v0.5.4 GitHub Release 发布
+
+- **代码与标签**：发布提交 `8c84237f0e18003a8f50b8bfe8c622dce2ca547d` 已推送到 `master`，注解标签 `v0.5.4` 指向同一提交；仓库远端同步改为正式地址 `https://github.com/fhy-A/Code.git`。
+- **Release 状态**：已创建 [Code v0.5.4 — 从 Agent Lite 到 Code](https://github.com/fhy-A/Code/releases/tag/v0.5.4)，状态为公开、非草稿、非预发布，并成为仓库 Latest Release；本次只发布 Code 品牌资产，不提供 AgentLite 命名的兼容包。
+- **线上资产核验**：唯一资产 `Code-v0.5.4.exe` 上传状态为 `uploaded`，大小 `30,859,501` bytes；GitHub 返回摘要 `sha256:be333df1187d30d61111f2edadf2948bace16c2cd611b1ea7433b07a05623ae4`，与本地构建产物逐字一致。
+- **发布内容核验**：线上正文已确认包含 `24` 个提交、`182` 个文件、`473 passed, 2 subtests passed`、完整 SHA-256 和八部分详细更新内容；根 README 已作为新的项目级入口随发布提交上线。
+- **标签保持不变**：本条为发布完成后的记录，只追加到 `master`，不移动或重写已经公开的 `v0.5.4` 标签。
+
+**涉及文件**：`CHANGELOG.md`
+
+---
+
 ## 2026-07-18 04:39 · Codex
 
 ### 发布 Code v0.5.4：完成品牌迁移与运行时、会话和流式界面重构

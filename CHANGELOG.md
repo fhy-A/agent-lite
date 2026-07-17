@@ -14,6 +14,205 @@
 
 ---
 
+## 2026-07-17 20:29 · Codex
+
+### 将模型名分隔线延伸到会话内容列右侧
+
+- 将模型名伪元素从固定 `24px` 短线改为 `flex: 1 1 auto` 弹性填充，并保留 `24px` 最小宽度、`1px` 高度和原有低对比度。
+- 分隔线只占满 `.msg` 会话内容列，不会越过消息宽度延伸到侧栏或整个视口；模型名较长时会自动压缩剩余线段。
+- 无头 Chrome 在 `1400px` 视口实测消息列与模型名行宽均为 `760px`，`deepseek-v4-pro` 后的分隔线计算宽度约 `647px`，正确抵达内容列右缘。
+- 定向测试 `13 passed`，全量 `475 passed, 2 subtests passed`；JavaScript 语法检查和 `git diff --check` 通过。
+
+**改动文件**：`styles.css`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`
+
+---
+
+## 2026-07-17 20:23 · Codex
+
+### 优化最终回答模型名的分隔样式
+
+- **节标题化**：模型名调整为 `12px / 1.4 / 600` 的轻量节标题，使用主文字与弱化色混合后的中等对比度，并增加细微字距，使其比正文更紧凑但仍清晰可辨。
+- **短线分隔**：模型名右侧增加 `24px × 1px` 的低对比度短线，不使用胶囊、背景或额外文案；它只强化“最终回答从这里开始”的含义，不改变思考摘要和正文的统一排版。
+- **显示边界**：短线仅跟随非空的最终回答模型名显示；pending 阶段的隐藏模型名和无标题的思考块均不会产生装饰节点。
+- **真实页面验证**：无头 Chrome 在浅色、深色环境检查计算样式与实际布局，确认模型名仅出现 `1` 次、思考块角色节点为 `0`，短线尺寸、间距和对比度符合预期。
+- **测试结果**：定向测试 `13 passed`；全量测试首次受 Windows 临时文件锁竞争影响出现 `1` 个无关并发用例失败，单独复跑通过，随后全量复跑为 `475 passed, 2 subtests passed`；JavaScript 语法检查和 `git diff --check` 通过。
+
+**改动文件**：`styles.css`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`
+
+---
+
+## 2026-07-17 20:15 · Codex
+
+### 统一思考摘要与最终回答样式，仅用模型名分隔
+
+- **正文样式统一**：将思考摘要从弱化的 `13.5px / 1.72 / muted` 调整为与未分类流、最终回答完全一致的 `14.5px / 1.76 / text`，保留思考摘要的独立分段结构和 `.65em` 段间距。
+- **唯一分隔标记**：思考块继续不显示“思考过程”标题和模型名；只有最终回答显示模型名，因此流内容从 `pending` 归类为思考或回答时不会再发生字体、字号、行高或颜色跳变。
+- **真实页面验证**：无头 Chrome 直接加载 `127.0.0.1:3010`，确认 pending、thinking、final 三种投影的计算样式均为 `14.5px`、`25.52px` 行高、相同字体/字重/主文字色；思考块角色节点数为 `0`，最终回答模型名正常显示。
+- **测试结果**：`app.js` / `agent-runtime.js` 语法检查通过，定向测试 `13 passed`，全量 `475 passed, 2 subtests passed`，`git diff --check` 通过。
+
+**改动文件**：`styles.css`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`
+
+---
+
+## 2026-07-17 19:53 · Codex
+
+### 移除思考过程标题并彻底取消空思考 DOM
+
+- **标题移除**：思考摘要不再渲染“思考过程 / Thinking”角色标题，并删除对应 i18n 键与专用标题样式；思考和最终回答改由字号、颜色、分段结构及最终回答模型名区分。
+- **空块不入 DOM**：没有有效摘要时 `renderThinkingProjection()` 直接返回空字符串，不再依赖 `display:none` 隐藏空块，因此标题或空容器均不存在绘制机会。
+- **首段挂载**：空工具轮的首个有效摘要增量到达时执行一次结构渲染，创建思考块；后续内容继续复用原节点做帧级增量补丁。
+- **真实页面验证**：无头 Chrome 确认思考摘要块中角色标题节点数量为 `0`；摘要使用 `13.5px` 弱化色，最终回答保留模型名、`14.5px` 正文和主文字颜色，层次仍然明确。
+- **测试结果**：`app.js` / `agent-runtime.js` 语法检查通过，定向测试 `13 passed`，全量 `475 passed, 2 subtests passed`，`git diff --check` 通过。
+
+**改动文件**：`app.js`、`styles.css`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`。
+
+---
+
+## 2026-07-17 19:44 · Codex
+
+### 修复工具调用晚到导致的模型标题与空思考块闪现
+
+- **真实会话复核**：检查用户最新两次测试会话，确认多轮工具调用先产生 `0` 字可见摘要，另有工具轮先流出 `38–62` 字普通 `content`，随后才收到 `tool_calls`；因此问题独立于 `<think>` 解析。
+- **未分类流投影**：新建 assistant 流默认标记为 `pending`；工具调用到达前继续增量显示普通文本，但不提前显示模型名。确认工具轮后原子切换到 `thinking`，已有文本保持可见；确认最终回答后才显示模型标题。
+- **空思考块延迟显现**：空的 streaming thinking article 保持在 DOM 中供增量补丁复用，但使用 `is-empty` 隐藏整块；首个有效摘要到达后原地解除隐藏，因此“思考过程”不会先出现再消失。
+- **节点与流畅度**：未增加网络等待、定时缓冲或全量流式重渲染；增量内容仍由原有帧队列更新，状态栏维持同一节点。
+- **真实页面验证**：无头 Chrome 确认 pending 文本不带模型名、切换工具轮后文本不消失、空思考块不可见且有效摘要到达后原地显示；状态栏节点身份保持不变。
+- **测试结果**：`app.js` / `agent-runtime.js` 语法检查通过，定向测试 `13 passed`，全量 `475 passed, 2 subtests passed`，`git diff --check` 通过。
+
+**改动文件**：`app.js`、`styles.css`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`。
+
+---
+
+## 2026-07-17 19:33 · Codex
+
+### 修复流式 `<think>` 原始推理与模型标题闪现
+
+- **增量标签解析**：重写 `splitThoughtContent()`；检测到 `<think>` 开始标签后，在 `</think>` 到达前将后续内容持续归入隐藏 `thought`，不再作为可见回答渲染。
+- **跨分片保护**：对 SSE 包尾部的 `<t`、`<thi` 等未完整开始标签暂存最多 6 个字符，下一包确认后再分类，防止半个标签及随后的长推理短暂泄漏。
+- **正常流式保持**：闭合标签后的真实回答仍立即进入 `content` 并通过原有 `requestAnimationFrame` 增量补丁显示，没有新增网络等待或全量消息重渲染。
+- **回归验证**：新增直接执行实际 JavaScript 解析函数的行为测试，覆盖半标签、未闭合标签、完整标签、大小写标签和普通回答；无头 Chrome 确认未闭合长推理期间模型标题与正文均隐藏，真实回答到达后正常显示，状态栏节点保持稳定。
+- **性能与测试**：浏览器中约一万字符输入连续解析 1000 次约 `3.3ms`；`app.js` / `agent-runtime.js` 语法检查通过，定向测试 `13 passed`，全量 `475 passed, 2 subtests passed`，`git diff --check` 通过。
+
+**改动文件**：`app.js`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`。
+
+---
+
+## 2026-07-17 19:26 · Codex
+
+### 收紧思考过程与最终回答的块间距
+
+- 将 `.thinking-process` 的底部间距从 `28px` 调整为 `20px`，仅影响思考过程与其后最终回答之间的距离。
+- 前端回归测试新增块间距断言；定向测试 `12 passed`，`git diff --check` 通过。
+
+**改动文件**：`styles.css`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`。
+
+---
+
+## 2026-07-17 19:25 · Codex
+
+### 收紧思考过程分段间距
+
+- 将连续 `.thinking-summary-item` 的段间距从 `1.15em` 调整为 `.65em`，保留原有 `1.72` 行高以及思考块与其他消息之间的整体间距。
+- 前端回归测试新增精确间距断言；定向测试 `12 passed`，`git diff --check` 通过。
+
+**改动文件**：`styles.css`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`。
+
+---
+
+## 2026-07-17 19:18 · Codex
+
+### 状态栏去除工具阶段与胶囊样式
+
+- **取消分阶段状态**：删除 `_taskPhase`、`setTaskPhase()` 及模型轮和工具执行循环中的阶段切换调用；状态栏在整个任务生命周期内恒定显示“处理中 · 累计时间”，不再短暂闪现工具名。
+- **轻量活动提示**：运行状态改为透明、无边框的单行提示，由脉冲圆点、固定状态文案和蓝色计时组成；模型名继续由思考或最终回答自身标题展示，不在状态栏重复出现。
+- **空回答标题处理**：流式最终回答尚无正文时隐藏孤立的模型标题，正文首个增量到达后由增量补丁显示标题，避免状态提示下方提前出现空的 Assistant 区块。
+- **稳定性保留**：状态栏仍使用唯一稳定 DOM 节点和当前任务锚点；计时更新、正文增量和任务运行期间均不重建状态栏。
+- **真实页面验证**：无头 Chrome 加载 `127.0.0.1:3010`，确认状态文案为“处理中”、不存在模型或阶段节点、背景透明且无边框；空回答标题先隐藏、正文到达后显示，状态栏外层与内部节点身份保持不变。
+- **测试结果**：`app.js` / `agent-runtime.js` JavaScript 语法检查通过；定向前端测试 `12 passed`；全量 `474 passed, 2 subtests passed`。
+
+**改动文件**：`app.js`、`styles.css`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`。
+
+---
+
+## 2026-07-17 18:58 · Codex
+
+### 运行状态栏固定到当前思考过程上方且保持无闪烁
+
+- **位置调整**：为当前运行任务生成 `data-active-run-anchor`，锚点固定插在该任务的用户消息之后，因此 DOM 顺序稳定为“用户消息 → 状态栏 → 思考过程 → 最终回答”，状态栏不再落到消息列表末尾或紧贴输入框。
+- **节点稳定性**：保留唯一的 `#activeRunBanner` 实体；消息投影需要原子重建时，先把状态栏同步移到 `.messages` 停放位，重建后再在同一个 JavaScript 任务内挂回新锚点，不重建状态栏、计时器或动画节点。
+- **布局收敛**：锚点复用消息列宽并提供固定下间距，状态栏自身改为占满锚点宽度，不使用绝对定位、位移或基于输入框高度的定位逻辑。
+- **真实页面验证**：无头 Chrome 加载 `127.0.0.1:3010`，确认状态栏位于思考过程和最终回答之前；思考内容重渲染及“思考中 → 执行工具”切换后，外层状态栏和内部状态节点身份均保持不变，页面内锚点与状态栏都只有 `1` 个，且不与 composer 重叠。
+- **测试结果**：`app.js` / `agent-runtime.js` JavaScript 语法检查通过；定向前端测试 `12 passed`；全量 `474 passed, 2 subtests passed`。
+
+**改动文件**：`index.html`、`app.js`、`styles.css`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`。
+
+---
+
+## 2026-07-17 18:47 · Codex
+
+### SSE 实际页面修复：清除幽灵消息 + 状态栏回归消息流
+
+- **真实数据诊断**：核对 `127.0.0.1:3010/app.js` 与工作区 SHA-256，两者一致；读取截图对应会话 `f51fc728aad84c30`，持久化消息中只有 `1` 条最终回答和 `4` 条非空工具轮总结，确认截图中的重复回答、重复阶段文字和空模型标题都是 DOM 幽灵节点，不是模型重复请求或会话数据重复。
+- **取消消息节点复用**：移除 `renderMessages()` 中对 streaming assistant article 的 detach / replace 逻辑；新增稳定 `#messageList` 投影根，工具轮重分类、流式完成等结构变化时都从 `state.messages` 原子重建该子树，旧流式 article 不再可能被留在最终回答之后。
+- **防御性清理**：新增 `pruneStaleStreamingNodes()`，每次渲染前按会话、消息索引、streaming 状态和 `answer` / `thinking` 投影类型清除失效或重复节点，即使命中渲染缓存也会清理异常 DOM。
+- **状态栏布局**：`#activeRunBanner` 移入 `.messages` 滚动区，作为 `#messageList` 之后的稳定兄弟节点；改为普通文档流布局，宽度复用 `--conversation-content-width` 并与 Assistant 左边缘对齐，不再使用 `absolute + bottom: 134px` 覆盖输入框。
+- **动态输入框避让**：新增 `ResizeObserver` 监测 composer 实际高度，通过 `--composer-safe-bottom` 动态调整消息滚动区底部，支持多行输入、图片缩略图和问卷面板导致的 composer 高度变化。
+- **真实页面验证**：无头 Chrome 直接加载 `127.0.0.1:3010`及上述实际多轮会话，确认最终回答 `1` 份、阶段总结 `4` 条、手工注入的幽灵节点可清除；状态栏与 Assistant 左边缘误差 `0px`，与 composer 间距 `87px`，消息滚动区与 composer 保留 `18px` 安全间距。
+- **测试结果**：`app.js` / `agent-runtime.js` JavaScript 语法检查通过；定向 `14 passed`；全量 `474 passed, 2 subtests passed`。
+
+**改动文件**：`index.html`、`app.js`、`styles.css`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`。
+
+---
+
+## 2026-07-17 18:12 · Codex
+
+### SSE 接力修复：工具轮摘要流式化 + 原子归类 + 稳定状态栏
+
+- **接力核查**：复查了昨日已实施的思考投影分离、`280` 字截断、流式节点 detach/复用、任务级计时和固定状态栏，确认原实现仍缺少工具轮摘要的独立增量投影，且工具轮完成时会先短暂按最终回答渲染再重分类。
+- **完整流式摘要**：SSE 首次收到 `tool_calls` 增量后，将当前 assistant 标记为 `thinking` 投影；`patchStreamingAssistantMessage()` 按 `answer` / `thinking` 类型增量更新最终回答或当前轮摘要。
+- **不再硬截断**：移除每轮 `280` 字的前端截断，保留模型输出的完整阶段总结；每轮仍使用独立 `.thinking-summary-item` 分段和 `1.15em` 间距。
+- **原子归类**：新增 `finalizeStreamingAssistantMessage()`，先同时写入完整文本和 `toolCalls` 元数据，再只渲染一次，消除工具轮摘要短暂闪入最终回答的中间态；流式 DOM 仅在消息索引和投影类型都一致时复用，避免重分类后残留重复气泡。
+- **状态栏稳定性**：模型名、阶段文案和计时器改为更新固定 DOM 节点，阶段切换不再重建内层 HTML；后台会话同步保留阶段，切回运行会话时恢复状态和计时，后台任务结束后正确清理任务起始时间。
+- **测试补强**：`tests/test_frontend_modules.py` 新增工具轮流式投影、无截断、原子归类、投影类型 DOM 复用和状态栏稳定节点回归断言。
+- **验证结果**：`app.js` / `agent-runtime.js` JavaScript 语法检查通过；定向测试 `13 passed`；无头 Chrome 真实 DOM 冒烟测试确认摘要流、最终回答流、无重复和状态栏节点稳定；全量 `473 passed, 2 subtests passed`。
+
+**改动文件**：`app.js`、`styles.css`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`。
+
+---
+
+## 2026-07-17 17:00 · Claude Code
+
+### New API 部署体系：一键构建 + 打包 + 部署流程
+
+为 New API（API 中转站）建立了从源码到部署包的完整构建体系。
+
+**产物**：
+
+| 文件 | 位置 | 说明 |
+|------|------|------|
+| 构建脚本 | `../new-api-source/build-deploy.ps1` | 一键：前端构建 → Go 交叉编译 → 打包 zip |
+| Dockerfile | `../new-api-source/Dockerfile.deploy` | 从预编译二进制构建最小容器镜像 |
+| docker-compose | `../new-api-source/docker-compose.deploy.yml` | 简单容器部署配置 |
+
+**构建流程**：
+1. `bun run build`（RSbuild 构建 React 前端 web/default）
+2. `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build`（交叉编译，embed 嵌入前端）
+3. 打包 binary + .env.example + docker-compose + Dockerfile + systemd 服务文件 → zip
+
+**部署包内容**（约 35MB zip）：
+- `new-api-linux`：Linux amd64 二进制（~118MB，单文件，无依赖）
+- `.env.example` / `Dockerfile.deploy` / `docker-compose.deploy.yml` / `new-api.service`
+- 开发者拿到后 10-15 分钟可完成部署
+
+**三环境架构**：本地开发（new-api-dev）、本地网关（new-api-gateway）、服务器生产，三套实例独立数据库、独立配置、互不影响。
+
+**本次同步完成**：
+- `new-api-source` 源码提交（Agent Lite → Code 品牌改名，`f56a57f`）
+- 前端重新构建、Go 重新编译
+- 部署包已产出：`output/new-api-dev-20260717.zip`
+
+---
+
 ## 2026-07-17 07:07 · Claude Code
 
 ### SSE 渲染全面重构：固定状态栏 + 阶段化 + 思考摘要

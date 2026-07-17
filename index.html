@@ -148,10 +148,12 @@
 
       <section class="workbench">
         <section class="chat-pane">
-          <div id="messages" class="messages"></div>
+          <div id="messages" class="messages">
+            <div id="messageList" class="message-list"></div>
+            <div id="activeRunBanner" class="active-run-banner hidden"></div>
+          </div>
           <div class="chat-timeline" id="chatTimeline"></div>
           <section id="authorizationPanel" class="authorization-panel hidden" aria-live="polite"></section>
-          <div id="activeRunBanner" class="active-run-banner hidden"></div>
           <form id="chatForm" class="composer">
             <section id="userInputPanel" class="user-input-panel hidden" aria-live="assertive"></section>
             <textarea id="prompt" rows="2" data-i18n="inputPlaceholder" placeholder="描述需求、粘贴代码，或输入 / 调用命令"></textarea>

@@ -979,12 +979,15 @@ input:focus, select:focus, textarea:focus {
 
 .messages {
   position: absolute;
-  inset: 0 0 104px 0;
+  inset: 0 0 var(--composer-safe-bottom, 120px) 0;
   overflow: auto;
   min-height: 0;
   padding: 24px 28px 34px;
   scrollbar-width: thin;
   scrollbar-color: rgba(128,128,128,0.25) transparent;
+}
+.message-list {
+  display: contents;
 }
 .messages::-webkit-scrollbar { width: 6px; }
 .messages::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.25); border-radius: 3px; }
@@ -1009,6 +1012,12 @@ input:focus, select:focus, textarea:focus {
   justify-content: center;
   overflow: visible;
   padding: 0 20px;
+}
+.chat-pane.empty-chat .message-list {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
 }
 
 .chat-pane.empty-chat .composer {
@@ -1270,12 +1279,6 @@ input:focus, select:focus, textarea:focus {
   background: var(--accent-bg);
   color: var(--accent);
   font-weight: 800;
-}
-
-.streaming-dot {
-  display: inline-flex;
-  margin-left: 8px;
-  color: var(--green);
 }
 
 .tool-card {
@@ -1541,11 +1544,6 @@ input:focus, select:focus, textarea:focus {
 
 .thinking-process {
   max-width: min(920px, 100%);
-}
-
-.thinking-process .role {
-  color: var(--muted);
-  font-weight: 700;
 }
 
 .thinking-process .bubble {
@@ -2959,37 +2957,38 @@ input:focus, select:focus, textarea:focus {
   }
 }
 
-/* Thinking animation */
-.streaming-dot {
+/* Persistent task activity indicator */
+.active-run-line {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  margin-left: 8px;
+  gap: 6px;
+  min-height: 24px;
   color: var(--muted);
-  font-size: 12px;
-}
-.streaming-timer {
-  font-variant-numeric: tabular-nums;
-  color: var(--accent);
-  font-weight: 700;
-  margin-left: 2px;
+  font-size: 12.5px;
+  line-height: 1.4;
 }
 
-.streaming-dot::after {
-  content: "";
-  display: inline-block;
+.active-run-indicator {
   width: 6px;
   height: 6px;
+  flex: 0 0 auto;
   border-radius: 50%;
   background: var(--accent);
   animation: think-bounce 1.2s infinite ease-in-out;
 }
-.streaming-dot.executing {
-  color: var(--yellow, #d9902f);
+
+.active-run-label {
+  font-weight: 600;
 }
-.streaming-dot.executing::after {
-  background: var(--yellow, #d9902f);
-  animation-duration: 0.6s;
+
+.active-run-separator {
+  color: var(--muted-2);
+}
+
+.streaming-timer {
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  font-weight: 700;
 }
 
 .network-reconnect-status {
@@ -3018,21 +3017,25 @@ input:focus, select:focus, textarea:focus {
   font-weight: 700;
 }
 
+.active-run-anchor.msg {
+  width: var(--conversation-content-width, min(760px, 90%));
+  margin: 0 auto 12px;
+}
+
 .active-run-banner {
   display: none;
-  position: absolute;
-  left: 50%;
-  bottom: 134px;
-  transform: translateX(-50%);
-  width: min(600px, 88%);
-  z-index: 7;
+  position: static;
+  width: 100%;
+  margin: 0;
 }
 .active-run-banner.visible { display: block; }
 
 .active-run-status {
-  width: min(600px, 88%);
-  margin: 8px auto 12px;
+  width: 100%;
+  margin: 0;
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   justify-content: flex-start;
 }
 
@@ -3049,20 +3052,6 @@ input:focus, select:focus, textarea:focus {
   font-size: 12px;
   line-height: 1;
   box-shadow: 0 8px 22px rgba(15, 23, 42, .06);
-}
-
-.run-status .streaming-dot {
-  margin-left: 0;
-}
-
-.run-model {
-  min-width: 0;
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text);
-  font-weight: 700;
 }
 
 @keyframes think-bounce {
@@ -5029,7 +5018,7 @@ button:focus-visible,
 }
 
 .messages {
-  inset: 0 0 120px 0;
+  inset: 0 0 var(--composer-safe-bottom, 120px) 0;
   padding: 32px clamp(20px, 4vw, 52px) 42px;
 }
 
@@ -5077,9 +5066,24 @@ button:focus-visible,
 }
 
 .role {
-  margin-bottom: 8px;
-  font-size: 11.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+  color: color-mix(in srgb, var(--text) 68%, var(--muted));
+  font-size: 12px;
+  line-height: 1.4;
   font-weight: 600;
+  letter-spacing: .015em;
+}
+
+.msg.assistant > .role:not(.is-empty)::after {
+  content: "";
+  height: 1px;
+  min-width: 24px;
+  flex: 1 1 auto;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 22%, transparent);
 }
 
 .bubble {
@@ -5459,20 +5463,13 @@ body.theme-dark .chat-pane.empty-chat .composer {
 
 /* Preserve model-authored thought paragraphs and make their boundaries readable. */
 .thinking-process {
-  margin-bottom: 28px;
-}
-
-.thinking-process .role {
-  margin-bottom: 9px;
-  color: color-mix(in srgb, var(--muted) 86%, var(--text));
-  font-size: 11px;
-  letter-spacing: .3px;
+  margin-bottom: 20px;
 }
 
 .thinking-summary-list {
-  color: var(--muted);
-  font-size: 13.5px;
-  line-height: 1.72;
+  color: var(--text);
+  font-size: 14.5px;
+  line-height: 1.76;
 }
 
 .thinking-summary-item > :first-child {
@@ -5484,7 +5481,11 @@ body.theme-dark .chat-pane.empty-chat .composer {
 }
 
 .thinking-summary-item + .thinking-summary-item {
-  margin-top: 1.15em;
+  margin-top: .65em;
+}
+
+.thinking-summary-item.is-streaming:empty {
+  min-height: 1em;
 }
 
 .streaming-answer-output > :first-child {
@@ -5499,7 +5500,15 @@ body.theme-dark .chat-pane.empty-chat .composer {
   margin-top: 12px;
 }
 
+.assistant.is-pending .streaming-answer-output {
+  margin-top: 0;
+}
+
 .streaming-answer-output.is-empty {
+  display: none;
+}
+
+.streaming-answer-role.is-empty {
   display: none;
 }
 

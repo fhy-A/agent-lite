@@ -164,7 +164,6 @@ function ensureSessionRun(sessionId) {
       messageQueue: [],
       responseStartTime: null,
       taskStartTime: null,      // persisted across tool rounds; cleared only on task end
-      _taskPhase: null,         // { label: 'thinking'|'executing', toolName?: string }
       timerInterval: null,
       timerDisplay: null,
       recovery: null,
@@ -385,6 +384,37 @@ function syncActiveStreamingState() {
   els.stopBtn.disabled = !state.isStreaming;
   updateSendButtonState();
   renderSessions();
+  if (state.isStreaming) {
+    startLiveTimer();
+  } else {
+    if (state._timerInterval) {
+      clearInterval(state._timerInterval);
+      state._timerInterval = null;
+    }
+    state._timerDisplay = null;
+    if (els.activeRunBanner) els.activeRunBanner.classList.remove("visible");
+  }
+}
+
+let composerResizeObserver = null;
+
+function syncComposerSafeArea() {
+  if (!els.chatPane || !els.chatForm) return;
+  const composerHeight = Math.ceil(els.chatForm.getBoundingClientRect().height);
+  if (!composerHeight) return;
+  // Composer sits 24px above the viewport bottom. Keep a further 16px gap so
+  // the last message and the active run banner never slide underneath it.
+  els.chatPane.style.setProperty("--composer-safe-bottom", `${composerHeight + 40}px`);
+}
+
+function setupComposerSafeArea() {
+  if (!els.chatForm || composerResizeObserver) return;
+  syncComposerSafeArea();
+  if (typeof ResizeObserver === "function") {
+    composerResizeObserver = new ResizeObserver(syncComposerSafeArea);
+    composerResizeObserver.observe(els.chatForm);
+  }
+  window.addEventListener("resize", syncComposerSafeArea);
 }
 
 function buildRunContext(sessionId) {
@@ -467,6 +497,8 @@ const els = {
   permissionProfile: document.getElementById("permissionProfile"),
 
   messages: document.getElementById("messages"),
+
+  messageList: document.getElementById("messageList"),
 
   prompt: document.getElementById("prompt"),
 
@@ -1939,7 +1971,7 @@ const I18N = {
     welcome: "我是 Code，你的本地 AI 编程伙伴。\\n\\n我可以读文件、搜代码、跑命令、改项目。",
     welcomeTagline: "开始对话，用自然语言驱动代码。",
     inputPlaceholder: "描述需求、粘贴代码，或输入 / 调用命令",
-    thinkingLabel: "思考中", executingTool: "执行工具", networkRecovering: "网络恢复中", networkReconnectStatus: "网络连接已中断，正在自动恢复 · 已尝试 {attempt} 次 · ", networkReconnectSuffix: " 后重试", completedLabel: "完成",
+    processingLabel: "处理中", networkRecovering: "网络恢复中", networkReconnectStatus: "网络连接已中断，正在自动恢复 · 已尝试 {attempt} 次 · ", networkReconnectSuffix: " 后重试", completedLabel: "完成",
     refreshBtn: "刷新", closePreview: "关闭", filterFiles: "筛选文件…",
     statusDone: "完成", statusFail: "失败", statusRunning: "准备",
     toolExecFailed: "工具执行失败", fetchFailed: "抓取失败",
@@ -2087,7 +2119,7 @@ const I18N = {
     noBranches: "暂无分支，点击上方按钮基于当前消息创建", createSessionFirst: "请先创建会话",
     stopBeforeBranch: "请先停止当前输出再创建分支", branchFailed: "创建分支失败", branchCreated: "分支已创建", branchedFromHere: "已从「{title}」创建分支", branchTitleTemplate: "分支 - {title}", compactMarker: "上下文已压缩", compactMarkerMessages: "{count} 条消息", compactMarkerSaved: "预计节省 ~{tokens} tokens", compactMarkerWithDetails: "上下文已压缩 · {details}", collapseDiff: "收起 Diff", expandDiff: "展开全部 {count} 行",
     editingMemory: "编辑中：{name}", accountUserId: "User ID", extractMemory: "提取 Memory",
-    yesterday: "昨天", backgroundPending: "等待后台处理", backgroundRunning: "后台处理中", thoughtProcess: "思考过程",
+    yesterday: "昨天", backgroundPending: "等待后台处理", backgroundRunning: "后台处理中",
     toolPresetDefault: "默认", toolPresetOff: "关闭", toolPresetFull: "完整",
     roundLimitTitle: "工具调用轮次已达到上限", roundLimitDesc: "任务可能还没完成，可以让 Agent 继续处理后续步骤。", continueTask: "继续处理",
     loadFailed: "加载失败", imageReadFailed: "无法读取图片文件", binaryFile: "二进制文件",
@@ -2141,7 +2173,7 @@ const I18N = {
     welcome: "I'm Code, your local AI coding partner. I can read files, search code, run commands, and modify projects.",
     welcomeTagline: "Start a conversation, drive code with natural language.",
     inputPlaceholder: "Describe your task, paste code, or type / for commands",
-    thinkingLabel: "Thinking", executingTool: "Running", networkRecovering: "Reconnecting", networkReconnectStatus: "Connection lost. Recovering automatically · Attempt {attempt} · retry in ", networkReconnectSuffix: "", completedLabel: "Completed",
+    processingLabel: "Working", networkRecovering: "Reconnecting", networkReconnectStatus: "Connection lost. Recovering automatically · Attempt {attempt} · retry in ", networkReconnectSuffix: "", completedLabel: "Completed",
     refreshBtn: "Refresh", closePreview: "Close", filterFiles: "Filter files...",
     statusDone: "Done", statusFail: "Failed", statusRunning: "Preparing",
     toolExecFailed: "Tool execution failed", fetchFailed: "Fetch failed",
@@ -2289,7 +2321,7 @@ const I18N = {
     createSessionFirst: "Create a session first", stopBeforeBranch: "Stop the current output before branching",
     branchFailed: "Branch creation failed", branchCreated: "Branch created", branchedFromHere: "Branched from \"{title}\"", branchTitleTemplate: "Branch - {title}", compactMarker: "Context compacted", compactMarkerMessages: "{count} messages", compactMarkerSaved: "about {tokens} tokens saved", compactMarkerWithDetails: "Context compacted · {details}", collapseDiff: "Collapse Diff", expandDiff: "Expand all {count} lines",
     editingMemory: "Editing: {name}", accountUserId: "User ID", extractMemory: "Extract Memory",
-    yesterday: "Yesterday", backgroundPending: "Waiting in background", backgroundRunning: "Processing in background", thoughtProcess: "Thinking",
+    yesterday: "Yesterday", backgroundPending: "Waiting in background", backgroundRunning: "Processing in background",
     toolPresetDefault: "Default", toolPresetOff: "Off", toolPresetFull: "Full",
     roundLimitTitle: "Tool-call round limit reached", roundLimitDesc: "The task may be incomplete. Ask the Agent to continue with the remaining steps.", continueTask: "Continue",
     loadFailed: "Load failed", imageReadFailed: "Unable to read image", binaryFile: "Binary file",
@@ -3676,18 +3708,39 @@ function updateStatsPanel() {
 
 
 function splitThoughtContent(text = "") {
+  const source = String(text || "");
+  const lower = source.toLowerCase();
+  const openTag = "<think>";
+  const closeTag = "</think>";
+  const openIndex = lower.indexOf(openTag);
 
-  const thinkRegex = /<think>([\s\S]*?)<\/think>/i;
+  if (openIndex < 0) {
+    // An SSE chunk can end in the middle of the opening tag (for example
+    // "<thi"). Keep that suffix out of visible content until the next chunk
+    // proves whether it is a real <think> block.
+    const maxPartial = Math.min(openTag.length - 1, source.length);
+    for (let size = maxPartial; size > 0; size -= 1) {
+      if (openTag.startsWith(lower.slice(-size))) {
+        return { thought: "", content: source.slice(0, -size) };
+      }
+    }
+    return { thought: "", content: source };
+  }
 
-  const match = text.match(thinkRegex);
+  const thoughtStart = openIndex + openTag.length;
+  const closeIndex = lower.indexOf(closeTag, thoughtStart);
+  if (closeIndex < 0) {
+    // Once <think> opens, everything after it is hidden reasoning until the
+    // closing tag arrives. Never expose this incomplete block as an answer.
+    return {
+      thought: source.slice(thoughtStart).trim(),
+      content: source.slice(0, openIndex).trim(),
+    };
+  }
 
-  if (!match) return { thought: "", content: text };
-
-  const thought = match[1].trim();
-  const rest = text.replace(thinkRegex, "").trim();
-
-  return { thought, content: rest };
-
+  const thought = source.slice(thoughtStart, closeIndex).trim();
+  const content = `${source.slice(0, openIndex)}${source.slice(closeIndex + closeTag.length)}`.trim();
+  return { thought, content };
 }
 
 
@@ -4339,10 +4392,6 @@ function getRunTimerDisplay(sessionId = state.sessionId) {
   return formatElapsedMs(Date.now() - startedAt);
 }
 
-function renderThinkingBadge(sessionId = state.sessionId) {
-  return `<span class="streaming-dot">${t("thinkingLabel")} <span class="streaming-timer">${escapeHtml(getRunTimerDisplay(sessionId))}</span></span>`;
-}
-
 function getRecoveryCountdownSeconds(sessionId = state.sessionId) {
   const recovery = ensureSessionRun(sessionId)?.recovery;
   if (!recovery?.nextRetryAt) return 0;
@@ -4356,39 +4405,64 @@ function renderNetworkRecoveryStatus(sessionId = state.sessionId) {
   return `<div class="network-reconnect-status" role="status" aria-live="polite"><span>${escapeHtml(t("networkReconnectStatus", { attempt }))}</span><span class="network-reconnect-countdown">${escapeHtml(`${getRecoveryCountdownSeconds(sessionId)}s`)}</span><span>${escapeHtml(t("networkReconnectSuffix"))}</span></div>`;
 }
 
-function renderRunStatus(model, sessionId = state.sessionId) {
-  const label = model || getSelectedModel() || "Agent";
-  const run = ensureSessionRun(sessionId);
-  const phase = run?._taskPhase;
-  let phaseHtml;
-  if (phase?.label === "executing") {
-    const toolLabel = phase.toolName ? ` · ${escapeHtml(phase.toolName)}` : "";
-    phaseHtml = `<span class="streaming-dot executing">${t("executingTool")}${toolLabel} <span class="streaming-timer">${escapeHtml(getRunTimerDisplay(sessionId))}</span></span>`;
-  } else {
-    phaseHtml = renderThinkingBadge(sessionId);
+function ensureActiveRunBannerStructure() {
+  const banner = els.activeRunBanner;
+  if (!banner) return null;
+  let status = banner.querySelector(".active-run-status");
+  if (!status) {
+    banner.innerHTML = `
+      <div class="active-run-status">
+        <span class="active-run-line" role="status" aria-live="polite">
+          <span class="active-run-indicator" aria-hidden="true"></span>
+          <span class="active-run-label" data-active-run-label></span>
+          <span class="active-run-separator" aria-hidden="true">·</span>
+          <span class="streaming-timer">0s</span>
+        </span>
+        <div data-active-run-recovery></div>
+      </div>
+    `;
+    status = banner.querySelector(".active-run-status");
   }
-  return `<span class="run-status"><span class="run-model">${escapeHtml(label)}</span>${phaseHtml}</span>`;
+  return {
+    banner,
+    label: status.querySelector("[data-active-run-label]"),
+    timer: status.querySelector(".streaming-timer"),
+    recovery: status.querySelector("[data-active-run-recovery]"),
+  };
 }
 
-function setTaskPhase(sessionId, phase) {
-  const run = ensureSessionRun(sessionId);
-  if (!run || sessionId !== state.sessionId) return;
-  run._taskPhase = phase || null;
-  if (!phase) {
-    if (els.activeRunBanner) els.activeRunBanner.classList.remove("visible");
+function parkActiveRunBanner() {
+  const banner = els.activeRunBanner;
+  if (!banner || !els.messages) return;
+  if (banner.parentElement !== els.messages) els.messages.appendChild(banner);
+}
+
+function mountActiveRunBanner() {
+  const banner = els.activeRunBanner;
+  if (!banner || !els.messageList) return;
+  const anchor = els.messageList.querySelector("[data-active-run-anchor]");
+  if (!anchor) {
+    parkActiveRunBanner();
     return;
   }
-  if (els.activeRunBanner) {
-    els.activeRunBanner.innerHTML = renderRunStatus(run._model || run.model || getSelectedModel(), sessionId);
-    els.activeRunBanner.classList.add("visible");
-  }
+  if (banner.parentElement !== anchor) anchor.appendChild(banner);
 }
 
-function renderActiveRunBanner(sessionId = state.sessionId) {
+function syncActiveRunBanner(sessionId = state.sessionId) {
   const run = ensureSessionRun(sessionId);
-  if (!run?.taskStartTime) return "";
-  const model = run._model || run.model || getSelectedModel() || "Agent";
-  return `<div class="active-run-status">${renderRunStatus(model, sessionId)}${renderNetworkRecoveryStatus(sessionId)}</div>`;
+  if (!els.activeRunBanner) return;
+  if (sessionId !== state.sessionId || !run?.taskStartTime) {
+    els.activeRunBanner.classList.remove("visible");
+    return;
+  }
+
+  const nodes = ensureActiveRunBannerStructure();
+  if (!nodes) return;
+  nodes.label.textContent = t("processingLabel");
+  nodes.timer.textContent = getRunTimerDisplay(sessionId);
+  const recoveryHtml = renderNetworkRecoveryStatus(sessionId);
+  if (nodes.recovery.innerHTML !== recoveryHtml) nodes.recovery.innerHTML = recoveryHtml;
+  nodes.banner.classList.add("visible");
 }
 
 function normalizeResponseUsage(usage) {
@@ -4669,25 +4743,28 @@ function showImageOverlay(src) {
 }
 
 function renderThinkingProjection(items, serial) {
-  const MAX_LEN = 280; // keep per-round summaries concise; long paragraphs → truncated
   const summaries = items
-    .map((item) => String(item.text || "").replace(/\r\n?/g, "\n").trim())
-    .filter(Boolean);
+    .map((item) => ({
+      ...item,
+      text: String(item.text || "").replace(/\r\n?/g, "\n").trim(),
+    }))
+    .filter((item) => item.text || item.streaming);
   if (!summaries.length) return "";
 
-  const truncate = (text) => {
-    if (text.length <= MAX_LEN) return text;
-    // snap to the nearest word / sentence boundary before the limit
-    const cut = text.lastIndexOf(" ", MAX_LEN);
-    const boundary = cut > MAX_LEN * 0.6 ? cut : MAX_LEN;
-    return text.slice(0, boundary).replace(/[,;，；。\s]+$/, "") + "…";
-  };
+  const streamingItem = summaries.find((item) => item.streaming);
+  const hasVisibleSummary = summaries.some((item) => item.text);
+  // Do not create an empty thought block at all. The first meaningful summary
+  // will trigger one structural render, then continue through incremental DOM
+  // patches. This guarantees the heading cannot paint before its content.
+  if (!hasVisibleSummary) return "";
+  const streamAttrs = streamingItem
+    ? ` data-msg-index="${streamingItem.index}" data-streaming-message="true" data-stream-session="${escapeHtml(state.sessionId || "")}" data-stream-kind="thinking"`
+    : "";
 
   return `
-    <article class="msg assistant thinking-process" data-thinking-block="${serial}">
-      <div class="role">${t("thoughtProcess")}</div>
+    <article class="msg assistant thinking-process${streamingItem ? " is-streaming" : ""}" data-thinking-block="${serial}"${streamAttrs}>
       <div class="thinking-summary-list">
-        ${summaries.map((text) => `<div class="thinking-summary-item">${renderMarkdownLite(truncate(text))}</div>`).join("")}
+        ${summaries.map((item) => `<div class="thinking-summary-item${item.streaming ? " is-streaming" : ""}"${item.streaming ? ' data-stream-part="summary"' : ""}>${item.text ? renderMarkdownLite(item.text) : ""}</div>`).join("")}
       </div>
     </article>
   `;
@@ -4765,10 +4842,13 @@ function renderFinalAssistantProjection(msg, index) {
   const model = msg._model || msg.meta?._model || getSelectedModel() || "Agent";
   const content = (getMsgText(msg) || "").trim();
   if (msg.streaming) {
+    const hasVisibleContent = content && !isToolPlanningPlaceholder(content);
+    const streamKind = msg._streamProjection === "answer" ? "answer" : "pending";
+    const showModel = streamKind === "answer" && hasVisibleContent;
     return `
-      <article class="msg assistant is-streaming" data-msg-index="${index}" data-streaming-message="true" data-stream-session="${escapeHtml(state.sessionId || "")}">
-        <div class="role">${escapeHtml(model)}</div>
-        <div class="bubble streaming-answer-output${content && !isToolPlanningPlaceholder(content) ? "" : " is-empty"}" data-stream-part="answer">${content && !isToolPlanningPlaceholder(content) ? renderMarkdownLite(content) : ""}</div>
+      <article class="msg assistant is-streaming${streamKind === "pending" ? " is-pending" : ""}" data-msg-index="${index}" data-streaming-message="true" data-stream-session="${escapeHtml(state.sessionId || "")}" data-stream-kind="${streamKind}">
+        <div class="role streaming-answer-role${showModel ? "" : " is-empty"}" data-stream-role>${escapeHtml(model)}</div>
+        <div class="bubble streaming-answer-output${hasVisibleContent ? "" : " is-empty"}" data-stream-part="answer">${hasVisibleContent ? renderMarkdownLite(content) : ""}</div>
         ${renderNetworkRecoveryStatus(state.sessionId)}
       </article>
     `;
@@ -4878,20 +4958,35 @@ function patchStreamingAssistantMessage(sessionId, index) {
   const msg = getSessionMessages(sessionId)?.[index];
   if (!msg?.streaming) return;
 
-  // Streaming patches are incremental — skip this frame if the DOM node is
-  // absent rather than forcing a full renderMessages() which would tear down
-  // and recreate every message, causing the thinking badge & timer to flicker.
-  const article = els.messages.querySelector(`.msg.assistant[data-msg-index="${index}"][data-streaming-message="true"]`);
-  if (!article) return;
-
   const content = (getMsgText(msg) || "").trim();
   const visibleContent = content && !isToolPlanningPlaceholder(content) ? content : "";
-  const answerNode = article.querySelector('[data-stream-part="answer"]');
 
-  if (answerNode) {
-    const nextAnswerHtml = visibleContent ? renderMarkdownLite(visibleContent) : "";
-    if (answerNode.innerHTML !== nextAnswerHtml) answerNode.innerHTML = nextAnswerHtml;
-    answerNode.classList.toggle("is-empty", !visibleContent);
+  // Empty thought projections intentionally have no DOM. Mount the block once,
+  // exactly when its first meaningful summary arrives; all later chunks patch
+  // that stable node incrementally.
+  const article = els.messages.querySelector(`.msg.assistant[data-msg-index="${index}"][data-streaming-message="true"]`);
+  if (!article) {
+    if (msg._streamProjection === "thinking" && visibleContent) {
+      renderSessionMessages(sessionId);
+    }
+    return;
+  }
+
+  const streamKind = article.dataset.streamKind || "pending";
+  const outputNode = article.querySelector(streamKind === "thinking"
+    ? '[data-stream-part="summary"]'
+    : '[data-stream-part="answer"]');
+
+  if (outputNode) {
+    const nextOutputHtml = visibleContent ? renderMarkdownLite(visibleContent) : "";
+    if (outputNode.innerHTML !== nextOutputHtml) outputNode.innerHTML = nextOutputHtml;
+    if (streamKind !== "thinking") {
+      outputNode.classList.toggle("is-empty", !visibleContent);
+      article.querySelector("[data-stream-role]")?.classList.toggle(
+        "is-empty",
+        streamKind !== "answer" || !visibleContent,
+      );
+    }
   }
 
   if (state._followOutput !== false) els.messages.scrollTop = els.messages.scrollHeight;
@@ -4910,20 +5005,47 @@ function scheduleStreamingAssistantPatch(sessionId, index) {
   });
 }
 
+function pruneStaleStreamingNodes(sessionId = state.sessionId) {
+  if (!els.messageList || !sessionId) return;
+  const messages = getSessionMessages(sessionId) || [];
+  const seen = new Set();
+  els.messageList.querySelectorAll('.msg.assistant[data-streaming-message="true"]').forEach((node) => {
+    const index = Number(node.dataset.msgIndex);
+    const msg = Number.isInteger(index) ? messages[index] : null;
+    const kind = node.dataset.streamKind || "pending";
+    const expectedKind = msg?._streamProjection === "thinking"
+      ? "thinking"
+      : (msg?._streamProjection === "answer" ? "answer" : "pending");
+    const key = `${index}:${kind}`;
+    const valid = node.dataset.streamSession === String(sessionId)
+      && Boolean(msg?.streaming)
+      && kind === expectedKind
+      && !seen.has(key);
+    if (!valid) node.remove();
+    else seen.add(key);
+  });
+}
+
 function renderMessages() {
 
   renderUserInputPanel();
   renderAuthorizationPanel();
+  syncActiveRunBanner(state.sessionId);
 
   // Ensure state.messages reflects current session (syncs ctx.messages changes)
   const curMsgs = getSessionMessages(state.sessionId);
   if (curMsgs && curMsgs !== state.messages) state.messages = curMsgs;
+  pruneStaleStreamingNodes(state.sessionId);
 
   if (state.messages.length === 0) {
 
     els.chatPane.classList.add("empty-chat");
 
-    els.messages.innerHTML = `
+    // The banner may currently be mounted inside the message projection. Move
+    // that same node to its parking spot before replacing the projection so
+    // its timer and animation state are never destroyed.
+    parkActiveRunBanner();
+    els.messageList.innerHTML = `
       <div class="welcome-screen">
         <div class="welcome-kicker"><span class="welcome-status-dot"></span>LOCAL WORKSPACE</div>
         <div class="welcome-header">
@@ -4961,11 +5083,29 @@ function renderMessages() {
   const rows = [];
   let pendingThoughts = [];
   let thoughtSerial = 0;
+  const run = ensureSessionRun(state.sessionId);
+  const hasActiveRun = Boolean(run?.isStreaming && run?.taskStartTime);
+  let activeUserIndex = -1;
+  if (hasActiveRun) {
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      if (msgs[i]?.role === "user" && !isInternalMessage(msgs[i])) {
+        activeUserIndex = i;
+        break;
+      }
+    }
+  }
+  let activeRunAnchorInserted = false;
   const branchMarker = getBranchFlowMarker();
   const branchBoundary = branchMarker
     ? (branchMarker.messageCount > msgs.length ? 0 : branchMarker.messageCount)
     : -1;
   let branchMarkerInserted = false;
+
+  const insertActiveRunAnchor = () => {
+    if (!hasActiveRun || activeRunAnchorInserted) return;
+    rows.push('<div class="active-run-anchor msg" data-active-run-anchor></div>');
+    activeRunAnchorInserted = true;
+  };
 
   const flushThoughts = () => {
     if (!pendingThoughts.length) return false;
@@ -5007,10 +5147,13 @@ function renderMessages() {
     if (msg.role === "assistant") {
       // Only model-authored summaries that accompany a tool round belong in
       // the thought projection. Final answers must never be duplicated here.
-      if (msg.meta?.toolCalls?.length) {
+      const streamingToolRound = msg.streaming && msg._streamProjection === "thinking";
+      if (msg.meta?.toolCalls?.length || streamingToolRound) {
         const summary = (getMsgText(msg) || "").trim();
-        if (summary && !isToolPlanningPlaceholder(summary)) {
-          pendingThoughts.push({ index: j, text: summary });
+        if (streamingToolRound && (!summary || isToolPlanningPlaceholder(summary))) {
+          pendingThoughts.push({ index: j, text: "", streaming: true });
+        } else if (summary && !isToolPlanningPlaceholder(summary)) {
+          pendingThoughts.push({ index: j, text: summary, streaming: streamingToolRound });
         }
         continue;
       }
@@ -5024,6 +5167,9 @@ function renderMessages() {
     if (msg.role === "user") {
       flushThoughts();
       rows.push(renderUserProjection(msg, j));
+      // Anchor the stable status node directly above this task's thought
+      // projection. The node itself is moved, never rebuilt, on re-render.
+      if (j === activeUserIndex) insertActiveRunAnchor();
       continue;
     }
 
@@ -5036,10 +5182,10 @@ function renderMessages() {
     // Deliberately omit tool-call/tool-result details from the conversation.
   }
   flushThoughts();
+  if (hasActiveRun && !activeRunAnchorInserted) insertActiveRunAnchor();
   insertBranchMarker();
 
   // Render queued messages (sent while agent is busy)
-  const run = ensureSessionRun(state.sessionId);
   if (run && run.messageQueue.length > 0) {
     for (const q of run.messageQueue) {
       rows.push(`<article class="msg queued"><div class="bubble"><em>${escapeHtml(q.text || "").slice(0, 80)}</em></div></article>`);
@@ -5052,6 +5198,7 @@ function renderMessages() {
     .replace(/<span class="network-reconnect-countdown">[^<]*<\/span>/g, '<span class="network-reconnect-countdown"></span>');
   const renderKey = `${state.sessionId || ""}:${stableHtml}`;
   if (state._lastRenderedHtml === renderKey) {
+    mountActiveRunBanner();
     renderToolLog();
     updateStatsPanel();
     renderTimeline();
@@ -5060,29 +5207,14 @@ function renderMessages() {
   }
   state._lastRenderedHtml = renderKey;
 
-  // Detach active SSE streaming nodes *before* innerHTML so they are never
-  // destroyed. innerHTML tears down all child nodes, which would restart CSS
-  // animations on the thinking dot and lose the timer text between paints.
-  const preservedNodes = [];
-  els.messages.querySelectorAll('.msg.assistant[data-streaming-message="true"]').forEach((node) => {
-    if (node.dataset.streamSession === String(state.sessionId || "")) {
-      preservedNodes.push({ node, index: node.dataset.msgIndex || "" });
-      node.remove();
-    }
-  });
-
-  els.messages.innerHTML = html;
-
-  preservedNodes.forEach(({ node: preservedNode, index }) => {
-    const freshNode = Array.from(els.messages.querySelectorAll('.msg.assistant[data-streaming-message="true"]'))
-      .find((n) => n.dataset.msgIndex === index);
-    if (freshNode) {
-      freshNode.replaceWith(preservedNode);
-    } else {
-      els.messages.appendChild(preservedNode);
-    }
-    patchStreamingAssistantMessage(state.sessionId, Number(index));
-  });
+  // The message list is a pure projection of state.messages. Park the stable
+  // run banner before replacing this subtree, then synchronously move that
+  // exact node into the new anchor above the current thought projection.
+  // Because the browser cannot paint between these operations, the banner's
+  // timer and animation remain continuous without ghost nodes or flicker.
+  parkActiveRunBanner();
+  els.messageList.innerHTML = html;
+  mountActiveRunBanner();
 
   bindCopyButtons();
   bindMessageActions();
@@ -7306,6 +7438,8 @@ function setStreaming(active, sessionId = state.sessionId) {
   if (sessionId === state.sessionId) {
     if (active) startLiveTimer(); else stopLiveTimer();
     renderSessionMessages(sessionId);
+  } else if (!active) {
+    finalizeRunTiming(sessionId);
   }
 
 }
@@ -7319,6 +7453,10 @@ function startLiveTimer() {
   const run = ensureSessionRun(state.sessionId);
 
   if (run && !run.responseStartTime) run.responseStartTime = Date.now();
+  if (run && !run.taskStartTime) {
+    const checkpointStartedAt = Date.parse(getSessionRunState(state.sessionId)?.startedAt || "");
+    run.taskStartTime = Number.isFinite(checkpointStartedAt) ? checkpointStartedAt : Date.now();
+  }
 
   state.responseStartTime = run?.responseStartTime || Date.now();
 
@@ -7326,8 +7464,9 @@ function startLiveTimer() {
 
   els.liveTimer.classList.remove("visible");
 
-  // Show persistent status banner with initial "thinking" phase
-  setTaskPhase(state.sessionId, { label: "thinking" });
+  // Keep one task-level activity label for the full run. Only the timer changes,
+  // so short tool calls cannot make the status line flash between phases.
+  syncActiveRunBanner(state.sessionId);
 
   state._timerInterval = setInterval(() => {
 
@@ -7356,51 +7495,43 @@ function startLiveTimer() {
 
 
 
+function finalizeRunTiming(sessionId) {
+  const run = ensureSessionRun(sessionId);
+  if (!run) return false;
+  const startedAt = run.taskStartTime || run.responseStartTime;
+  const messages = getSessionMessages(sessionId);
+  const lastMsg = findLastAssistantMessage(messages);
+  let changed = false;
+
+  if (startedAt && lastMsg && !lastMsg.streaming) {
+    const display = formatElapsedMs(Date.now() - startedAt);
+    const runModel = run.model || run._model || getSelectedModel() || "Agent";
+    lastMsg._responseTime = display;
+    lastMsg._model = lastMsg._model || runModel;
+    lastMsg.meta = { ...(lastMsg.meta || {}), _responseTime: display, _model: runModel };
+    setSessionMessages(sessionId, messages);
+    changed = true;
+  }
+
+  run.taskStartTime = null;
+  run.responseStartTime = null;
+  return changed;
+}
+
+
+
 function stopLiveTimer() {
 
   state._timerDisplay = null;
 
   if (state._timerInterval) { clearInterval(state._timerInterval); state._timerInterval = null; }
 
-  // Hide the persistent status banner
   if (els.activeRunBanner) els.activeRunBanner.classList.remove("visible");
-
-  const run = ensureSessionRun(state.sessionId);
-  if (run) run._taskPhase = null;
-  const startedAt = run?.taskStartTime || state.responseStartTime;
-
-  if (startedAt) {
-
-    const display = formatElapsedMs(Date.now() - startedAt);
-
-    // Attach final status to the latest assistant message, even if tools were the last rendered segment.
-
-    const lastMsg = findLastAssistantMessage(state.messages);
-
-    els.liveTimer.textContent = "";
-
-    els.liveTimer.classList.remove("visible");
-
-    state.responseStartTime = null;
-    if (run) run.taskStartTime = null;
-
-    if (lastMsg && !lastMsg.streaming) {
-
-      lastMsg._responseTime = display;
-
-      const run = ensureSessionRun(state.sessionId);
-
-      const runModel = run?.model || getSelectedModel() || "Agent";
-
-      lastMsg._model = lastMsg._model || runModel;
-
-      lastMsg.meta = { ...(lastMsg.meta || {}), _responseTime: display, _model: runModel };
-
-      renderMessages();
-
-    }
-
-  }
+  els.liveTimer.textContent = "";
+  els.liveTimer.classList.remove("visible");
+  state.responseStartTime = null;
+  const changed = finalizeRunTiming(state.sessionId);
+  if (changed) renderMessages();
 
 }
 
@@ -7620,7 +7751,7 @@ function updateAssistantMessage(index, rawContent, streaming = true, sessionId =
 
   const previous = targetMessages[index] || {};
 
-  targetMessages[index] = {
+  const nextMessage = {
 
     ...previous,
 
@@ -7635,6 +7766,8 @@ function updateAssistantMessage(index, rawContent, streaming = true, sessionId =
     _time: previous._time || (streaming ? undefined : new Date().toISOString()),
 
   };
+  if (!streaming) delete nextMessage._streamProjection;
+  targetMessages[index] = nextMessage;
 
   if (!skipRender) { setSessionMessages(sessionId, targetMessages); }
 
@@ -7643,6 +7776,32 @@ function updateAssistantMessage(index, rawContent, streaming = true, sessionId =
     else renderSessionMessages(sessionId);
   }
 
+}
+
+function markStreamingAssistantProjection(index, projection, sessionId = state.sessionId, messages = null, skipRender = false) {
+  const targetMessages = messages || getSessionMessages(sessionId);
+  const current = targetMessages[index];
+  if (!current?.streaming || current._streamProjection === projection) return;
+  current._streamProjection = projection;
+  if (!skipRender) {
+    setSessionMessages(sessionId, targetMessages);
+    renderSessionMessages(sessionId);
+  }
+}
+
+function finalizeStreamingAssistantMessage(index, rawContent, toolCalls, sessionId = state.sessionId, messages = null, skipRender = false) {
+  const targetMessages = messages || getSessionMessages(sessionId);
+  // Finalize the text and tool metadata before one render. Rendering the text
+  // first would briefly expose a tool-round summary as a final answer.
+  updateAssistantMessage(index, rawContent, false, sessionId, targetMessages, true);
+  const current = targetMessages[index];
+  current.meta = { ...(current.meta || {}) };
+  if (toolCalls.length) current.meta.toolCalls = toolCalls;
+  else delete current.meta.toolCalls;
+  if (!skipRender) {
+    setSessionMessages(sessionId, targetMessages);
+    renderSessionMessages(sessionId);
+  }
 }
 
 
@@ -8729,6 +8888,7 @@ function resetAssistantForModelRetry(ctx, assistantIndex) {
     role: "assistant",
     content: "",
     streaming: true,
+    _streamProjection: "pending",
     meta: { ...(current.meta || {}) },
   };
   delete messages[assistantIndex].meta.toolCalls;
@@ -9274,21 +9434,14 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
 
         const toolCalls = normalizeToolCallList(toolCallsByIndex);
 
-        updateAssistantMessage(assistantIndex, finalText || toolProgressSummary(toolCalls) || "(empty response)", false, sessionId, _streamMsgs, skipRender);
-
-        if (toolCalls.length) {
-
-          _streamMsgs[assistantIndex].meta = {
-
-            ...(_streamMsgs[assistantIndex].meta || {}),
-
-            toolCalls,
-
-          };
-
-          if (!skipRender) { renderSessionMessages(sessionId); }
-
-        }
+        finalizeStreamingAssistantMessage(
+          assistantIndex,
+          finalText || toolProgressSummary(toolCalls) || "(empty response)",
+          toolCalls,
+          sessionId,
+          _streamMsgs,
+          skipRender,
+        );
 
         if (!ctx.isSubAgent) {
           await persistRunCheckpoint(ctx, "running", "model", { runtimeRunId: "" }).catch(() => {});
@@ -9299,16 +9452,23 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
 
       const { reasoning, text, delta, choice } = extractStreamDelta(data);
 
+      let receivedToolCallDelta = false;
       if (Array.isArray(delta.tool_calls)) {
 
         delta.tool_calls.forEach((part) => mergeToolCallDelta(toolCallsByIndex, part));
+        receivedToolCallDelta = delta.tool_calls.length > 0;
 
       }
 
       if (Array.isArray(choice.message?.tool_calls)) {
 
         choice.message.tool_calls.forEach((part, index) => mergeToolCallDelta(toolCallsByIndex, { ...part, index }));
+        receivedToolCallDelta = receivedToolCallDelta || choice.message.tool_calls.length > 0;
 
+      }
+
+      if (receivedToolCallDelta) {
+        markStreamingAssistantProjection(assistantIndex, "thinking", sessionId, _streamMsgs, skipRender);
       }
 
       if (reasoning) rawThought += reasoning;
@@ -9365,21 +9525,14 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
 
   const toolCalls = normalizeToolCallList(toolCallsByIndex);
 
-  updateAssistantMessage(assistantIndex, finalCombined || toolProgressSummary(toolCalls) || "(empty response)", false, sessionId, _streamMsgs, skipRender);
-
-  if (toolCalls.length) {
-
-    _streamMsgs[assistantIndex].meta = {
-
-      ...(_streamMsgs[assistantIndex].meta || {}),
-
-      toolCalls,
-
-    };
-
-    if (!skipRender) { renderSessionMessages(sessionId); }
-
-  }
+  finalizeStreamingAssistantMessage(
+    assistantIndex,
+    finalCombined || toolProgressSummary(toolCalls) || "(empty response)",
+    toolCalls,
+    sessionId,
+    _streamMsgs,
+    skipRender,
+  );
 
   if (!ctx.isSubAgent) {
     await persistRunCheckpoint(ctx, "running", "model", { runtimeRunId: "" }).catch(() => {});
@@ -9713,7 +9866,7 @@ async function extractAndSuggestMemories() {
   const recent = state.messages.filter((m) => m.role === "user" || m.role === "assistant").slice(-20);
   if (recent.length < 2) { showToast("Not enough conversation content to extract memories"); return; }
   const transcript = recent.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${getMsgText(m).slice(0, 500)}`).join("\n\n");
-  const idx = state.messages.push({ role: "assistant", content: "Scanning conversation...", streaming: true, _model: getSelectedModel() }) - 1;
+  const idx = state.messages.push({ role: "assistant", content: "Scanning conversation...", streaming: true, _streamProjection: "answer", _model: getSelectedModel() }) - 1;
   renderMessages();
   els.messages.scrollTop = els.messages.scrollHeight;
   try {
@@ -10462,6 +10615,7 @@ async function runAgentLoop(ctx = null) {
             ...ctx.messages[index],
             content: "",
             streaming: true,
+            _streamProjection: "pending",
             _model: ctx.model || getSelectedModel(),
           };
           break;
@@ -10470,14 +10624,13 @@ async function runAgentLoop(ctx = null) {
       ctx._reuseRuntimeAssistant = false;
     }
     if (assistantIndex < 0) {
-      assistantIndex = ctx.messages.push({ role: "assistant", content: "", streaming: true, _model: ctx.model || getSelectedModel() }) - 1;
+      assistantIndex = ctx.messages.push({ role: "assistant", content: "", streaming: true, _streamProjection: "pending", _model: ctx.model || getSelectedModel() }) - 1;
     }
 
     ctx.responseUsage = { input: 0, output: 0, cache: 0 };
 
     if (!ctx.isSubAgent) renderSessionMessages(ctx.sessionId);
 
-    if (!ctx.isSubAgent) setTaskPhase(ctx.sessionId, { label: "thinking" });
     const modelResult = await callModelOnce(assistantIndex, true, ctx);
 
     const turnUsage = ctx.responseUsage ? { ...ctx.responseUsage } : null;
@@ -10602,7 +10755,6 @@ async function runAgentLoop(ctx = null) {
       for (let callIndex = 0; callIndex < normalizedCalls.length; callIndex += 1) {
 
         const tool = normalizedCalls[callIndex];
-        if (!ctx.isSubAgent) setTaskPhase(ctx.sessionId, { label: "executing", toolName: tool.action || "tool" });
         let result;
         if (questionnaireExclusive && callIndex !== questionnaireCallIndex) {
           result = {
@@ -14275,6 +14427,7 @@ async function init() {
 
   bindAuthorizationPanel();
   bindUserInputPanel();
+  setupComposerSafeArea();
 
     // Keep the current page connected. When the backend process is replaced,
     // its instance ID changes and this existing page refreshes in place.

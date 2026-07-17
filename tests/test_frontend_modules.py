@@ -1,5 +1,7 @@
 """Regression guards for the transitional frontend module split."""
 
+import json
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -12,6 +14,42 @@ STYLE_SOURCE = (ROOT / "styles.css").read_text(encoding="utf-8")
 
 
 class TestFrontendCoreModules(unittest.TestCase):
+    def test_partial_think_blocks_never_leak_into_visible_content(self):
+        parser_start = APP_SOURCE.index("function splitThoughtContent")
+        parser_end = APP_SOURCE.index("// ── Syntax highlighting", parser_start)
+        parser_source = APP_SOURCE[parser_start:parser_end]
+        cases = (
+            "<thi",
+            "visible<t",
+            "prefix <think>hidden reasoning",
+            "<think>hidden</think>answer",
+            "<THINK>hidden</THINK>done",
+            "plain answer",
+        )
+        script = (
+            parser_source
+            + f"\nconst cases = {json.dumps(cases)};"
+            + "\nprocess.stdout.write(JSON.stringify(cases.map(splitThoughtContent)));"
+        )
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(
+            json.loads(completed.stdout),
+            [
+                {"thought": "", "content": ""},
+                {"thought": "", "content": "visible"},
+                {"thought": "hidden reasoning", "content": "prefix"},
+                {"thought": "hidden", "content": "answer"},
+                {"thought": "hidden", "content": "done"},
+                {"thought": "", "content": "plain answer"},
+            ],
+        )
+
     def test_core_module_files_exist(self):
         for relative_path in (
             "src/core/namespace.js",
@@ -92,25 +130,169 @@ class TestFrontendCoreModules(unittest.TestCase):
         assistant_end = APP_SOURCE.index('if (msg.role === "user") {', assistant_start)
         assistant_block = APP_SOURCE[assistant_start:assistant_end]
 
-        self.assertIn("if (msg.meta?.toolCalls?.length) {", assistant_block)
+        self.assertIn(
+            'const streamingToolRound = msg.streaming && msg._streamProjection === "thinking"',
+            assistant_block,
+        )
+        self.assertIn(
+            "if (msg.meta?.toolCalls?.length || streamingToolRound) {",
+            assistant_block,
+        )
         self.assertIn("pendingThoughts.push", assistant_block)
         self.assertLess(
-            assistant_block.index("if (msg.meta?.toolCalls?.length) {"),
+            assistant_block.index("if (msg.meta?.toolCalls?.length || streamingToolRound) {"),
             assistant_block.index("pendingThoughts.push"),
         )
-        self.assertIn("thinking-summary-list", APP_SOURCE)
+        projection_start = APP_SOURCE.index("function renderThinkingProjection")
+        projection_end = APP_SOURCE.index("function isEditSuggestionMessage", projection_start)
+        projection = APP_SOURCE[projection_start:projection_end]
+        self.assertIn('data-stream-kind="thinking"', projection)
+        self.assertIn('data-stream-part="summary"', projection)
+        self.assertNotIn('t("thoughtProcess")', projection)
+        self.assertNotIn(".thinking-process .role", STYLE_SOURCE)
+        self.assertIn("const hasVisibleSummary = summaries.some", projection)
+        self.assertIn('if (!hasVisibleSummary) return ""', projection)
+        self.assertNotIn('thinking-process.is-empty', STYLE_SOURCE)
+        self.assertNotIn("MAX_LEN", projection)
+        self.assertNotIn("truncate", projection)
+        thought_style_start = STYLE_SOURCE.index(".thinking-summary-list {")
+        thought_style_end = STYLE_SOURCE.index("}", thought_style_start)
+        thought_style = STYLE_SOURCE[thought_style_start:thought_style_end]
+        self.assertIn("color: var(--text)", thought_style)
+        self.assertIn("font-size: 14.5px", thought_style)
+        self.assertIn("line-height: 1.76", thought_style)
+        role_style_start = STYLE_SOURCE.rindex(".role {")
+        role_style_end = STYLE_SOURCE.index("}", role_style_start)
+        role_style = STYLE_SOURCE[role_style_start:role_style_end]
+        self.assertIn("font-size: 12px", role_style)
+        self.assertIn("line-height: 1.4", role_style)
+        self.assertIn("letter-spacing: .015em", role_style)
+        self.assertIn('.msg.assistant > .role:not(.is-empty)::after', STYLE_SOURCE)
+        role_rule_start = STYLE_SOURCE.index('.msg.assistant > .role:not(.is-empty)::after')
+        role_rule_end = STYLE_SOURCE.index("}", role_rule_start)
+        role_rule = STYLE_SOURCE[role_rule_start:role_rule_end]
+        self.assertIn("min-width: 24px", role_rule)
+        self.assertIn("flex: 1 1 auto", role_rule)
+        self.assertNotIn("\n  width: 24px;", role_rule)
         self.assertIn(".thinking-summary-item + .thinking-summary-item", STYLE_SOURCE)
+        spacing_start = STYLE_SOURCE.index(".thinking-summary-item + .thinking-summary-item")
+        spacing_end = STYLE_SOURCE.index("}", spacing_start)
+        self.assertIn("margin-top: .65em", STYLE_SOURCE[spacing_start:spacing_end])
+        thought_spacing_start = STYLE_SOURCE.rindex(".thinking-process {")
+        thought_spacing_end = STYLE_SOURCE.index("}", thought_spacing_start)
+        self.assertIn("margin-bottom: 20px", STYLE_SOURCE[thought_spacing_start:thought_spacing_end])
 
-    def test_streaming_projection_preserves_status_node_and_hides_raw_reasoning(self):
+    def test_streaming_projection_switches_kind_without_leaking_raw_reasoning(self):
         projection_start = APP_SOURCE.index("function renderFinalAssistantProjection")
         projection_end = APP_SOURCE.index("function createCompactSummaryMessage", projection_start)
         projection = APP_SOURCE[projection_start:projection_end]
 
         self.assertIn('data-stream-session="${escapeHtml(state.sessionId || "")}"', projection)
+        self.assertIn('const streamKind = msg._streamProjection === "answer" ? "answer" : "pending"', projection)
+        self.assertIn('data-stream-kind="${streamKind}"', projection)
+        self.assertIn('streamKind === "pending" ? " is-pending" : ""', projection)
+        self.assertIn('data-stream-role', projection)
+        self.assertIn('streaming-answer-role${showModel ? "" : " is-empty"}', projection)
         self.assertNotIn('data-stream-part="thought"', projection)
         self.assertNotIn("msg.thought", projection)
-        self.assertIn("preservedNodes", APP_SOURCE)
-        self.assertIn("freshNode.replaceWith(preservedNode)", APP_SOURCE)
+        patch_start = APP_SOURCE.index("function patchStreamingAssistantMessage")
+        patch_end = APP_SOURCE.index("function scheduleStreamingAssistantPatch", patch_start)
+        patch = APP_SOURCE[patch_start:patch_end]
+        self.assertIn('streamKind === "thinking"', patch)
+        self.assertIn('streamKind !== "answer" || !visibleContent', patch)
+        self.assertIn('data-stream-part="summary"', patch)
+        self.assertIn('msg._streamProjection === "thinking" && visibleContent', patch)
+        self.assertIn("renderSessionMessages(sessionId)", patch)
+        self.assertNotIn("preservedNodes", APP_SOURCE)
+        self.assertNotIn("appendChild(preservedNode)", APP_SOURCE)
+
+        self.assertIn('_streamProjection: "pending"', APP_SOURCE)
+
+        render_start = APP_SOURCE.index("function renderMessages()")
+        render_end = APP_SOURCE.index("function isProcessMessage", render_start)
+        render = APP_SOURCE[render_start:render_end]
+        self.assertIn("els.messageList.innerHTML = html", render)
+        self.assertNotIn("els.messages.innerHTML = html", render)
+        self.assertIn("pruneStaleStreamingNodes(state.sessionId)", render)
+
+    def test_tool_round_finalization_is_atomic(self):
+        helper_start = APP_SOURCE.index("function finalizeStreamingAssistantMessage")
+        helper_end = APP_SOURCE.index("function parseSseLine", helper_start)
+        helper = APP_SOURCE[helper_start:helper_end]
+        self.assertIn(
+            "updateAssistantMessage(index, rawContent, false, sessionId, targetMessages, true)",
+            helper,
+        )
+        self.assertLess(helper.index("current.meta.toolCalls = toolCalls"), helper.index("renderSessionMessages"))
+
+        stream_start = APP_SOURCE.index("const toolCallsByIndex = new Map()")
+        stream_end = APP_SOURCE.index("async function callModelOnce", stream_start)
+        stream = APP_SOURCE[stream_start:stream_end]
+        self.assertIn(
+            'markStreamingAssistantProjection(assistantIndex, "thinking"',
+            stream,
+        )
+        self.assertGreaterEqual(stream.count("finalizeStreamingAssistantMessage("), 2)
+
+    def test_active_run_banner_uses_one_stable_task_status(self):
+        helper_start = APP_SOURCE.index("function ensureActiveRunBannerStructure")
+        helper_end = APP_SOURCE.index("function normalizeResponseUsage", helper_start)
+        helper = APP_SOURCE[helper_start:helper_end]
+        self.assertEqual(helper.count("banner.innerHTML ="), 1)
+        self.assertIn('nodes.label.textContent = t("processingLabel")', helper)
+        self.assertIn("nodes.timer.textContent = getRunTimerDisplay(sessionId)", helper)
+        self.assertNotIn("run-model", helper)
+        self.assertNotIn("data-active-run-phase", helper)
+        self.assertNotIn("function setTaskPhase", APP_SOURCE)
+        self.assertNotIn("_taskPhase", APP_SOURCE)
+        self.assertNotIn("executingTool", APP_SOURCE)
+
+    def test_active_run_banner_uses_stable_anchor_above_thought_process(self):
+        wrapper = """<div id="messages" class="messages">
+            <div id="messageList" class="message-list"></div>
+            <div id="activeRunBanner" class="active-run-banner hidden"></div>
+          </div>"""
+        self.assertIn(wrapper, INDEX_SOURCE)
+        self.assertLess(INDEX_SOURCE.index('id="activeRunBanner"'), INDEX_SOURCE.index('id="chatForm"'))
+
+        render_start = APP_SOURCE.index("function renderMessages()")
+        render_end = APP_SOURCE.index("function isProcessMessage", render_start)
+        render = APP_SOURCE[render_start:render_end]
+        user_start = render.index('if (msg.role === "user") {')
+        user_end = render.index("continue;", user_start)
+        user_projection = render[user_start:user_end]
+        self.assertLess(
+            user_projection.index("rows.push(renderUserProjection(msg, j))"),
+            user_projection.index("insertActiveRunAnchor()"),
+        )
+        self.assertIn('data-active-run-anchor', render)
+        self.assertLess(render.index("parkActiveRunBanner();\n  els.messageList.innerHTML = html"), render.index("mountActiveRunBanner();", render.index("els.messageList.innerHTML = html")))
+
+        helper_start = APP_SOURCE.index("function parkActiveRunBanner")
+        helper_end = APP_SOURCE.index("function syncActiveRunBanner", helper_start)
+        helper = APP_SOURCE[helper_start:helper_end]
+        self.assertIn("els.messages.appendChild(banner)", helper)
+        self.assertIn("anchor.appendChild(banner)", helper)
+
+        banner_start = STYLE_SOURCE.index(".active-run-banner {")
+        banner_end = STYLE_SOURCE.index(".active-run-banner.visible", banner_start)
+        banner = STYLE_SOURCE[banner_start:banner_end]
+        self.assertIn("position: static", banner)
+        self.assertIn("width: 100%", banner)
+        self.assertNotIn("bottom:", banner)
+        self.assertNotIn("transform:", banner)
+
+        line_start = STYLE_SOURCE.index(".active-run-line {")
+        line_end = STYLE_SOURCE.index(".active-run-indicator", line_start)
+        line = STYLE_SOURCE[line_start:line_end]
+        self.assertIn("display: inline-flex", line)
+        self.assertNotIn("background:", line)
+        self.assertNotIn("border:", line)
+        self.assertNotIn("border-radius:", line)
+
+        self.assertIn("--composer-safe-bottom", STYLE_SOURCE)
+        self.assertIn("function syncComposerSafeArea()", APP_SOURCE)
+        self.assertIn("new ResizeObserver(syncComposerSafeArea)", APP_SOURCE)
 
 
 if __name__ == "__main__":

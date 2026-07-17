@@ -92,6 +92,57 @@ const order = [];
         self.assertIn('agentRunId: String(tool._agentRunId || "")', APP_SOURCE)
         self.assertIn("userInputRequest: serializeUserInputRequest(request)", APP_SOURCE)
 
+    def test_server_agent_authorization_uses_durable_card_and_reload_path(self):
+        for expected in (
+            "requestServerAgentAuthorization(ctx, snapshot.pendingAuthorization)",
+            "window.AgentRuntime.submitAgentAuthorization(item.agentRunId",
+            'status: "waiting-authorization"',
+            "authorizationRequest: serializeAuthorizationRequest(request)",
+            "restoreAuthorizationRequest(session.id, session.runState?.authorizationRequest)",
+            "ensureServerAuthorizationProjection(ctx, pendingAuthorization)",
+            "Boolean(meta.serverManaged && !applied && !rejected)",
+            "resumePersistedSessionRun(summary).catch",
+        ):
+            self.assertIn(expected, APP_SOURCE)
+        self.assertIn('executionOwner: permissionProfile === "read" ? "server-agent" : "browser"', APP_SOURCE)
+
+    def test_agent_runtime_submits_authorization_id_and_decision(self):
+        script = f"""
+global.window = {{}};
+const source = {json.dumps(RUNTIME_SOURCE)};
+let captured = null;
+global.fetch = async (url, options) => {{
+  captured = {{url: String(url), method: options.method, body: JSON.parse(options.body)}};
+  return new Response(JSON.stringify({{status: "waiting_credentials", result: {{applied: true}}}}), {{
+    status: 200,
+    headers: {{"Content-Type": "application/json"}},
+  }});
+}};
+eval(source);
+(async () => {{
+  const result = await window.AgentRuntime.submitAgentAuthorization("agent/a", {{
+    authorizationId: "authorization-1",
+    decision: "approved",
+  }});
+  process.stdout.write(JSON.stringify({{captured, result}}));
+}})().catch((error) => {{ console.error(error); process.exit(1); }});
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertEqual(data["captured"]["url"], "/api/agent/runs/agent%2Fa/authorization")
+        self.assertEqual(data["captured"]["method"], "POST")
+        self.assertEqual(data["captured"]["body"], {
+            "authorizationId": "authorization-1",
+            "decision": "approved",
+        })
+        self.assertTrue(data["result"]["result"]["applied"])
+
     def test_read_only_permission_is_user_visible(self):
         self.assertIn('data-value="read"', INDEX_SOURCE)
         self.assertIn('data-i18n="permRead"', INDEX_SOURCE)

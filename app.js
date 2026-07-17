@@ -4807,7 +4807,8 @@ function renderEditSuggestionProjection(msg, index) {
   const editState = state.pendingEdits[pendingId] || {};
   const applied = !!(meta.applied || editState.applied);
   const rejected = !!(meta.rejected || editState.rejected || editState.resolved && !editState.applied);
-  const queued = state.authorizationRequests.some((item) => item.status === "pending" && item.editId === pendingId);
+  const queued = state.authorizationRequests.some((item) => item.status === "pending" && item.editId === pendingId)
+    || Boolean(meta.serverManaged && !applied && !rejected);
   const proposalOnly = getPermissionProfile() === "plan" || !!meta.proposalOnly;
   const diffText = normalizeDiffText(content);
   if (/^\(no changes\)$/i.test(diffText.trim())) return "";
@@ -6108,6 +6109,7 @@ async function refreshSessions() {
       if (session?.id) {
         setSessionRunState(session.id, session.runState || {});
         restoreUserInputRequest(session.id, session.runState?.userInputRequest);
+        restoreAuthorizationRequest(session.id, session.runState?.authorizationRequest);
       }
     }
   } catch (err) {
@@ -6239,6 +6241,7 @@ async function loadSession(sessionId) {
   setSessionMessages(session.id, state.messages);
   setSessionRunState(session.id, session.runState || getSessionRunState(session.id));
   restoreUserInputRequest(session.id, session.runState?.userInputRequest);
+  restoreAuthorizationRequest(session.id, session.runState?.authorizationRequest);
   if (loaded) loaded._seenCount = state.messages.length;
 
   state.pendingEdits = {};
@@ -8276,6 +8279,7 @@ function authorizationSource(ctx) {
 function authorizationActionLabel(action) {
   const labels = {
     propose_edit: t("actionEdit"),
+    apply_edit: t("actionEdit"),
     write_file: t("actionWrite"),
     delete_file: t("actionDelete"),
     run_command: t("actionRun"),
@@ -8286,6 +8290,35 @@ function authorizationActionLabel(action) {
 function authorizationTarget(tool) {
   if (tool.action === "run_command") return tool.command || t("commandLabel");
   return tool.path || tool.query || describeToolForConfirm(tool);
+}
+
+function serializeAuthorizationRequest(request) {
+  if (!request) return null;
+  const {
+    resolve, abortSignal, abortHandler, submitDecision, _finishing, error, ...serializable
+  } = request;
+  return JSON.parse(JSON.stringify(serializable));
+}
+
+function restoreAuthorizationRequest(sessionId, savedRequest) {
+  if (!sessionId) return null;
+  const isPendingServerRequest = savedRequest?.serverAgent && savedRequest.status === "pending";
+  const existing = state.authorizationRequests.find((item) => (
+    item.serverAgent && item.sessionId === sessionId && item.id === savedRequest?.id
+  ));
+  state.authorizationRequests = state.authorizationRequests.filter((item) => (
+    !item.serverAgent || item.sessionId !== sessionId || item === existing
+  ));
+  if (!isPendingServerRequest) {
+    if (existing) state.authorizationRequests = state.authorizationRequests.filter((item) => item !== existing);
+    return null;
+  }
+  if (existing) return existing;
+  const restored = JSON.parse(JSON.stringify(savedRequest));
+  restored.selected = restored.selected !== false;
+  restored.status = "pending";
+  state.authorizationRequests.push(restored);
+  return restored;
 }
 
 function pendingAuthorizations(sessionId = state.sessionId) {
@@ -8322,7 +8355,7 @@ function renderAuthorizationPanel() {
     return;
   }
 
-  const selectedCount = items.filter((item) => item.selected).length;
+  const selectedCount = items.filter((item) => item.selected && !item._finishing).length;
   const editCount = items.filter((item) => ["propose_edit", "write_file", "delete_file"].includes(item.tool.action)).length;
   const commandCount = items.filter((item) => item.tool.action === "run_command").length;
   const summary = [editCount ? t("fileOpsCount", { count: editCount }) : "", commandCount ? t("commandsCount", { count: commandCount }) : ""].filter(Boolean).join(" · ");
@@ -8349,8 +8382,8 @@ function renderAuthorizationPanel() {
                 <strong>${escapeHtml(group.label)}</strong><span>${t("itemCount", { count: group.items.length })}</span>
               </label>
               ${group.items.map((item) => `
-                <div class="authorization-row" data-auth-id="${escapeHtml(item.id)}">
-                  <input type="checkbox" data-auth-select="${escapeHtml(item.id)}" ${item.selected ? "checked" : ""} />
+                <div class="authorization-row${item._finishing ? " is-submitting" : ""}" data-auth-id="${escapeHtml(item.id)}">
+                  <input type="checkbox" data-auth-select="${escapeHtml(item.id)}" ${item.selected ? "checked" : ""} ${item._finishing ? "disabled" : ""} />
                   <span class="authorization-kind">${escapeHtml(authorizationActionLabel(item.tool.action))}</span>
                   <span class="authorization-target" title="${escapeHtml(authorizationTarget(item.tool))}">${escapeHtml(authorizationTarget(item.tool))}</span>
                   ${item.stats ? `<span class="authorization-stats"><b>+${item.stats.additions || 0}</b><i>−${item.stats.removals || 0}</i></span>` : ""}
@@ -8366,12 +8399,93 @@ function renderAuthorizationPanel() {
     </div>`;
 }
 
-function resolveAuthorization(item, approved) {
-  if (!item || item.status !== "pending") return;
+function finishLocalAuthorizationRequest(item, approved) {
   item.status = approved ? "approved" : "rejected";
   if (item.abortSignal && item.abortHandler) item.abortSignal.removeEventListener("abort", item.abortHandler);
-  item.resolve(Boolean(approved));
+  item.resolve?.(Boolean(approved));
   state.authorizationRequests = state.authorizationRequests.filter((entry) => entry !== item);
+}
+
+function markServerAuthorizationProjection(item, result, approved) {
+  const messages = getSessionMessages(item.sessionId);
+  for (const message of messages) {
+    if (message?.meta?.authorizationId !== item.authorizationId) continue;
+    message.meta.applied = Boolean(result?.applied);
+    message.meta.rejected = !result?.applied;
+    message.meta.authorizationDecision = approved ? "approved" : "rejected";
+    message.meta.authorizationResult = result || null;
+  }
+  const editState = state.pendingEdits[item.editId];
+  if (editState) {
+    editState.applied = Boolean(result?.applied);
+    editState.rejected = !result?.applied;
+    editState.resolved = true;
+  }
+  setSessionMessages(item.sessionId, messages);
+}
+
+async function finishServerAgentAuthorizationRequest(item, approved) {
+  if (!window.AgentRuntime?.submitAgentAuthorization) {
+    throw new Error("Server Agent authorization runtime is unavailable");
+  }
+  const response = await window.AgentRuntime.submitAgentAuthorization(item.agentRunId, {
+    authorizationId: item.authorizationId,
+    decision: approved ? "approved" : "rejected",
+    signal: item.abortSignal,
+  });
+  const result = response?.result || {};
+  item.status = approved ? "approved" : "rejected";
+  if (item.abortSignal && item.abortHandler) item.abortSignal.removeEventListener("abort", item.abortHandler);
+  markServerAuthorizationProjection(item, result, approved);
+  state.authorizationRequests = state.authorizationRequests.filter((entry) => entry !== item);
+  const resolver = item.resolve;
+  const nextStatus = resolver ? "running" : "resuming";
+  const nextState = {
+    ...getSessionRunState(item.sessionId),
+    status: nextStatus,
+    phase: "tools",
+    authorizationRequest: null,
+    updatedAt: new Date().toISOString(),
+  };
+  setSessionRunState(item.sessionId, nextState);
+  await saveSessionState(
+    item.sessionId,
+    getSessionMessages(item.sessionId),
+    getSessionStats(item.sessionId),
+  ).catch((error) => {
+    console.error("Failed to persist server authorization result:", error);
+  });
+  if (item.sessionId === state.sessionId) {
+    clearPermissionNotify();
+    renderMessages();
+  }
+  if (resolver) {
+    resolver(result);
+    return result;
+  }
+  const summary = state.sessions.find((session) => session.id === item.sessionId) || { id: item.sessionId };
+  summary.runState = nextState;
+  resumePersistedSessionRun(summary).catch((error) => {
+    console.error("Failed to resume server authorization run:", error);
+  });
+  return result;
+}
+
+function resolveAuthorization(item, approved) {
+  if (!item || item.status !== "pending" || item._finishing) return Promise.resolve(null);
+  if (!item.serverAgent) {
+    finishLocalAuthorizationRequest(item, approved);
+    return Promise.resolve(Boolean(approved));
+  }
+  item._finishing = true;
+  renderAuthorizationPanel();
+  return finishServerAgentAuthorizationRequest(item, approved).catch((error) => {
+    item._finishing = false;
+    item.error = error?.message || String(error || "");
+    renderAuthorizationPanel();
+    showToast(item.error, "error");
+    throw error;
+  });
 }
 
 function requestAuthorization(tool, ctx = null, options = {}) {
@@ -8427,7 +8541,7 @@ function bindAuthorizationPanel() {
       renderAuthorizationPanel();
     }
   });
-  panel.addEventListener("click", (event) => {
+  panel.addEventListener("click", async (event) => {
     const actionButton = event.target.closest("[data-auth-action]");
     if (actionButton) {
       const action = actionButton.dataset.authAction;
@@ -8435,10 +8549,12 @@ function bindAuthorizationPanel() {
         state.authorizationPanelCollapsed = !state.authorizationPanelCollapsed;
         renderAuthorizationPanel();
       } else if (action === "approve") {
-        pendingAuthorizations().filter((item) => item.selected).forEach((item) => resolveAuthorization(item, true));
+        const selected = pendingAuthorizations().filter((item) => item.selected && !item._finishing);
+        await Promise.allSettled(selected.map((item) => resolveAuthorization(item, true)));
         renderAuthorizationPanel();
       } else if (action === "reject-all") {
-        pendingAuthorizations().forEach((item) => resolveAuthorization(item, false));
+        const pending = pendingAuthorizations().filter((item) => !item._finishing);
+        await Promise.allSettled(pending.map((item) => resolveAuthorization(item, false)));
         renderAuthorizationPanel();
       }
       return;
@@ -11084,7 +11200,11 @@ async function projectAgentEvent(ctx, event) {
   ctx.run.agentEventCursor = ctx.agentEventCursor;
   setSessionMessages(ctx.sessionId, ctx.messages);
   renderSessionMessages(ctx.sessionId);
-  const phase = eventType.startsWith("tool_") || eventType.startsWith("user_input_") ? "tools" : "model";
+  const phase = eventType.startsWith("tool_")
+    || eventType.startsWith("user_input_")
+    || eventType.startsWith("authorization_")
+    ? "tools"
+    : "model";
   await persistRunCheckpoint(ctx, "running", phase, {
     agentEventCursor: ctx.agentEventCursor,
     runtimeRunId: ctx.runtimeRunId || "",
@@ -11101,6 +11221,119 @@ async function requestServerAgentInput(ctx, pendingInput) {
     _toolCallId: String(pendingInput.toolCallId || ""),
     _agentRunId: ctx.agentRunId,
   }, ctx);
+}
+
+function ensureServerAuthorizationProjection(ctx, pendingAuthorization) {
+  const authorizationId = String(pendingAuthorization.authorizationId || "");
+  const proposalId = String(pendingAuthorization.proposalId || authorizationId);
+  const editId = `server-edit-${proposalId}`;
+  let projection = ctx.messages.find((message) => (
+    message?.role === "tool-result" && message.meta?.authorizationId === authorizationId
+  ));
+  if (!projection) {
+    projection = {
+      role: "tool-result",
+      content: String(pendingAuthorization.diff || ""),
+      meta: {
+        action: "propose_edit",
+        path: String(pendingAuthorization.path || ""),
+        pendingEditId: editId,
+        authorizationId,
+        agentRunId: ctx.agentRunId,
+        toolCallId: String(pendingAuthorization.toolCallId || ""),
+        serverManaged: true,
+        native: true,
+      },
+      _time: String(pendingAuthorization.requestedAt || new Date().toISOString()),
+    };
+    ctx.messages.push(projection);
+  }
+  state.pendingEdits[editId] = {
+    path: String(pendingAuthorization.path || ""),
+    resolved: Boolean(projection.meta?.applied || projection.meta?.rejected),
+    applied: Boolean(projection.meta?.applied),
+    rejected: Boolean(projection.meta?.rejected),
+    serverManaged: true,
+  };
+  setSessionMessages(ctx.sessionId, ctx.messages);
+  renderSessionMessages(ctx.sessionId);
+  return editId;
+}
+
+async function requestServerAgentAuthorization(ctx, pendingAuthorization) {
+  if (!pendingAuthorization?.authorizationId || !pendingAuthorization?.toolCallId) {
+    throw new Error("Server Agent is waiting for authorization without a valid request");
+  }
+  const authorizationId = String(pendingAuthorization.authorizationId);
+  const requestId = `server-authorization-${authorizationId}`;
+  const editId = ensureServerAuthorizationProjection(ctx, pendingAuthorization);
+  let request = state.authorizationRequests.find((item) => (
+    item.serverAgent && item.id === requestId && item.sessionId === ctx.sessionId
+  ));
+  if (!request) {
+    const source = authorizationSource(ctx);
+    request = {
+      id: requestId,
+      sessionId: ctx.sessionId,
+      sourceKey: source.key,
+      sourceLabel: source.label,
+      tool: {
+        action: "propose_edit",
+        path: String(pendingAuthorization.path || ""),
+      },
+      editId,
+      stats: getDiffStats(normalizeDiffText(pendingAuthorization.diff || "")),
+      selected: true,
+      status: "pending",
+      serverAgent: true,
+      agentRunId: ctx.agentRunId,
+      authorizationId,
+      proposalId: String(pendingAuthorization.proposalId || ""),
+      toolCallId: String(pendingAuthorization.toolCallId || ""),
+      createdAt: String(pendingAuthorization.requestedAt || new Date().toISOString()),
+    };
+    state.authorizationRequests.push(request);
+  }
+  request.agentRunId = ctx.agentRunId;
+  request.authorizationId = authorizationId;
+  request.editId = editId;
+  request.status = "pending";
+  request.serverAgent = true;
+  request._finishing = false;
+
+  const waitForDecision = new Promise((resolve) => { request.resolve = resolve; });
+  const signal = ctx?.run?.abortController?.signal;
+  if (signal) {
+    request.abortSignal = signal;
+    request.abortHandler = () => {
+      request.status = "aborted";
+      markServerAuthorizationProjection(request, { applied: false, aborted: true }, false);
+      state.authorizationRequests = state.authorizationRequests.filter((item) => item !== request);
+      request.resolve?.(false);
+      if (request.sessionId === state.sessionId) renderMessages();
+    };
+    if (signal.aborted) {
+      request.abortHandler();
+      return waitForDecision;
+    }
+    signal.addEventListener("abort", request.abortHandler, { once: true });
+  }
+
+  const nextState = {
+    ...getSessionRunState(ctx.sessionId),
+    status: "waiting-authorization",
+    phase: "tools",
+    authorizationRequest: serializeAuthorizationRequest(request),
+    updatedAt: new Date().toISOString(),
+  };
+  setSessionRunState(ctx.sessionId, nextState);
+  await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats).catch((error) => {
+    console.error("Failed to persist server authorization request:", error);
+  });
+  state.authorizationPanelCollapsed = false;
+  if (ctx.sessionId === state.sessionId) renderAuthorizationPanel();
+  if (isUserAway()) notifyPermissionNeeded("propose_edit", pendingAuthorization.path || "");
+  return waitForDecision;
 }
 
 async function runServerAgentLoop(ctx) {
@@ -11185,6 +11418,10 @@ async function runServerAgentLoop(ctx) {
     if (snapshot.status === "waiting_credentials") continue;
     if (snapshot.status === "waiting_user_input") {
       await requestServerAgentInput(ctx, snapshot.pendingInput);
+      continue;
+    }
+    if (snapshot.status === "waiting_authorization") {
+      await requestServerAgentAuthorization(ctx, snapshot.pendingAuthorization);
       continue;
     }
     if (snapshot.status === "completed") {

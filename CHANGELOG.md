@@ -14,6 +14,21 @@
 
 ---
 
+## 2026-07-18 07:51 · Codex
+
+### 将持久编辑授权接入正式审查卡片：刷新恢复、会话隔离与原任务续跑
+
+- **正式界面投影**：服务端 AgentRun 进入 `waiting_authorization` 后，前端会以稳定授权 ID 将 `pendingAuthorization` 投影为现有 diff 审查卡片和授权面板；文件路径、增删统计与“查看”定位沿用原交互，服务端管理的提案从首次绘制起就显示为等待授权，不会短暂出现可绕过服务端的本地应用按钮。
+- **决定提交与续跑**：授权面板支持异步提交服务端 `approved` / `rejected` 决定；提交成功后同步更新提案卡片状态，清除待确认项，并让当前 `runServerAgentLoop()` 继续同一个 AgentRun。原有浏览器本地授权仍走原 Promise 结果，批量允许/全部拒绝可同时处理两类请求。
+- **刷新恢复**：会话检查点新增可序列化 `authorizationRequest`，保存稳定授权 ID、AgentRun、工具调用、提案卡片和选择状态，不保存 Promise、AbortSignal 等内存对象。页面刷新后即使原等待 Promise 已不存在，用户仍可直接提交决定；前端随后把检查点转为 `resuming` 并恢复同一个 AgentRun，不伪造或重复执行工具结果。
+- **会话与取消边界**：恢复授权按 `sessionId` 隔离，只在当前会话展示对应卡片；切换会话不取消后台等待。停止任务会移除授权项并把提案标为未应用，网络提交期间禁用重复操作；服务端决定已经成功时，即使会话保存暂时失败也不会阻塞原任务继续。
+- **所有权审计**：确认 `plan` / `accept` 当前还依赖网络、Skills、命令、直接写入/删除和子任务，而服务端尚未覆盖这些协议。本阶段明确保留这两档的浏览器执行所有权，只完成持久授权界面；不通过缩减模型工具列表提前切换，避免已有核心能力静默回退。
+- **验证结果**：新增服务端授权客户端请求体、持久卡片/恢复路径和所有权边界回归；会话持久化、AgentRun、P0 稳定性及子任务定向回归 `87 passed`，JavaScript 语法与 `git diff --check` 通过，最终全量回归 `509 passed, 6 subtests passed`。
+
+**涉及文件**：`app.js`、`tests/test_frontend_modules.py`、`README.md`、`docs/SERVER_AGENT_LOOP_PLAN.md`、`data/memory/code-architecture.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 07:27 · Codex
 
 ### 建立服务端编辑授权与幂等写入协议：持久等待、冲突保护和崩溃回放

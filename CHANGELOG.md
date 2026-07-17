@@ -14,6 +14,46 @@
 
 ---
 
+## 2026-07-18 04:21 · Codex
+
+### 重构中转站 Code 专题页并规范定制部署包
+
+- **专题页正式重构**：将确认后的独立 HTML 草稿迁入 `new-api-source` 正式 React 路由，改为面向用户的四段式产品页面；接入 Code 黑白标志、深浅主题真实界面截图、响应式布局和中英文国际化，统一修正顶部 `Code` 品牌被翻译为“代码”的问题。
+- **下载与平台连接**：首屏和页尾下载按钮通过 GitHub Release API 自动选择最新 `.exe`，失败时回退到最新 Release 页面；源码按钮指向 Code GitHub 仓库，页面不再展示容易过期的固定版本号。
+- **认证类型修复**：删除 `/code/connect` 对已不存在的 `auth.isLoading` 字段的判断；认证用户继续由 Zustand 从 `localStorage` 同步恢复，未登录跳转规则保持不变，TypeScript 全量类型检查恢复通过。
+- **部署产物规范化**：统一由 `new-api-source/build-deploy.ps1` 输出到工作区根目录 `output/`，每次打包先清理生成目录；定制包只保留本地二进制对应的 `docker-compose.deploy.yml`，不再混入会拉取公开镜像的普通 compose 文件。
+- **部署配置与说明更新**：Compose 新增加载 `.env` 和日志目录参数，修复 systemd 模板中的无效行尾注释、服务名和默认路径；新增中文 `DEPLOYMENT.md`，覆盖 Docker、systemd、HTTPS/SSE、更新回滚与排查流程，并由打包脚本作为正式源文件复制。
+- **交付与验证**：正式前端构建、Code 页面定向 lint、TypeScript 类型检查、国际化 JSON 解析、Compose 结构检查和 PowerShell 脚本语法检查通过；最新 Linux amd64 部署包为 `output/new-api-dev-20260718.zip`，SHA-256 为 `46164666630F36C662C39DF525B5AB677B58B51BB0BA1F96E5A502F4B9CDCE49`。
+
+**涉及仓库/文件**：`new-api-source/web/default/src/features/code/*`、`new-api-source/web/default/src/i18n/locales/*`、`new-api-source/build-deploy.ps1`、`new-api-source/docker-compose.deploy.yml`、`new-api-source/new-api.service`、`new-api-source/DEPLOYMENT.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
+## 2026-07-18 03:16 · Code
+
+### 新增项目 Python 统计脚本
+
+- **新增脚本**：创建 `tools/project_summary.py`，递归统计项目内 Python 文件数量、非空非注释代码行数和 AST 函数数量，并忽略 `.git`、`.venv`、`build`、`dist`、`data` 目录。
+- **输出报告**：运行脚本生成 `data/project-summary.md`，记录当前统计结果：Python 文件 `31` 个、代码行 `9515` 行、函数 `763` 个。
+- **验证结果**：执行 `python tools/project_summary.py` 成功，退出码 `0`，报告文件已写入。
+
+**改动文件**：`tools/project_summary.py`、`data/project-summary.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
+## 2026-07-18 02:04 · Codex
+
+### 让欢迎页刷新保持前台视图且不影响后台会话
+
+- **根因修复**：新增独立的 `code-foreground-view` 前台视图标记，区分用户最后停留在欢迎页还是某个会话；启动时只有前台标记为会话页才恢复 `code-last-session`，欢迎页刷新不再被最近会话覆盖。
+- **竞态隔离**：为前台 `loadSession()` 增加独立导航序列；进入欢迎页或删除当前会话会使尚未完成的旧前台加载失效，避免迟到响应重新选中会话。序列更新放在原有 `300ms` 防连点判断之后，不改变快速切换行为。
+- **后台链路保持不变**：没有修改 `resumePersistedRuns()`、`resumePersistedSessionRun()`、会话运行缓存、消息队列、`AbortController`、SSE 续接或任务检查点；切换会话和新建会话只改变前台投影，正在输出的其他会话继续运行。
+- **验证结果**：使用同一有效 `last-session` 实测：前台标记为 `welcome` 时刷新保持欢迎页且无活动会话行，标记为 `session` 时继续恢复原会话；页面无异常。并发定向测试与 `app.js` 语法检查通过，全量回归 `477 passed, 2 subtests passed`。
+
+**改动文件**：`app.js`、`tests/test_concurrency.py`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 01:37 · Codex
 
 ### 将命令光标品牌动效接入正式欢迎页

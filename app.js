@@ -452,7 +452,7 @@ function buildRunContext(sessionId) {
     maxTokens: getEffectiveMaxTokens(model),
     toolPreset,
     permissionProfile,
-    executionOwner: permissionProfile === "read" ? "server-agent" : "browser",
+    executionOwner: executionOwnerForPermissionProfile(permissionProfile),
     agentRunId: "",
     agentEventCursor: 0,
     allowedToolNames,
@@ -4793,7 +4793,7 @@ function isEditSuggestionMessage(msg) {
   if (!msg || msg.role !== "tool-result") return false;
   const meta = msg.meta || {};
   const action = meta.action || meta.tool?.action || "";
-  return !!meta.pendingEditId && (action === "propose_edit" || action === "write_file" || !!meta.newContent);
+  return !!meta.pendingEditId && (["propose_edit", "apply_edit", "write_file", "delete_file"].includes(action) || !!meta.newContent);
 }
 
 function renderEditSuggestionProjection(msg, index) {
@@ -4807,8 +4807,9 @@ function renderEditSuggestionProjection(msg, index) {
   const editState = state.pendingEdits[pendingId] || {};
   const applied = !!(meta.applied || editState.applied);
   const rejected = !!(meta.rejected || editState.rejected || editState.resolved && !editState.applied);
+  const serverExecuting = Boolean(meta.serverManaged && meta.authorizationDecision === "approved" && !applied && !rejected);
   const queued = state.authorizationRequests.some((item) => item.status === "pending" && item.editId === pendingId)
-    || Boolean(meta.serverManaged && !applied && !rejected);
+    || Boolean(meta.serverManaged && !serverExecuting && !applied && !rejected);
   const proposalOnly = getPermissionProfile() === "plan" || !!meta.proposalOnly;
   const diffText = normalizeDiffText(content);
   if (/^\(no changes\)$/i.test(diffText.trim())) return "";
@@ -4816,11 +4817,11 @@ function renderEditSuggestionProjection(msg, index) {
   const body = isDiff ? renderDiff(diffText) : `<div class="tool-edit-markdown">${renderMarkdownLite(content)}</div>`;
   const stats = isDiff ? getDiffStats(diffText) : { additions: 0, removals: 0 };
   const canReject = getPermissionProfile() !== "bypass";
-  const status = applied ? t("appliedLabel") : (rejected ? t("rejectedLabel") : (proposalOnly ? t("proposalOnly") : (queued ? t("waitingApproval") : t("pendingConfirmation"))));
+  const status = applied ? t("appliedLabel") : (rejected ? t("rejectedLabel") : (proposalOnly ? t("proposalOnly") : (serverExecuting ? t("processingLabel") : (queued ? t("waitingApproval") : t("pendingConfirmation")))));
   const statusClass = applied ? "is-applied" : (rejected ? "is-rejected" : "is-review");
 
   let actions = "";
-  if (!applied && !rejected && !queued && !proposalOnly) {
+  if (!applied && !rejected && !queued && !proposalOnly && !meta.serverManaged) {
     actions = `
       <div class="apply-edit-bar">
         <button class="apply-edit-btn" type="button" data-edit-id="${escapeHtml(pendingId)}">${t("applyEdit")}</button>
@@ -6248,15 +6249,18 @@ async function loadSession(sessionId) {
 
   for (const msg of state.messages) {
 
-    if (msg.role === "tool-result" && msg.meta?.pendingEditId && msg.meta?.newContent) {
+    if (msg.role === "tool-result" && msg.meta?.pendingEditId) {
 
       state.pendingEdits[msg.meta.pendingEditId] = {
 
         path: msg.meta.path,
 
-        newContent: msg.meta.newContent,
+        newContent: msg.meta.newContent || "",
 
         applied: Boolean(msg.meta.applied),
+        rejected: Boolean(msg.meta.rejected),
+        resolved: Boolean(msg.meta.applied || msg.meta.rejected),
+        serverManaged: Boolean(msg.meta.serverManaged),
         mtime: msg.meta.mtime || 0,
 
       };
@@ -8208,19 +8212,33 @@ function getPermissionProfile() {
 
 
 
-function getAllowedToolNames(toolPreset = els.toolPreset.value) {
+function executionOwnerForPermissionProfile(permissionProfile) {
 
-  const permissionProfile = getPermissionProfile();
+  return ["read", "plan", "accept"].includes(permissionProfile) ? "server-agent" : "browser";
 
-  const base = new Set(toolPolicy[permissionProfile] || toolPolicy.confirm);
+}
 
-  if (toolPreset === "full" && permissionProfile !== "read") {
+
+
+function getAllowedToolNamesForProfile(permissionProfile, toolPreset = els.toolPreset.value) {
+
+  const base = new Set(toolPolicy[permissionProfile] || toolPolicy.accept);
+
+  if (toolPreset === "full" && ["accept", "bypass"].includes(permissionProfile)) {
 
     base.add("run_command");
 
   }
 
   return base;
+
+}
+
+
+
+function getAllowedToolNames(toolPreset = els.toolPreset.value) {
+
+  return getAllowedToolNamesForProfile(getPermissionProfile(), toolPreset);
 
 }
 
@@ -8407,19 +8425,23 @@ function finishLocalAuthorizationRequest(item, approved) {
 }
 
 function markServerAuthorizationProjection(item, result, approved) {
+  const decisionResult = result?.childResult || result || {};
+  const applied = decisionResult.applied === true || decisionResult.executed === true;
+  const rejected = !approved || decisionResult.rejected === true
+    || (decisionResult.ok === false && decisionResult.applied === false);
   const messages = getSessionMessages(item.sessionId);
   for (const message of messages) {
     if (message?.meta?.authorizationId !== item.authorizationId) continue;
-    message.meta.applied = Boolean(result?.applied);
-    message.meta.rejected = !result?.applied;
+    message.meta.applied = applied;
+    message.meta.rejected = rejected;
     message.meta.authorizationDecision = approved ? "approved" : "rejected";
     message.meta.authorizationResult = result || null;
   }
   const editState = state.pendingEdits[item.editId];
   if (editState) {
-    editState.applied = Boolean(result?.applied);
-    editState.rejected = !result?.applied;
-    editState.resolved = true;
+    editState.applied = applied;
+    editState.rejected = rejected;
+    editState.resolved = applied || rejected;
   }
   setSessionMessages(item.sessionId, messages);
 }
@@ -8815,9 +8837,9 @@ function buildRecoveredRunContext(session, runState) {
   ctx.maxTokens = Number(runState.maxTokens || ctx.maxTokens || getEffectiveMaxTokens(ctx.model));
   ctx.toolPreset = runState.toolPreset || ctx.toolPreset || "default";
   ctx.permissionProfile = runState.permissionProfile || ctx.permissionProfile || "accept";
-  ctx.executionOwner = runState.executionOwner || (ctx.permissionProfile === "read" ? "server-agent" : "browser");
+  ctx.executionOwner = runState.executionOwner || executionOwnerForPermissionProfile(ctx.permissionProfile);
   ctx.thinkingLevel = runState.thinkingLevel || ctx.thinkingLevel || "auto";
-  ctx.allowedToolNames = getAllowedToolNames(ctx.toolPreset);
+  ctx.allowedToolNames = getAllowedToolNamesForProfile(ctx.permissionProfile, ctx.toolPreset);
   ctx.tools = getNativeTools(ctx.toolPreset, ctx.allowedToolNames);
   ctx.taskUsage = { input: 0, output: 0, cache: 0 };
   ctx.responseUsage = { input: 0, output: 0, cache: 0 };
@@ -10976,10 +10998,6 @@ async function mapWithConcurrency(items, limit, worker) {
   return results;
 }
 
-const SERVER_AGENT_READ_TOOLS = Object.freeze(["list_files", "read_file", "search_files", "glob_files"]);
-const SERVER_AGENT_INTERACTION_TOOLS = Object.freeze(["request_user_input"]);
-const SERVER_AGENT_SAFE_TOOLS = Object.freeze([...SERVER_AGENT_INTERACTION_TOOLS, ...SERVER_AGENT_READ_TOOLS]);
-
 function isServerOwnedRun(ctx) {
   return !ctx?.isSubAgent && ctx?.executionOwner === "server-agent";
 }
@@ -11160,6 +11178,73 @@ function projectAgentToolStarted(ctx, event) {
   });
 }
 
+function projectServerEditToolCompleted(ctx, event, callMessage, result) {
+  const data = event?.data || {};
+  const toolCallId = String(data.toolCallId || "");
+  const toolAction = String(data.name || callMessage?.meta?.action || result?.action || "");
+  const resultAction = String(result?.action || toolAction);
+  const editActions = ["propose_edit", "apply_edit", "write_file", "delete_file"];
+  let projection = ctx.messages.find((message) => (
+    message?.role === "tool-result"
+    && message.meta?.serverManaged
+    && message.meta?.toolCallId === toolCallId
+    && message.meta?.pendingEditId
+  ));
+  const delegatedEditCompletion = toolAction === "task" && Boolean(projection);
+  if (!delegatedEditCompletion && !editActions.includes(toolAction) && !editActions.includes(resultAction)) return false;
+  const displayAction = delegatedEditCompletion
+    ? String(projection.meta?.action || "propose_edit")
+    : (toolAction === "propose_edit" || resultAction === "apply_edit" ? "propose_edit" : resultAction);
+  const editId = projection?.meta?.pendingEditId
+    || `server-edit-${String(result?.proposalId || toolCallId || event?.seq || Date.now())}`;
+  const applied = Boolean(projection?.meta?.applied)
+    || result?.applied === true
+    || (delegatedEditCompletion && result?.ok !== false && !projection?.meta?.rejected)
+    || (["write_file", "delete_file"].includes(resultAction) && result?.ok !== false && !result?.rejected);
+  const rejected = Boolean(projection?.meta?.rejected)
+    || result?.rejected === true
+    || (delegatedEditCompletion && result?.ok === false && !projection?.meta?.applied)
+    || (result?.ok === false && result?.applied === false);
+  const diff = String(result?.diff || "");
+
+  if (!projection) {
+    projection = {
+      role: "tool-result",
+      content: diff || formatToolResult(result),
+      meta: {},
+      _time: String(event?.createdAt || new Date().toISOString()),
+    };
+    ctx.messages.push(projection);
+  } else if (diff) {
+    projection.content = diff;
+  }
+
+  projection.meta = {
+    ...(projection.meta || {}),
+    ...agentEventMeta(ctx, event, "tool_completed"),
+    action: displayAction,
+    path: String(result?.path || projection.meta?.path || ""),
+    pendingEditId: editId,
+    toolCallId,
+    serverManaged: true,
+    native: true,
+    replayed: Boolean(data.replayed),
+    proposalOnly: Boolean(result?.proposalOnly || projection.meta?.proposalOnly),
+    applied,
+    rejected,
+    authorizationResult: result || null,
+  };
+  state.pendingEdits[editId] = {
+    ...(state.pendingEdits[editId] || {}),
+    path: projection.meta.path,
+    applied,
+    rejected,
+    resolved: applied || rejected,
+    serverManaged: true,
+  };
+  return true;
+}
+
 function projectAgentToolCompleted(ctx, event) {
   if (findAgentProjectionMessage(ctx, "tool_completed", event?.seq)) return;
   const data = event?.data || {};
@@ -11175,6 +11260,7 @@ function projectAgentToolCompleted(ctx, event) {
     callMessage.meta.agentEventType = "tool_completed_call";
   }
   const result = data.result || {};
+  if (projectServerEditToolCompleted(ctx, event, callMessage, result)) return;
   ctx.messages.push({
     role: "tool-result",
     content: formatToolResult(result),
@@ -11225,8 +11311,13 @@ async function requestServerAgentInput(ctx, pendingInput) {
 
 function ensureServerAuthorizationProjection(ctx, pendingAuthorization) {
   const authorizationId = String(pendingAuthorization.authorizationId || "");
+  const authorizationAction = String(pendingAuthorization.action || "propose_edit");
+  if (!["propose_edit", "apply_edit", "write_file", "delete_file"].includes(authorizationAction)) {
+    return "";
+  }
   const proposalId = String(pendingAuthorization.proposalId || authorizationId);
   const editId = `server-edit-${proposalId}`;
+  const displayAction = authorizationAction === "apply_edit" ? "propose_edit" : authorizationAction;
   let projection = ctx.messages.find((message) => (
     message?.role === "tool-result" && message.meta?.authorizationId === authorizationId
   ));
@@ -11235,7 +11326,8 @@ function ensureServerAuthorizationProjection(ctx, pendingAuthorization) {
       role: "tool-result",
       content: String(pendingAuthorization.diff || ""),
       meta: {
-        action: "propose_edit",
+        action: displayAction,
+        authorizationAction,
         path: String(pendingAuthorization.path || ""),
         pendingEditId: editId,
         authorizationId,
@@ -11247,6 +11339,14 @@ function ensureServerAuthorizationProjection(ctx, pendingAuthorization) {
       _time: String(pendingAuthorization.requestedAt || new Date().toISOString()),
     };
     ctx.messages.push(projection);
+  } else {
+    projection.meta.action = displayAction;
+    projection.meta.authorizationAction = authorizationAction;
+    projection.meta.path = String(pendingAuthorization.path || projection.meta.path || "");
+    projection.meta.pendingEditId = editId;
+    projection.meta.agentRunId = ctx.agentRunId;
+    projection.meta.toolCallId = String(pendingAuthorization.toolCallId || projection.meta.toolCallId || "");
+    projection.meta.serverManaged = true;
   }
   state.pendingEdits[editId] = {
     path: String(pendingAuthorization.path || ""),
@@ -11265,8 +11365,10 @@ async function requestServerAgentAuthorization(ctx, pendingAuthorization) {
     throw new Error("Server Agent is waiting for authorization without a valid request");
   }
   const authorizationId = String(pendingAuthorization.authorizationId);
+  const authorizationAction = String(pendingAuthorization.action || "propose_edit");
   const requestId = `server-authorization-${authorizationId}`;
   const editId = ensureServerAuthorizationProjection(ctx, pendingAuthorization);
+  const diff = String(pendingAuthorization.diff || "");
   let request = state.authorizationRequests.find((item) => (
     item.serverAgent && item.id === requestId && item.sessionId === ctx.sessionId
   ));
@@ -11278,11 +11380,13 @@ async function requestServerAgentAuthorization(ctx, pendingAuthorization) {
       sourceKey: source.key,
       sourceLabel: source.label,
       tool: {
-        action: "propose_edit",
+        action: authorizationAction,
         path: String(pendingAuthorization.path || ""),
+        command: String(pendingAuthorization.command || ""),
+        description: String(pendingAuthorization.description || ""),
       },
       editId,
-      stats: getDiffStats(normalizeDiffText(pendingAuthorization.diff || "")),
+      stats: diff ? getDiffStats(normalizeDiffText(diff)) : null,
       selected: true,
       status: "pending",
       serverAgent: true,
@@ -11297,6 +11401,13 @@ async function requestServerAgentAuthorization(ctx, pendingAuthorization) {
   request.agentRunId = ctx.agentRunId;
   request.authorizationId = authorizationId;
   request.editId = editId;
+  request.tool = {
+    action: authorizationAction,
+    path: String(pendingAuthorization.path || ""),
+    command: String(pendingAuthorization.command || ""),
+    description: String(pendingAuthorization.description || ""),
+  };
+  request.stats = diff ? getDiffStats(normalizeDiffText(diff)) : null;
   request.status = "pending";
   request.serverAgent = true;
   request._finishing = false;
@@ -11332,7 +11443,10 @@ async function requestServerAgentAuthorization(ctx, pendingAuthorization) {
   });
   state.authorizationPanelCollapsed = false;
   if (ctx.sessionId === state.sessionId) renderAuthorizationPanel();
-  if (isUserAway()) notifyPermissionNeeded("propose_edit", pendingAuthorization.path || "");
+  if (isUserAway()) notifyPermissionNeeded(
+    authorizationAction,
+    pendingAuthorization.path || pendingAuthorization.command || "",
+  );
   return waitForDecision;
 }
 
@@ -11342,9 +11456,14 @@ async function runServerAgentLoop(ctx) {
   }
   ctx.messages = Array.isArray(ctx.messages) ? ctx.messages.filter(Boolean) : [];
   ctx.executionOwner = "server-agent";
-  ctx.allowedToolNames = new Set(SERVER_AGENT_SAFE_TOOLS);
-  const safeTools = nativeTools.filter((tool) => SERVER_AGENT_SAFE_TOOLS.includes(tool.function?.name));
-  ctx.tools = safeTools;
+  const profileAllowedToolNames = getAllowedToolNamesForProfile(
+    ctx.permissionProfile || "read",
+    ctx.toolPreset,
+  );
+  const serverTools = getNativeTools(ctx.toolPreset, profileAllowedToolNames);
+  const serverToolNames = serverTools.map((tool) => String(tool.function?.name || "")).filter(Boolean);
+  ctx.allowedToolNames = new Set(serverToolNames);
+  ctx.tools = serverTools;
   ctx.run = ctx.run || ensureSessionRun(ctx.sessionId);
   ctx.run._activeCtx = ctx;
   if (!ctx.run.abortController || ctx.run.abortController.signal.aborted) {
@@ -11355,13 +11474,13 @@ async function runServerAgentLoop(ctx) {
   const baseUrl = els.baseUrl.value.trim() || "http://localhost:3000";
   const keys = getFallbackKeys(ctx.model || getSelectedModel());
   if (!ctx.agentRunId) {
-    const prepared = await buildModelRequestPayload(ctx, true, safeTools);
+    const prepared = await buildModelRequestPayload(ctx, true, serverTools);
     const created = await window.AgentRuntime.createAgentRun({
       sessionId: ctx.sessionId,
       payload: prepared.payload,
       baseUrl,
       keys,
-      allowedTools: SERVER_AGENT_SAFE_TOOLS,
+      allowedTools: serverToolNames,
       maxRounds: MAX_TOOL_ROUNDS,
       permissionProfile: ctx.permissionProfile || "read",
       signal: ctx.run.abortController.signal,

@@ -1,4 +1,4 @@
-# Code TODO  _上次更新：2026-07-18 16:46_
+# Code TODO  _上次更新：2026-07-18 17:24_
 
 > 只记录尚未完成且可以继续执行的事项；已完成内容统一查阅 `CHANGELOG.md`。
 
@@ -11,7 +11,7 @@
 
 ## P1 · 核心能力
 
-- [ ] **完整 Agent 循环下沉服务端** — 服务端工具、授权恢复和持久 Child AgentRun 已覆盖，同轮子任务最多 3 个并发且按原调用顺序回填结果；下一阶段切换并验证 `plan` / `accept` 的正式单一执行所有权。详见 [`docs/SERVER_AGENT_LOOP_PLAN.md`](docs/SERVER_AGENT_LOOP_PLAN.md)。
+- [ ] **完成 Agent 循环迁移收尾** — `read` / `plan` / `accept` 已由服务端 AgentRun 单一持有；剩余工作是明确 `bypass` 的产品入口与端到端边界，并在稳定后删除 `app.js` 中仅供旧链路使用的 Agent 编排代码。详见 [`docs/SERVER_AGENT_LOOP_PLAN.md`](docs/SERVER_AGENT_LOOP_PLAN.md)。
 - [ ] **继续拆分 `app.js`** — 按 [`docs/APP_JS_SPLIT_PLAN.md`](docs/APP_JS_SPLIT_PLAN.md) 迁移 state、agent-loop、tools、render、events 和 session；边界稳定后再接入 esbuild。
 - [ ] **统一 i18n 架构** — 合并 HTML `data-i18n`、JS `t()`、服务端错误字典以及重复的 `LANG` / `I18N` 字典。
 - [ ] **评估 Token 优化效果** — 基于实际使用复查截断和压缩策略的成本收益及能力副作用。

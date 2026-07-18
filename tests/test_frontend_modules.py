@@ -79,11 +79,8 @@ const order = [];
         self.assertEqual(data["status"], "completed")
 
     def test_server_agent_questionnaire_uses_durable_submit_and_reload_path(self):
-        self.assertIn(
-            'const SERVER_AGENT_INTERACTION_TOOLS = Object.freeze(["request_user_input"])',
-            APP_SOURCE,
-        )
-        self.assertIn("SERVER_AGENT_SAFE_TOOLS", APP_SOURCE)
+        self.assertIn('name: "request_user_input"', APP_SOURCE)
+        self.assertIn("const serverTools = getNativeTools(ctx.toolPreset, profileAllowedToolNames)", APP_SOURCE)
         self.assertIn('if (snapshot.status === "waiting_user_input")', APP_SOURCE)
         self.assertIn("await requestServerAgentInput(ctx, snapshot.pendingInput)", APP_SOURCE)
         self.assertIn("window.AgentRuntime.submitAgentInput(request.agentRunId", APP_SOURCE)
@@ -100,11 +97,29 @@ const order = [];
             "authorizationRequest: serializeAuthorizationRequest(request)",
             "restoreAuthorizationRequest(session.id, session.runState?.authorizationRequest)",
             "ensureServerAuthorizationProjection(ctx, pendingAuthorization)",
-            "Boolean(meta.serverManaged && !applied && !rejected)",
+            "Boolean(meta.serverManaged && !serverExecuting && !applied && !rejected)",
             "resumePersistedSessionRun(summary).catch",
         ):
             self.assertIn(expected, APP_SOURCE)
-        self.assertIn('executionOwner: permissionProfile === "read" ? "server-agent" : "browser"', APP_SOURCE)
+        self.assertIn("executionOwner: executionOwnerForPermissionProfile(permissionProfile)", APP_SOURCE)
+        self.assertIn('return ["read", "plan", "accept"].includes(permissionProfile) ? "server-agent" : "browser"', APP_SOURCE)
+        self.assertIn("action: authorizationAction", APP_SOURCE)
+        self.assertIn("pendingAuthorization.path || pendingAuthorization.command", APP_SOURCE)
+
+    def test_server_agent_uses_profile_tools_and_projects_all_authorized_actions(self):
+        for expected in (
+            "const profileAllowedToolNames = getAllowedToolNamesForProfile(",
+            "allowedTools: serverToolNames",
+            'toolPreset === "full" && ["accept", "bypass"].includes(permissionProfile)',
+            '["propose_edit", "apply_edit", "write_file", "delete_file"]',
+            'const authorizationAction = String(pendingAuthorization.action || "propose_edit")',
+            'command: String(pendingAuthorization.command || "")',
+            "projectServerEditToolCompleted(ctx, event, callMessage, result)",
+            "const decisionResult = result?.childResult || result || {}",
+            'const delegatedEditCompletion = toolAction === "task" && Boolean(projection)',
+        ):
+            self.assertIn(expected, APP_SOURCE)
+        self.assertNotIn("SERVER_AGENT_SAFE_TOOLS", APP_SOURCE)
 
     def test_agent_runtime_submits_authorization_id_and_decision(self):
         script = f"""

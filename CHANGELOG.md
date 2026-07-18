@@ -14,6 +14,20 @@
 
 ---
 
+## 2026-07-18 17:24 · Codex
+
+### 将计划与接受编辑正式切换到服务端 AgentRun 单一执行所有权
+
+- **正式所有权切换**：`read`、`plan` 和 `accept` 现在统一进入服务端 AgentRun；`bypass` 暂时保留原浏览器链路。创建与恢复任务时均按任务自身权限档位和工具预设生成工具集合，避免刷新后误用界面当前选项；计划档位不会因“完整工具”预设获得命令或直接文件变更能力。
+- **真实授权投影**：前端不再把所有服务端等待伪装成 `propose_edit`，而是按 `apply_edit`、`write_file`、`delete_file` 或 `run_command` 展示正确的动作、路径、命令和 diff 统计。授权请求与 diff 卡进入会话检查点，刷新后可以继续批准或拒绝同一个 AgentRun。
+- **结果卡闭环**：计划模式的编辑提案以“仅方案”卡片展示且不落盘；接受模式的直接写入、删除和编辑批准复用原授权卡承接“等待批准 → 处理中 → 已应用/已拒绝”，避免为同一 `tool_call_id` 生成重复工具结果。子任务代理授权会读取嵌套子任务结果，并在父任务完成时收束直接文件操作状态。
+- **人工端到端验证**：已确认计划提案不修改文件、接受模式写入授权在刷新后仍可恢复、删除授权能够完成测试文件清理、运行中停止不会自行续跑。
+- **自动化验证**：JavaScript 语法检查、`git diff --check`、AgentRun/前端定向回归 `74 passed, 13 subtests passed` 通过；最终全量回归 `537 passed, 25 subtests passed`。
+
+**涉及文件**：`app.js`、`tests/test_frontend_modules.py`、`tests/test_p0_stability.py`、`README.md`、`docs/SERVER_AGENT_LOOP_PLAN.md`、`data/memory/code-architecture.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 16:46 · Codex
 
 ### 为同轮子任务建立有界并发调度和确定性结果顺序

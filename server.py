@@ -529,12 +529,19 @@ def _agent_selected_tools(payload, allowed_tools=None, permission_profile="read"
             and spec.get("background")
             and permission_profile in {"accept", "bypass"}
         )
+        durable_file_mutation = (
+            spec.get("effect") == "file_mutation"
+            and spec.get("idempotent")
+            and spec.get("background")
+            and permission_profile in {"accept", "bypass"}
+        )
         if not (
             safe_read
             or safe_interaction
             or safe_proposal
             or gated_command
             or durable_memory
+            or durable_file_mutation
         ):
             continue
         definition = _agent_registry_tool_definition(name)
@@ -623,8 +630,8 @@ def _agent_public_pending_authorization(run):
         "toolCallId": str(pending.get("toolCallId") or ""),
         "action": str(pending.get("action") or ""),
         "proposalId": str(proposal.get("proposalId") or ""),
-        "path": str(proposal.get("path") or ""),
-        "diff": str(proposal.get("diff") or ""),
+        "path": str(proposal.get("path") or pending.get("path") or ""),
+        "diff": str(proposal.get("diff") or pending.get("diff") or ""),
         "decision": str(pending.get("decision") or "pending"),
         "requestedAt": str(pending.get("requestedAt") or ""),
     }
@@ -1202,6 +1209,24 @@ def _agent_command_authorization_request(run, call):
     }
 
 
+def _agent_file_authorization_request(run, call):
+    call_id = str(call.get("id") or "")
+    action = str((call.get("function") or {}).get("name") or "")
+    preview = prepare_file_mutation_preview(action, call.get("arguments") or {})
+    authorization_id = hashlib.sha256(
+        f"{run['id']}\0{call_id}\0{call.get('fingerprint') or ''}\0{action}".encode("utf-8")
+    ).hexdigest()
+    return {
+        "authorizationId": authorization_id,
+        "toolCallId": call_id,
+        "action": action,
+        "path": preview["path"],
+        "diff": preview.get("diff") or "",
+        "decision": "pending",
+        "requestedAt": now_iso(),
+    }
+
+
 def _submit_agent_command_authorization(run, pending, normalized_decision):
     authorization_id = str(pending.get("authorizationId") or "")
     call_id = str(pending.get("toolCallId") or "")
@@ -1275,6 +1300,80 @@ def _submit_agent_command_authorization(run, pending, normalized_decision):
     return result
 
 
+def _submit_agent_file_authorization(run, pending, normalized_decision):
+    authorization_id = str(pending.get("authorizationId") or "")
+    call_id = str(pending.get("toolCallId") or "")
+    action = str(pending.get("action") or "")
+    with run["condition"]:
+        current = run.get("pending_authorization") or {}
+        if str(current.get("authorizationId") or "") != authorization_id:
+            raise ValueError("Agent authorization request changed before submission")
+        execution = run.get("tool_executions", {}).get(call_id)
+        if not isinstance(execution, dict):
+            raise ValueError("Agent authorization tool execution is missing")
+        execution["authorizationDecision"] = normalized_decision
+        if normalized_decision == "approved":
+            execution["status"] = "authorized"
+            execution["error"] = ""
+            execution["authorizedAt"] = now_iso()
+            result = {
+                "ok": True,
+                "action": action,
+                "path": str(pending.get("path") or ""),
+                "authorized": True,
+                "executed": False,
+            }
+            resume_status = "tools"
+        else:
+            result = {
+                "ok": False,
+                "action": action,
+                "path": str(pending.get("path") or ""),
+                "rejected": True,
+                "error": f"User rejected {action}.",
+            }
+            execution["status"] = "completed"
+            execution["result"] = _json_clone(result)
+            execution["error"] = result["error"]
+            execution["completedAt"] = now_iso()
+            if not _agent_has_current_tool_message(run, call_id):
+                run["messages"].append({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": action,
+                    "content": _agent_tool_message_content(result),
+                })
+            run["pending_tool_calls"] = [
+                call for call in run.get("pending_tool_calls") or []
+                if call.get("id") != call_id
+            ]
+            resume_status = "tools" if run["pending_tool_calls"] else "model"
+        run["pending_authorization"] = None
+        run["keys"] = []
+        run["status"] = "waiting_credentials"
+        run["resume_status"] = resume_status
+        run["updated_at"] = now_iso()
+        run["condition"].notify_all()
+
+    _append_agent_event(run, "authorization_submitted", {
+        "authorizationId": authorization_id,
+        "toolCallId": call_id,
+        "decision": normalized_decision,
+    })
+    if normalized_decision == "rejected":
+        _append_agent_event(run, "tool_completed", {
+            "toolCallId": call_id,
+            "name": action,
+            "result": result,
+            "replayed": False,
+        })
+    _append_agent_event(run, "waiting_credentials", {
+        "resumeStatus": resume_status,
+        "reason": "authorization_submitted",
+    })
+    return result
+
+
 def _submit_agent_authorization(run, authorization_id, decision):
     normalized_decision = str(decision or "").strip().lower()
     if normalized_decision not in {"approved", "rejected"}:
@@ -1290,6 +1389,8 @@ def _submit_agent_authorization(run, authorization_id, decision):
         raise ValueError("Agent authorization request changed before submission")
     if pending.get("action") == "run_command":
         return _submit_agent_command_authorization(run, pending, normalized_decision)
+    if pending.get("action") in {"write_file", "delete_file"}:
+        return _submit_agent_file_authorization(run, pending, normalized_decision)
     call_id = str(pending.get("toolCallId") or "")
     proposal = pending.get("proposal") or {}
 
@@ -1420,10 +1521,18 @@ def _execute_agent_pending_tools(run):
             and execution.get("status") == "authorized"
             and execution.get("authorizationDecision") == "approved"
         )
+        resuming_file_mutation = bool(
+            execution
+            and execution.get("status") in {"authorized", "applying_file_mutation"}
+            and (
+                execution.get("status") == "applying_file_mutation"
+                or execution.get("authorizationDecision") == "approved"
+            )
+        )
         if reused_execution:
             result = execution.get("result") or {}
         else:
-            if not resuming_proposal and not resuming_command:
+            if not resuming_proposal and not resuming_command and not resuming_file_mutation:
                 execution = {
                     "name": name,
                     "arguments": (call.get("function") or {}).get("arguments", "{}"),
@@ -1556,6 +1665,37 @@ def _execute_agent_pending_tools(run):
                         output_callback=on_output,
                         process_callback=set_process,
                     )
+                elif spec.get("effect") == "file_mutation":
+                    if call.get("parseError") or not isinstance(call.get("arguments"), dict):
+                        raise ValueError(call.get("parseError") or "tool arguments must be an object")
+                    permission_profile = run.get("permission_profile", "read")
+                    if permission_profile == "accept" and not resuming_file_mutation:
+                        pending_authorization = _agent_file_authorization_request(run, call)
+                        execution["status"] = "waiting_authorization"
+                        execution["result"] = None
+                        run["pending_authorization"] = pending_authorization
+                        run["keys"] = []
+                        _set_agent_status(run, "waiting_authorization")
+                        _append_agent_event(
+                            run,
+                            "authorization_required",
+                            _agent_public_pending_authorization(run),
+                        )
+                        return False
+                    if permission_profile != "bypass" and not resuming_file_mutation:
+                        raise ValueError(
+                            f"permission profile does not allow file mutation: {permission_profile}"
+                        )
+                    operation_id = str(execution.get("operationId") or "")
+                    if not operation_id:
+                        operation_id = hashlib.sha256(
+                            f"{run['id']}\0{call_id}\0{call.get('fingerprint') or ''}".encode("utf-8")
+                        ).hexdigest()
+                    execution["operationId"] = operation_id
+                    execution["status"] = "applying_file_mutation"
+                    _persist_agent_run(run)
+                    arguments = {**call["arguments"], "_operationId": operation_id}
+                    result = execute_registered_tool(name, arguments)
                 elif (
                     spec.get("effect") not in {"read", "memory_write"}
                     or not spec.get("idempotent")
@@ -3087,6 +3227,209 @@ def execute_save_memory_tool(payload):
     }
 
 
+def _file_mutation_backup_path(rel_path, operation_id, action):
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", rel_path)
+    operation_id = str(operation_id or "")
+    if operation_id:
+        token = hashlib.sha256(operation_id.encode("utf-8")).hexdigest()[:16]
+        return FILE_BACKUP_DIR / f"{safe_name}.{action}-{token}.bak"
+    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    return FILE_BACKUP_DIR / f"{safe_name}.{stamp}.{uuid.uuid4().hex[:8]}.bak"
+
+
+def _delete_operation_receipt_path(operation_id, rel_path):
+    operation_id = str(operation_id or "")
+    if not operation_id:
+        return None
+    token = hashlib.sha256(
+        f"{operation_id}\0{rel_path}".encode("utf-8")
+    ).hexdigest()
+    return FILE_BACKUP_DIR / "operations" / f"delete-{token}.json"
+
+
+def _read_delete_receipt(operation_id, rel_path):
+    receipt_path = _delete_operation_receipt_path(operation_id, rel_path)
+    if not receipt_path or not receipt_path.is_file():
+        return None
+    receipt = read_json(receipt_path, {})
+    if receipt.get("action") != "delete_file" or receipt.get("path") != rel_path:
+        return None
+    return receipt
+
+
+def _prepare_write_file_data(payload):
+    payload = dict(payload or {})
+    path = str(payload.get("path") or "").strip()
+    if "content" not in payload:
+        raise ValueError("content 参数不能为空；write_file 需要完整文件内容")
+    content = normalize_text_newlines(payload.get("content") or "")
+    if not path:
+        raise ValueError(
+            "文件路径不能为空。请提供 path 参数。脚本超过 2000 字符时先 write_file 再 python 执行，不要塞进 python -c。"
+        )
+    root, target = resolve_project_path(path)
+    rel = to_project_relative(root, target)
+    old_content = ""
+    if target.exists():
+        if not target.is_file():
+            raise ValueError("目标路径已存在且不是文件")
+        try:
+            old_content = _read_edit_text(target)
+        except Exception as exc:
+            raise ValueError(f"读取原文件失败: {exc}") from exc
+    return target, rel, old_content, content
+
+
+def _prepare_delete_file_data(payload):
+    payload = dict(payload or {})
+    path = str(payload.get("path") or "").strip()
+    if not path:
+        raise ValueError("文件路径不能为空。请提供 path 参数，例如：path='output/old-script.py'。")
+    root, target = resolve_project_path(path)
+    rel = to_project_relative(root, target)
+    if not target.exists():
+        return target, rel, None
+    is_dir = target.is_dir()
+    if not is_dir and not target.is_file():
+        raise ValueError(f"目标路径不是常规文件或目录：{path}")
+    if is_dir and any(target.iterdir()):
+        raise ValueError(
+            f"目录不为空：{path}。请先清空目录内容再删除，或使用 rmdir 删除整个目录。"
+        )
+    return target, rel, is_dir
+
+
+def prepare_file_mutation_preview(action, payload):
+    if action == "write_file":
+        _, rel, old_content, content = _prepare_write_file_data(payload)
+        diff = make_unified_diff(old_content, content, rel)
+        return {
+            "action": action,
+            "path": rel,
+            "diff": diff or "(no changes)",
+            "size": len(content.encode("utf-8")),
+        }
+    if action == "delete_file":
+        target, rel, is_dir = _prepare_delete_file_data(payload)
+        if is_dir is None:
+            raise ValueError(
+                f"文件不存在：{payload.get('path') or ''}。请检查路径是否正确，或先 list_files 确认。"
+            )
+        return {
+            "action": action,
+            "path": rel,
+            "diff": "",
+            "size": 0 if is_dir else target.stat().st_size,
+            "isDirectory": bool(is_dir),
+        }
+    raise ValueError(f"unsupported file mutation: {action}")
+
+
+def execute_write_file_tool(payload):
+    payload = dict(payload or {})
+    operation_id = str(payload.pop("_operationId", "") or "")
+    with _edit_apply_lock:
+        target, rel, old_content, content = _prepare_write_file_data(payload)
+        target_existed = target.exists()
+        backup_path = (
+            _file_mutation_backup_path(rel, operation_id, "write")
+            if target_existed else None
+        )
+        if old_content == content and target_existed:
+            return {
+                "ok": True,
+                "action": "write_file",
+                "path": rel,
+                "size": len(content.encode("utf-8")),
+                "backupPath": str(backup_path) if backup_path and backup_path.is_file() else None,
+                "diff": "",
+                "replayed": True,
+            }
+
+        if target_existed and backup_path:
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            if not backup_path.exists():
+                shutil.copy2(target, backup_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write_edit_text(target, content)
+        if _read_edit_text(target) != content:
+            raise OSError("written file failed content verification")
+        return {
+            "ok": True,
+            "action": "write_file",
+            "path": rel,
+            "size": len(content.encode("utf-8")),
+            "backupPath": str(backup_path) if backup_path else None,
+            "diff": make_unified_diff(old_content, content, rel) or (
+                "(new file)" if not target_existed else ""
+            ),
+            "replayed": False,
+        }
+
+
+def execute_delete_file_tool(payload):
+    payload = dict(payload or {})
+    operation_id = str(payload.pop("_operationId", "") or "")
+    with _edit_apply_lock:
+        target, rel, is_dir = _prepare_delete_file_data(payload)
+        if is_dir is None:
+            receipt = _read_delete_receipt(operation_id, rel)
+            if receipt:
+                return {
+                    "ok": True,
+                    "action": "delete_file",
+                    "path": rel,
+                    "size": int(receipt.get("size") or 0),
+                    "backupPath": receipt.get("backupPath"),
+                    "isDirectory": bool(receipt.get("isDirectory")),
+                    "replayed": True,
+                }
+            raise ValueError(
+                f"文件不存在：{payload.get('path') or ''}。请检查路径是否正确，或先 list_files 确认。"
+            )
+
+        size = 0 if is_dir else target.stat().st_size
+        backup_path = None
+        if not is_dir:
+            backup_path = _file_mutation_backup_path(rel, operation_id, "delete")
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            if not backup_path.exists():
+                shutil.copy2(target, backup_path)
+
+        receipt_path = _delete_operation_receipt_path(operation_id, rel)
+        if receipt_path:
+            receipt_path.parent.mkdir(parents=True, exist_ok=True)
+            receipt = {
+                "action": "delete_file",
+                "path": rel,
+                "size": size,
+                "backupPath": str(backup_path) if backup_path else None,
+                "isDirectory": bool(is_dir),
+            }
+            _atomic_write_edit_text(
+                receipt_path,
+                json.dumps(receipt, ensure_ascii=False, indent=2) + "\n",
+            )
+
+        try:
+            if is_dir:
+                target.rmdir()
+            else:
+                target.unlink()
+        except FileNotFoundError:
+            if not receipt_path:
+                raise
+        return {
+            "ok": True,
+            "action": "delete_file",
+            "path": rel,
+            "size": size,
+            "backupPath": str(backup_path) if backup_path else None,
+            "isDirectory": bool(is_dir),
+            "replayed": False,
+        }
+
+
 def delete_memory(name):
     """Delete a memory file."""
     safe = safe_memory_name(name)
@@ -4052,6 +4395,46 @@ _SERVER_TOOL_DEFINITIONS = {
             },
         },
     },
+    "write_file": {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Create a project file or replace its complete contents. Existing files are backed up before replacement.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Project-relative file path.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Complete UTF-8 text content to write.",
+                    },
+                },
+                "required": ["path", "content"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "delete_file": {
+        "type": "function",
+        "function": {
+            "name": "delete_file",
+            "description": "Delete a project file or empty directory. Files are backed up before deletion.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Project-relative file or empty-directory path.",
+                    },
+                },
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        },
+    },
     "run_command": {
         "type": "function",
         "function": {
@@ -4151,6 +4534,20 @@ SERVER_TOOL_REGISTRY = {
         "execute": execute_save_memory_tool,
         "definition": _SERVER_TOOL_DEFINITIONS["save_memory"],
         "effect": "memory_write",
+        "idempotent": True,
+        "background": True,
+    },
+    "write_file": {
+        "execute": lambda payload: execute_write_file_tool(payload),
+        "definition": _SERVER_TOOL_DEFINITIONS["write_file"],
+        "effect": "file_mutation",
+        "idempotent": True,
+        "background": True,
+    },
+    "delete_file": {
+        "execute": lambda payload: execute_delete_file_tool(payload),
+        "definition": _SERVER_TOOL_DEFINITIONS["delete_file"],
+        "effect": "file_mutation",
         "idempotent": True,
         "background": True,
     },
@@ -5767,95 +6164,10 @@ class CodeHandler(BaseHTTPRequestHandler):
         self.send_json(result, 400 if result.get("blocked") else 200)
 
     def tool_write_file(self):
-        body = self.read_body_json()
-        path = (body.get("path") or "").strip()
-        content = normalize_text_newlines(body.get("content") or "")
-        if not path:
-            raise ValueError("文件路径不能为空。请提供 path 参数。脚本超过 2000 字符时先 write_file 再 python 执行，不要塞进 python -c。")
-        root, target = resolve_project_path(path)
-        rel = to_project_relative(root, target)
-
-        # Backup existing file
-        backup_path = None
-        old_content = ""
-        target_existed = target.exists()
-        if target_existed:
-            if not target.is_file():
-                raise ValueError("目标路径已存在且不是文件")
-            try:
-                old_content, _, _ = read_text_limited(target, MAX_TOOL_READ_BYTES)
-                old_content = normalize_text_newlines(old_content)
-            except Exception as exc:
-                raise ValueError(f"读取原文件失败: {exc}")
-            if old_content == content:
-                raise ValueError("文件内容无变化，无需重复写入")
-            try:
-                stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-                safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", rel)
-                backup_path = FILE_BACKUP_DIR / f"{safe_name}.{stamp}.bak"
-                backup_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(target, backup_path)
-            except Exception as exc:
-                raise ValueError(f"备份原文件失败: {exc}")
-
-        target.parent.mkdir(parents=True, exist_ok=True)
-        write_text_utf8(target, content)
-        diff = make_unified_diff(old_content, content, rel)
-
-        self.send_json({
-            "ok": True,
-            "action": "write_file",
-            "path": rel,
-            "size": len(content.encode("utf-8")),
-            "backupPath": str(backup_path) if backup_path else None,
-            "diff": diff or ("(new file)" if not target_existed else ""),
-        })
+        self.send_json(execute_registered_tool("write_file", self.read_body_json()))
 
     def tool_delete_file(self):
-        body = self.read_body_json()
-        path = (body.get("path") or "").strip()
-        if not path:
-            raise ValueError("文件路径不能为空。请提供 path 参数，例如：path='output/old-script.py'。")
-        root, target = resolve_project_path(path)
-        if not target.exists():
-            raise ValueError(f"文件不存在：{path}。请检查路径是否正确，或先 list_files 确认。")
-        is_dir = target.is_dir()
-        if not is_dir and not target.is_file():
-            raise ValueError(f"目标路径不是常规文件或目录：{path}")
-        if is_dir and any(target.iterdir()):
-            raise ValueError(f"目录不为空：{path}。请先清空目录内容再删除，或使用 rmdir 删除整个目录。")
-        rel = to_project_relative(root, target)
-
-        # Backup before deleting (files only)
-        backup_path = None
-        size = 0
-        if target.is_file():
-            size = target.stat().st_size
-            try:
-                stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-                safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", rel)
-                backup_path = FILE_BACKUP_DIR / f"{safe_name}.{stamp}.bak"
-                backup_path.parent.mkdir(parents=True, exist_ok=True)
-                # Try text first, fall back to binary copy
-                try:
-                    content, _, _ = read_text_limited(target, MAX_TOOL_READ_BYTES)
-                    backup_path.write_text(content, encoding="utf-8")
-                except ValueError:
-                    import shutil
-                    shutil.copy2(target, backup_path)
-            except Exception as exc:
-                raise ValueError(f"备份文件失败: {exc}")
-            target.unlink()
-        else:
-            target.rmdir()
-
-        self.send_json({
-            "ok": True,
-            "action": "delete_file",
-            "path": rel,
-            "size": size,
-            "backupPath": str(backup_path) if backup_path else None,
-        })
+        self.send_json(execute_registered_tool("delete_file", self.read_body_json()))
 
     def tool_web_fetch(self):
         result = execute_registered_tool("web_fetch", self.read_body_json())

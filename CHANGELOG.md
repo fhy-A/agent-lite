@@ -14,6 +14,22 @@
 
 ---
 
+## 2026-07-18 16:03 · Codex
+
+### 将直接写入与删除迁入持久 AgentRun，建立授权后执行与崩溃恢复闭环
+
+- **共享文件变更服务**：将 `/api/tools/write_file` 和 `/api/tools/delete_file` 的路径校验、备份与变更逻辑抽成 `execute_write_file_tool` / `execute_delete_file_tool`，加入 `SERVER_TOOL_REGISTRY` 并声明为 `effect=file_mutation`、`idempotent=true`、`background=true`。原 HTTP 路由和 AgentRun 现在共用同一实现。
+- **持久授权语义**：`read` / `plan` 不获得直接文件变更工具；`accept` 遇到写入或删除时生成稳定授权 ID，先持久路径、diff 预览和工具状态。批准只将执行记录标为 `authorized`，待凭据重新注入后才发生文件变更；拒绝直接补成工具结果且不触碰项目。`bypass` 可由后台直接执行。
+- **写入恢复**：`write_file` 串行读取原内容、生成稳定备份、原子替换目标并验证写后内容。若服务在写入完成后、工具结果落盘前退出，原参数恢复会识别目标已是最终内容，返回 `replayed=true`，不会重写文件或生成第二份备份。
+- **删除恢复**：`delete_file` 在移除目标前先按稳定操作 ID 落盘文件备份和删除收据；服务重启遇到已不存在的目标时，只有路径匹配的本次收据才会被认定为重放成功，从而区分“已删除”和“调用前就不存在”。文件备份保留原始字节，空目录也具有收据。
+- **目录边界**：模型工具集本来就没有独立的建目录工具；写入服务按原语义创建父目录，其余目录操作由已迁移的受控命令承担。`/api/mkdir` 仍是文件选择器 UI 接口，没有错误混入 Agent 工具注册表。
+- **迁移边界**：本阶段未切换正式前端的 `plan` / `accept` 执行所有权，子任务仍由浏览器编排；下一阶段聚焦子任务持久协议。
+- **验证结果**：新增工具筛选、批准后延迟执行、拒绝零变更、HTTP 共享服务、写入不重复备份、删除收据重放、凭据不落盘、路径安全和并发回归；文件/AgentRun/安全定向回归 `227 passed, 16 subtests passed`，最终全量回归 `530 passed, 22 subtests passed`，Python 编译和 `git diff --check` 通过。
+
+**涉及文件**：`server.py`、`tests/test_agent_runtime.py`、`tests/test_routes.py`、`README.md`、`docs/SERVER_AGENT_LOOP_PLAN.md`、`data/memory/code-architecture.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 15:46 · Codex
 
 ### 将项目记忆写入迁入持久 AgentRun，建立可安全恢复的幂等语义

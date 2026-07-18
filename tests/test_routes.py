@@ -159,7 +159,7 @@ class TestFileTools(TestServerFixture):
         self.assertEqual(set(server_mod.SERVER_TOOL_REGISTRY), {
             "request_user_input", "list_files", "read_file", "search_files", "glob_files",
             "web_fetch", "use_skill", "read_skill_resource", "save_memory", "run_command",
-            "propose_edit",
+            "propose_edit", "write_file", "delete_file",
         })
         interaction = server_mod.SERVER_TOOL_REGISTRY["request_user_input"]
         self.assertEqual(interaction["effect"], "interaction")
@@ -185,6 +185,11 @@ class TestFileTools(TestServerFixture):
         self.assertEqual(memory["effect"], "memory_write")
         self.assertTrue(memory["idempotent"])
         self.assertTrue(memory["background"])
+        for name in ("write_file", "delete_file"):
+            mutation = server_mod.SERVER_TOOL_REGISTRY[name]
+            self.assertEqual(mutation["effect"], "file_mutation")
+            self.assertTrue(mutation["idempotent"])
+            self.assertTrue(mutation["background"])
 
     def test_http_read_only_tools_share_registry_results(self):
         cases = [
@@ -340,6 +345,28 @@ class TestFileTools(TestServerFixture):
         backups = list((self._tmp_data / "file-backups").iterdir())
         self.assertGreater(len(backups), 0)
 
+    def test_write_file_shared_service_replays_without_duplicate_backup(self):
+        path = self._tmp_root / "write_replay.txt"
+        path.write_text("before", encoding="utf-8")
+        payload = {
+            "path": "write_replay.txt",
+            "content": "after",
+            "_operationId": "route-write-operation",
+        }
+        direct = server_mod.execute_registered_tool("write_file", payload)
+        backup_path = Path(direct["backupPath"])
+        before_mtime = path.stat().st_mtime_ns
+
+        status, routed = _req("POST", "/api/tools/write_file", json=payload)
+
+        self.assertEqual(status, 200)
+        self.assertFalse(direct["replayed"])
+        self.assertTrue(routed["replayed"])
+        self.assertEqual(path.read_text(encoding="utf-8"), "after")
+        self.assertEqual(path.stat().st_mtime_ns, before_mtime)
+        self.assertTrue(backup_path.is_file())
+        self.assertEqual(backup_path.read_text(encoding="utf-8"), "before")
+
     def test_write_file_path_traversal_not_outside_project(self):
         """Path traversal must not result in file written outside project or home."""
         status, data = _req("POST", "/api/tools/write_file",
@@ -364,6 +391,25 @@ class TestFileTools(TestServerFixture):
         self.assertEqual(status, 200, f"Delete failed: {data}")
         self.assertTrue(data.get("ok"))
         self.assertFalse(path.exists())
+
+    def test_delete_file_shared_service_replays_from_durable_receipt(self):
+        path = self._tmp_root / "delete_replay.txt"
+        path.write_text("delete once", encoding="utf-8")
+        payload = {
+            "path": "delete_replay.txt",
+            "_operationId": "route-delete-operation",
+        }
+        direct = server_mod.execute_registered_tool("delete_file", payload)
+        backup_path = Path(direct["backupPath"])
+
+        status, routed = _req("POST", "/api/tools/delete_file", json=payload)
+
+        self.assertEqual(status, 200)
+        self.assertFalse(direct["replayed"])
+        self.assertTrue(routed["replayed"])
+        self.assertFalse(path.exists())
+        self.assertTrue(backup_path.is_file())
+        self.assertEqual(backup_path.read_text(encoding="utf-8"), "delete once")
 
     def test_delete_file_path_traversal_rejected(self):
         status, data = _req("POST", "/api/tools/delete_file",

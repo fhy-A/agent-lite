@@ -73,8 +73,73 @@ class _AgentUpstream(BaseHTTPRequestHandler):
             message.get("role") == "user" and message.get("content") == "remember convention"
             for message in messages
         )
+        writes_file = any(
+            message.get("role") == "user" and message.get("content") == "write project file"
+            for message in messages
+        )
+        deletes_file = any(
+            message.get("role") == "user" and message.get("content") == "delete project file"
+            for message in messages
+        )
         should_call_tool = tool_result_count == 0 or (repeat_id and tool_result_count < 2)
-        if saves_memory and tool_result_count == 0:
+        if writes_file and tool_result_count == 0:
+            frames = [{
+                "choices": [{
+                    "delta": {"tool_calls": [{
+                        "index": 0,
+                        "id": "agent-write-1",
+                        "type": "function",
+                        "function": {
+                            "name": "write_file",
+                            "arguments": json.dumps({
+                                "path": "generated.txt",
+                                "content": "written by AgentRun\n",
+                            }),
+                        },
+                    }]},
+                    "finish_reason": "tool_calls",
+                }],
+            }]
+        elif writes_file:
+            frames = [
+                {"choices": [{
+                    "delta": {"content": "write task complete"},
+                    "finish_reason": "stop",
+                }]},
+                {"choices": [], "usage": {
+                    "prompt_tokens": 8,
+                    "completion_tokens": 3,
+                    "total_tokens": 11,
+                }},
+            ]
+        elif deletes_file and tool_result_count == 0:
+            frames = [{
+                "choices": [{
+                    "delta": {"tool_calls": [{
+                        "index": 0,
+                        "id": "agent-delete-1",
+                        "type": "function",
+                        "function": {
+                            "name": "delete_file",
+                            "arguments": json.dumps({"path": "obsolete.txt"}),
+                        },
+                    }]},
+                    "finish_reason": "tool_calls",
+                }],
+            }]
+        elif deletes_file:
+            frames = [
+                {"choices": [{
+                    "delta": {"content": "delete task complete"},
+                    "finish_reason": "stop",
+                }]},
+                {"choices": [], "usage": {
+                    "prompt_tokens": 8,
+                    "completion_tokens": 3,
+                    "total_tokens": 11,
+                }},
+            ]
+        elif saves_memory and tool_result_count == 0:
             frames = [{
                 "choices": [{
                     "delta": {"tool_calls": [{
@@ -481,6 +546,103 @@ class TestDurableAgentRuntime(unittest.TestCase):
         persisted = server_mod._agent_run_path(run["id"]).read_text(encoding="utf-8")
         self.assertNotIn("memory-secret-key", persisted)
 
+    def test_file_mutation_tools_require_accept_or_bypass_permission(self):
+        payload = {"tools": [
+            server_mod._SERVER_TOOL_DEFINITIONS["write_file"],
+            server_mod._SERVER_TOOL_DEFINITIONS["delete_file"],
+        ]}
+        for profile in ("read", "plan"):
+            with self.subTest(profile=profile):
+                self.assertEqual(
+                    server_mod._agent_selected_tools(
+                        payload, ["write_file", "delete_file"], profile,
+                    ),
+                    [],
+                )
+        for profile in ("accept", "bypass"):
+            with self.subTest(profile=profile):
+                selected = server_mod._agent_selected_tools(
+                    payload, ["write_file", "delete_file"], profile,
+                )
+                self.assertEqual(
+                    [item["function"]["name"] for item in selected],
+                    ["write_file", "delete_file"],
+                )
+
+    def test_accept_write_waits_for_authorization_then_executes_after_resume(self):
+        target = self.project_dir / "generated.txt"
+        run = server_mod._create_agent_run(
+            "write-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "write project file"}],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["write_file"]],
+            },
+            self.base_url,
+            ["write-before-approval-key"],
+            allowed_tools=["write_file"],
+            permission_profile="accept",
+        )
+        self._wait_status(run, "waiting_authorization")
+        self._wait_worker_idle(run)
+        pending = server_mod._agent_snapshot(run, 0)["pendingAuthorization"]
+        self.assertEqual(pending["action"], "write_file")
+        self.assertEqual(pending["path"], "generated.txt")
+        self.assertIn("written by AgentRun", pending["diff"])
+        self.assertFalse(target.exists())
+
+        approved = server_mod._submit_agent_authorization(
+            run, pending["authorizationId"], "approved",
+        )
+        self.assertTrue(approved["authorized"])
+        self.assertFalse(approved["executed"])
+        self.assertEqual(run["status"], "waiting_credentials")
+        self.assertFalse(target.exists())
+
+        server_mod._resume_agent_run(run, ["write-after-approval-key"])
+        self._wait_terminal(run)
+        snapshot = server_mod._agent_snapshot(run, 0)
+        self.assertEqual(snapshot["status"], "completed")
+        self.assertEqual(snapshot["result"]["content"], "write task complete")
+        self.assertEqual(target.read_text(encoding="utf-8"), "written by AgentRun\n")
+        result = snapshot["toolExecutions"][0]["result"]
+        self.assertEqual(result["action"], "write_file")
+        self.assertFalse(result["replayed"])
+        persisted = server_mod._agent_run_path(run["id"]).read_text(encoding="utf-8")
+        self.assertNotIn("write-before-approval-key", persisted)
+        self.assertNotIn("write-after-approval-key", persisted)
+
+    def test_rejected_delete_never_changes_project(self):
+        target = self.project_dir / "obsolete.txt"
+        target.write_text("keep me", encoding="utf-8")
+        run = server_mod._create_agent_run(
+            "delete-reject-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "delete project file"}],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["delete_file"]],
+            },
+            self.base_url,
+            ["delete-reject-key"],
+            allowed_tools=["delete_file"],
+            permission_profile="accept",
+        )
+        self._wait_status(run, "waiting_authorization")
+        self._wait_worker_idle(run)
+        pending = server_mod._agent_snapshot(run, 0)["pendingAuthorization"]
+        self.assertEqual(pending["action"], "delete_file")
+        rejected = server_mod._submit_agent_authorization(
+            run, pending["authorizationId"], "rejected",
+        )
+        self.assertTrue(rejected["rejected"])
+        self.assertTrue(target.is_file())
+
+        server_mod._resume_agent_run(run, ["delete-reject-resume-key"])
+        self._wait_terminal(run)
+        self.assertTrue(target.is_file())
+        result = server_mod._agent_snapshot(run, 0)["toolExecutions"][0]["result"]
+        self.assertTrue(result["rejected"])
+
     def test_agent_executes_network_and_skill_tools_without_browser_polling(self):
         skill_dir = self.data_dir / "skills" / "runtime-skill"
         reference_dir = skill_dir / "references"
@@ -823,6 +985,97 @@ class TestDurableAgentRuntime(unittest.TestCase):
         ))
         persisted = server_mod._agent_run_path(run_id).read_text(encoding="utf-8")
         self.assertNotIn("memory-restart-key", persisted)
+
+    def test_restart_replays_delete_from_receipt_without_second_effect(self):
+        target = self.project_dir / "obsolete.txt"
+        target.write_text("delete once", encoding="utf-8")
+        payload = {"path": "obsolete.txt"}
+        operation_id = "agent-delete-crash-operation"
+        first = server_mod.execute_registered_tool(
+            "delete_file", {**payload, "_operationId": operation_id},
+        )
+        self.assertFalse(first["replayed"])
+        self.assertFalse(target.exists())
+        backup_path = Path(first["backupPath"])
+        backup_mtime = backup_path.stat().st_mtime_ns
+
+        run_id = uuid.uuid4().hex
+        arguments = json.dumps(payload, separators=(",", ":"))
+        fingerprint = hashlib.sha256(f"delete_file\0{arguments}".encode()).hexdigest()
+        timestamp = server_mod.now_iso()
+        record = {
+            "version": 1,
+            "id": run_id,
+            "sessionId": "delete-restart-session",
+            "status": "tools",
+            "resumeStatus": "",
+            "permissionProfile": "bypass",
+            "error": "",
+            "baseUrl": self.base_url,
+            "request": {"model": "test-model", "tool_choice": "auto"},
+            "messages": [
+                {"role": "user", "content": "delete project file"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "agent-delete-1",
+                        "type": "function",
+                        "function": {"name": "delete_file", "arguments": arguments},
+                    }],
+                },
+            ],
+            "tools": [server_mod._SERVER_TOOL_DEFINITIONS["delete_file"]],
+            "rounds": [{"round": 1, "toolCalls": [], "usage": {"total_tokens": 5}}],
+            "pendingToolCalls": [{
+                "index": 0,
+                "id": "agent-delete-1",
+                "type": "function",
+                "function": {"name": "delete_file", "arguments": arguments},
+                "arguments": payload,
+                "parseError": "",
+                "fingerprint": fingerprint,
+            }],
+            "toolExecutions": {
+                "agent-delete-1": {
+                    "name": "delete_file",
+                    "arguments": arguments,
+                    "fingerprint": fingerprint,
+                    "status": "applying_file_mutation",
+                    "operationId": operation_id,
+                    "result": None,
+                    "error": "",
+                    "startedAt": timestamp,
+                    "completedAt": "",
+                },
+            },
+            "usage": {"total_tokens": 5},
+            "result": {},
+            "events": [],
+            "nextSeq": 1,
+            "maxRounds": 4,
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+        }
+        server_mod.write_json(server_mod._agent_run_path(run_id), record)
+
+        loaded = server_mod._get_agent_run(run_id)
+        self.assertEqual(loaded["status"], "waiting_credentials")
+        server_mod._resume_agent_run(loaded, ["delete-restart-key"])
+        self._wait_terminal(loaded)
+
+        snapshot = server_mod._agent_snapshot(loaded, 0)
+        self.assertEqual(snapshot["status"], "completed")
+        result = snapshot["toolExecutions"][0]["result"]
+        self.assertTrue(result["replayed"])
+        self.assertFalse(target.exists())
+        self.assertEqual(backup_path.stat().st_mtime_ns, backup_mtime)
+        self.assertTrue(any(
+            event["type"] == "tool_completed" and event["data"].get("replayed")
+            for event in snapshot["events"]
+        ))
+        persisted = server_mod._agent_run_path(run_id).read_text(encoding="utf-8")
+        self.assertNotIn("delete-restart-key", persisted)
 
     def test_agent_questionnaire_waits_durably_and_continues_after_valid_answer(self):
         run = server_mod._create_agent_run(

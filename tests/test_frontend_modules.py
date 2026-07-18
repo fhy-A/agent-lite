@@ -553,6 +553,11 @@ const skills = [
   {name: "disabled", description: "python pytest", keywords: ["python+pytest"]},
 ];
 const ranked = rankMatchedSkills(skills, new Set(["disabled"]), "Review this Python pytest project");
+const descriptionOnly = rankMatchedSkills(
+  [{name: "python-testing", description: "Python testing", keywords: []}],
+  new Set(),
+  "Explain Python decorators",
+);
 const calls = [];
 const state = {skills: [], disabledSkills: new Set()};
 const feature = createSkillsMemoryFeature({
@@ -574,6 +579,7 @@ const feature = createSkillsMemoryFeature({
   const memory = await feature.loadMemoryContext();
   process.stdout.write(JSON.stringify({
     ranked: ranked.map((skill) => skill.name),
+    descriptionOnly: descriptionOnly.map((skill) => skill.name),
     loadedSkill,
     memory,
     calls,
@@ -589,6 +595,7 @@ const feature = createSkillsMemoryFeature({
         )
         data = json.loads(completed.stdout)
         self.assertEqual(data["ranked"], ["python-tests"])
+        self.assertEqual(data["descriptionOnly"], [])
         self.assertEqual(data["loadedSkill"]["body"], "Demo instructions")
         self.assertEqual(data["memory"], {"found": True, "count": 2, "content": "memory"})
         self.assertEqual(

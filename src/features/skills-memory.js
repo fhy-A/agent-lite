@@ -31,14 +31,7 @@
         const name = (skill.name || "").toLowerCase();
         if (name.length >= 2 && lower.includes(name)) return { skill, score: 200 + name.length };
 
-        const description = (skill.description || "").toLowerCase();
-        if (!description) return null;
-        const words = description.replace(/,/g, " ").split(/\s+/).filter((word) => word.length >= 2);
-        const matchedLength = words.reduce(
-          (best, word) => lower.includes(word) ? Math.max(best, word.length) : best,
-          0,
-        );
-        return matchedLength ? { skill, score: 100 + matchedLength } : null;
+        return null;
       })
       .filter(Boolean);
     if (!candidates.length) return [];

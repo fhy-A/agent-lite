@@ -14,6 +14,20 @@
 
 ---
 
+## 2026-07-19 03:14 · Codex
+
+### 收紧内置 Skills 自动匹配，建立可重复的路由测试基线
+
+- **取消描述猜测**：前后端均不再用 Skill 描述里的普通单词触发自动加载，只根据明确关键词或 Skill 名称匹配，解决解释 Python 知识时误加载测试规范等问题。
+- **关键词按意图收紧**：区分代码审查与直接修复、Office 读取与文档生成、数据图表与 AI 图片、界面设计与通用头脑风暴，避免 `bug`、`生成`、`设计`、`Word` 等宽泛词导致多 Skill 冲突。
+- **审查意见单独分流**：为 `receiving-code-review` 补齐复合关键词和必要读取/验证工具，其优先级高于普通代码审查，可对已收到的 review feedback 先做技术判断。
+- **测试题固化**：新增内置 Skill 路由测试，覆盖 9 组正向任务、3 组误触发反例、工具可用性与目录/名称一致性；前端模块同步锁定“描述不触发”边界。
+- **验证结果**：定向回归 `6 passed, 46 subtests passed`，最终全量回归 `569 passed, 71 subtests passed`。本阶段不改动 Skill 正文、工具执行、权限或会话状态。
+
+**涉及文件**：`server.py`、`src/features/skills-memory.js`、`data/skills/*/SKILL.md`（触发元数据）、`tests/test_builtin_skills.py`、`tests/test_frontend_modules.py`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-19 02:56 · Codex
 
 ### 欢迎页完成五种随机光标接力，并稳固原生输入焦点

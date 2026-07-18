@@ -1,7 +1,7 @@
 ---
 name: office-files
 description: 读取 Word、Excel、PPT、PDF 等办公文档，提取文本、表格、内容
-keywords: docx, xlsx, pptx, pdf, word, excel, ppt, 文档, 表格, 幻灯片, 办公, 读取, 提取, 转换, office
+keywords: 读取+word, 读取+docx, 提取+word, 读取+excel, 读取+xlsx, 提取+excel, 读取+ppt, 读取+pptx, 提取+ppt, 读取+pdf, 提取+pdf, 分析+pdf, 总结+pdf
 tools: run_command, read_file, write_file
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: code-review
 description: 代码审查、代码质量检查、bug 检测、安全审查
-keywords: review, 审查, 代码审查, code review, bug, 安全, 漏洞, 质量
+keywords: 代码+审查, 审查+代码, 审查+改动, code+review, review+changes, 检查+改动, 检查+代码
 tools: read_file, search_files, glob_files
 ---
 

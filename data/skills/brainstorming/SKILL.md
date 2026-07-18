@@ -1,7 +1,7 @@
 ---
 name: brainstorming
 description: "You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation."
-keywords: brainstorm, 头脑风暴, 设计, design, 规划, plan, 创意, creative
+keywords: brainstorm, 头脑风暴, 创意+方案, 方案+对比, 需求+探索
 ---
 
 # Brainstorming Ideas Into Designs

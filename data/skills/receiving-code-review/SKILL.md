@@ -1,6 +1,8 @@
 ---
 name: receiving-code-review
 description: Use when receiving code review feedback, before implementing suggestions, especially if feedback seems unclear or technically questionable - requires technical rigor and verification, not performative agreement or blind implementation
+keywords: 代码+审查+意见, 代码+审查+建议, 审查+意见, 审查+建议, review+feedback, code+review+feedback, reviewer+suggestion
+tools: read_file, search_files, glob_files, run_command
 ---
 
 # Code Review Reception

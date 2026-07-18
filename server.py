@@ -3667,7 +3667,7 @@ def execute_read_skill_resource_tool(body):
 
 
 def match_skills(user_message):
-    """Find skills whose keywords, name, or description match the user message."""
+    """Find skills whose declared keywords or name match the user message."""
     user_lower = (user_message or "").lower()
     candidates = []
     for skill in list_skills():
@@ -3686,14 +3686,6 @@ def match_skills(user_message):
         if name and len(name) >= 2 and name in user_lower:
             candidates.append((200 + len(name), skill))
             continue
-        # Check description
-        desc = (skill.get("description") or "").lower()
-        if not desc:
-            continue
-        keywords = [w for w in desc.replace(",", " ").split() if len(w) >= 2]
-        matched_lengths = [len(keyword) for keyword in keywords if keyword in user_lower]
-        if matched_lengths:
-            candidates.append((100 + max(matched_lengths), skill))
     if not candidates:
         return []
     best_score = max(score for score, _ in candidates)

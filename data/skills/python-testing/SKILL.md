@@ -1,7 +1,7 @@
 ---
 name: python-testing
 description: Python 单元测试、pytest 编写和运行
-keywords: test, 测试, pytest, 单元测试, unittest, 自动化测试, coverage
+keywords: pytest, unittest, python+测试, 测试+python, 单元测试, 补充+测试, 编写+测试, 测试+用例, test+python, test+pytest
 tools: read_file, write_file, run_command
 ---
 

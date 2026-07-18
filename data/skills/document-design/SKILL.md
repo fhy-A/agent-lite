@@ -1,7 +1,7 @@
 ---
 name: document-design
 description: 生成美化后的 Word、PPT、Excel 和 Markdown 文档，控制排版、配色、字体和表格样式
-keywords: 美化, 排版, 生成, 样式, 配色, 字体, 设计, pptx, docx, xlsx, markdown, 报告, 周报, 演示, 表格
+keywords: 文档+美化, 文档+排版, 生成+word, 生成+docx, 制作+word, 生成+ppt, 生成+pptx, 制作+ppt, 生成+excel, 生成+xlsx, 生成+markdown, 项目+周报, 汇报+演示
 tools: run_command, write_file, read_file
 ---
 

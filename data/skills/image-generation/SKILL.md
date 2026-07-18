@@ -1,7 +1,7 @@
 ---
 name: image-generation
 description: 使用 matplotlib 和 Pillow 生成图表、统计图和数据可视化图片
-keywords: 画图, 图表, 图片, 生成, matplotlib, pillow, 柱状图, 折线图, 饼图, 散点图, 可视化, chart, plot, image, 海报, 示意图
+keywords: matplotlib, pillow, 数据+可视化, 画+图表, 生成+图表, 柱状图, 折线图, 饼图, 散点图, chart, data+plot
 tools: run_command, write_file
 ---
 

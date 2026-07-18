@@ -1,4 +1,4 @@
-# Code TODO  _上次更新：2026-07-18 19:40_
+# Code TODO  _上次更新：2026-07-18 20:07_
 
 > 只记录尚未完成且可以继续执行的事项；已完成内容统一查阅 `CHANGELOG.md`。
 
@@ -11,8 +11,8 @@
 
 ## P1 · 核心能力
 
-- [ ] **继续拆分 `app.js`** — 按 [`docs/APP_JS_SPLIT_PLAN.md`](docs/APP_JS_SPLIT_PLAN.md) 迁移 state、agent-loop、tools、render、events 和 session；边界稳定后再接入 esbuild。
-- [ ] **统一 i18n 架构** — 合并 HTML `data-i18n`、JS `t()`、服务端错误字典以及重复的 `LANG` / `I18N` 字典。
+- [ ] **继续拆分 `app.js`** — 按 [`docs/APP_JS_SPLIT_PLAN.md`](docs/APP_JS_SPLIT_PLAN.md) 迁移 state、通用 API、tools、render、events 和 session；边界稳定后再接入 esbuild。
+- [ ] **收口剩余 i18n** — 合并 `src/core/i18n.js` 内 `LANG` / `I18N` 的重复键，并评估服务端错误字典是否采用统一键约定。
 - [ ] **评估 Token 优化效果** — 基于实际使用复查截断和压缩策略的成本收益及能力副作用。
 
 ## P2 · 后续路线

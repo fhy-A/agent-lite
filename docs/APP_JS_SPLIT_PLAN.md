@@ -168,7 +168,7 @@ code/
 - [x] 抽离 HTML 转义、数字/时间格式化与 token 估算到 `src/core/utils.js`。
 - [x] 固化脚本加载顺序与正式 EXE 资源清单。
 - [x] 增加模块存在、依赖顺序、重复定义和打包资源回归测试。
-- [ ] 抽离 i18n。
+- [x] 抽离语言字典、参数插值、DOM 翻译和语言切换运行时到 `src/core/i18n.js`；`app.js` 仅注入业务重绘回调。
 - [x] 抽离 Toast 与系统通知到 `src/services/notifications.js`，业务触发条件仍保留在 `app.js`。
 - [ ] 抽离不涉及 Agent 循环的通用 API 请求。
 

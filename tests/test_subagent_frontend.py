@@ -9,6 +9,7 @@ class TestSubAgentFrontend(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.source = (ROOT / "app.js").read_text(encoding="utf-8")
+        cls.i18n_source = (ROOT / "src" / "core" / "i18n.js").read_text(encoding="utf-8")
 
     def test_subagent_system_message_stays_system(self):
         self.assertIn('if (msg.role === "system")', self.source)
@@ -127,7 +128,7 @@ class TestSubAgentFrontend(unittest.TestCase):
         self.assertIn('backgroundDispatch: { id, status: "pending", agentRunId: "", parentTaskStartedAt }', self.source)
         self.assertIn('updateBackgroundJob(job, "running")', self.source)
         self.assertIn('const BACKGROUND_JOB_TIMEOUT_MS = 10 * 60 * 1000;', self.source)
-        self.assertIn('后台处理中', self.source)
+        self.assertIn('后台处理中', self.i18n_source)
 
     def test_background_dispatch_uses_durable_server_agent(self):
         background_start = self.source.index("async function runBackgroundSubAgentJob(job)")

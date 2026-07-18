@@ -14,6 +14,19 @@
 
 ---
 
+## 2026-07-18 20:07 · Codex
+
+### 抽离浏览器 i18n 核心模块，统一语言切换运行时
+
+- **模块独立**：新增 `src/core/i18n.js`，集中承接原 `app.js` 内的 `LANG` / `I18N` 字典、参数插值、静态与动态 DOM 翻译、主题及文件排序标签刷新，并通过 `window.Code.core.i18n` 暴露稳定模块接口。
+- **业务边界收口**：`app.js` 改为创建 i18n runtime，只注入当前语言、`code-lang` 持久化和切换后的模型、权限、会话、消息及上下文重绘回调；现有文案、存储键、HTML `data-i18n` 行为和中英文切换流程保持不变。
+- **加载与回归保护**：`index.html` 在 `app.js` 前显式加载 i18n 模块；模块存在性、加载顺序、独立翻译与插值、切换回调、中英文词典缺键、重复定义禁入和原有文案归属测试同步更新。
+- **验证结果**：`src/core/i18n.js` 与 `app.js` JavaScript 语法、`git diff --check`、i18n/前端定向回归 `66 passed, 4 subtests passed` 通过；最终全量回归为 `549 passed, 25 subtests passed`。人工确认中文、英文切换与刷新保持未发现明显问题。
+
+**涉及文件**：`src/core/i18n.js`、`app.js`、`index.html`、`tests/test_frontend_modules.py`、`tests/test_p2_coverage.py`、`tests/test_subagent_frontend.py`、`docs/APP_JS_SPLIT_PLAN.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 19:40 · Codex
 
 ### 删除旧浏览器 Agent 编排链，完成前端执行层瘦身

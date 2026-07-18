@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 APP_SOURCE = (ROOT / "app.js").read_text(encoding="utf-8")
 RUNTIME_SOURCE = (ROOT / "agent-runtime.js").read_text(encoding="utf-8")
+I18N_SOURCE = (ROOT / "src" / "core" / "i18n.js").read_text(encoding="utf-8")
 INDEX_SOURCE = (ROOT / "index.html").read_text(encoding="utf-8")
 BUILD_SOURCE = (ROOT / "build_exe.py").read_text(encoding="utf-8")
 STYLE_SOURCE = (ROOT / "styles.css").read_text(encoding="utf-8")
@@ -197,8 +198,8 @@ eval(source);
     def test_read_only_permission_is_user_visible(self):
         self.assertIn('data-value="read"', INDEX_SOURCE)
         self.assertIn('data-i18n="permRead"', INDEX_SOURCE)
-        self.assertIn('permRead: "只读分析"', APP_SOURCE)
-        self.assertIn('permRead: "Read only"', APP_SOURCE)
+        self.assertIn('permRead: "只读分析"', I18N_SOURCE)
+        self.assertIn('permRead: "Read only"', I18N_SOURCE)
 
     def test_partial_think_blocks_never_leak_into_visible_content(self):
         parser_start = APP_SOURCE.index("function splitThoughtContent")
@@ -241,6 +242,7 @@ eval(source);
             "src/core/namespace.js",
             "src/core/icons.js",
             "src/core/utils.js",
+            "src/core/i18n.js",
             "src/services/notifications.js",
         ):
             self.assertTrue((ROOT / relative_path).is_file(), relative_path)
@@ -250,6 +252,7 @@ eval(source);
             "./src/core/namespace.js",
             "./src/core/icons.js",
             "./src/core/utils.js",
+            "./src/core/i18n.js",
             "./src/services/notifications.js",
             "./agent-runtime.js",
             "./app.js",
@@ -265,8 +268,10 @@ eval(source);
     def test_modules_export_through_code_core(self):
         icons = (ROOT / "src/core/icons.js").read_text(encoding="utf-8")
         utils = (ROOT / "src/core/utils.js").read_text(encoding="utf-8")
+        i18n = (ROOT / "src/core/i18n.js").read_text(encoding="utf-8")
         self.assertIn("core.icons = Object.freeze", icons)
         self.assertIn("core.utils = Object.freeze", utils)
+        self.assertIn("core.i18n = Object.freeze", i18n)
         for name in (
             "escapeHtml",
             "formatCompact",
@@ -275,6 +280,55 @@ eval(source);
             "estimateTokens",
         ):
             self.assertIn(name, utils)
+
+    def test_i18n_runtime_translates_interpolates_switches_and_keeps_keys_in_sync(self):
+        script = """
+global.window = {Code: {core: {}}};
+require("./src/core/i18n.js");
+let language = "zh";
+const persisted = [];
+const changed = [];
+const runtime = window.Code.core.i18n.createI18nRuntime({
+  getLanguage: () => language,
+  setLanguage: (nextLanguage) => { language = nextLanguage; },
+  persistLanguage: (nextLanguage) => persisted.push(nextLanguage),
+  onLanguageChanged: (nextLanguage) => changed.push(nextLanguage),
+});
+const zh = runtime.t("editingMemory", {name: "demo"});
+runtime.setLang("en");
+const en = runtime.t("editingMemory", {name: "demo"});
+const {LANG, I18N} = window.Code.core.i18n;
+const missingKeys = {
+  i18nEn: Object.keys(I18N.zh).filter((key) => !(key in I18N.en)),
+  i18nZh: Object.keys(I18N.en).filter((key) => !(key in I18N.zh)),
+  langEn: Object.keys(LANG.zh).filter((key) => !(key in LANG.en)),
+  langZh: Object.keys(LANG.en).filter((key) => !(key in LANG.zh)),
+};
+process.stdout.write(JSON.stringify({zh, en, persisted, changed, missingKeys}));
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+        self.assertEqual(
+            json.loads(completed.stdout),
+            {
+                "zh": "编辑中：demo",
+                "en": "Editing: demo",
+                "persisted": ["en"],
+                "changed": ["en"],
+                "missingKeys": {
+                    "i18nEn": [],
+                    "i18nZh": [],
+                    "langEn": [],
+                    "langZh": [],
+                },
+            },
+        )
 
     def test_notifications_export_through_code_services(self):
         source = (ROOT / "src/services/notifications.js").read_text(encoding="utf-8")
@@ -285,6 +339,8 @@ eval(source);
     def test_app_uses_extracted_modules_without_duplicate_definitions(self):
         self.assertIn("const { uiIcon } = window.Code.core.icons", APP_SOURCE)
         self.assertIn("} = window.Code.core.utils", APP_SOURCE)
+        self.assertIn("const { createI18nRuntime } = window.Code.core.i18n", APP_SOURCE)
+        self.assertIn("const { t, setLang, applyI18n } = createI18nRuntime", APP_SOURCE)
         self.assertIn(
             "const { showToast, notify: _notify } = window.Code.services.notifications",
             APP_SOURCE,
@@ -297,6 +353,11 @@ eval(source);
             "function formatNumber(",
             "function formatElapsed(",
             "function estimateTokens(",
+            "const LANG =",
+            "const I18N =",
+            "function t(key",
+            "function setLang(",
+            "function applyI18n(",
             "function showToast(",
             "function _notify(",
         ):

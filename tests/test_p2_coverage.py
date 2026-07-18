@@ -229,7 +229,7 @@ class TestI18nCoverage(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         root = Path(__file__).resolve().parent.parent
-        cls.source = (root / "app.js").read_text(encoding="utf-8")
+        cls.source = (root / "src" / "core" / "i18n.js").read_text(encoding="utf-8")
         cls.html_source = (root / "index.html").read_text(encoding="utf-8")
 
     def test_both_languages_present(self):
@@ -240,10 +240,8 @@ class TestI18nCoverage(unittest.TestCase):
 
     def test_both_languages_have_similar_size(self):
         """zh and en should have roughly the same number of entries."""
-        zh_count = self.source.count(": \"") + self.source.count(": '")
-        # Just verify both sections exist and are non-trivial
-        self.assertIn('"toolListFiles"', self.source)  # en key
-        self.assertIn('"toolListFiles"', self.source)  # also used as key
+        # A representative key must exist once in each main language section.
+        self.assertEqual(self.source.count("toolListFiles:"), 2)
 
     def test_t_supports_interpolation(self):
         self.assertIn("function t(key", self.source)
@@ -269,7 +267,7 @@ class TestI18nCoverage(unittest.TestCase):
         for key in critical:
             # Check as I18N property name
             found = (f"{key}: " in self.source or f"{key}:" in self.source)
-            self.assertTrue(found, f"Critical key '{key}' not found in app.js")
+            self.assertTrue(found, f"Critical key '{key}' not found in i18n.js")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -282,6 +280,7 @@ class TestCompactSummaryMarker(unittest.TestCase):
     def setUpClass(cls):
         root = Path(__file__).resolve().parent.parent
         cls.source = (root / "app.js").read_text(encoding="utf-8")
+        cls.i18n_source = (root / "src" / "core" / "i18n.js").read_text(encoding="utf-8")
 
     def test_compact_summary_has_message_flow_projection(self):
         self.assertIn('msg.meta?.kind === "compact-summary"', self.source)
@@ -293,8 +292,8 @@ class TestCompactSummaryMarker(unittest.TestCase):
         self.assertIn('kind: "compact-summary"', self.source)
 
     def test_marker_is_localized(self):
-        self.assertIn('compactMarker: "上下文已压缩"', self.source)
-        self.assertIn('compactMarker: "Context compacted"', self.source)
+        self.assertIn('compactMarker: "上下文已压缩"', self.i18n_source)
+        self.assertIn('compactMarker: "Context compacted"', self.i18n_source)
 
     def test_manual_compaction_keeps_marker_chronology(self):
         self.assertIn("const kept = state.messages.slice(-keepCount)", self.source)

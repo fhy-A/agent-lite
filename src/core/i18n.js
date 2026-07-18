@@ -1,0 +1,597 @@
+(function initializeCodeI18n(global) {
+  "use strict";
+
+  const core = global.Code && global.Code.core;
+  if (!core) throw new Error("Code core namespace must load before i18n");
+
+  const LANG = {
+
+    zh: {
+
+      settings: "设置", models: "模型", memory: "记忆", skills: "Skills", system: "System Prompt", theme: "主题", language: "语言", update: "更新", account: "账户",
+
+      baseUrl: "Base URL", apiKeys: "API Keys", refreshModels: "刷新", availableModels: "可用模型",
+
+      temperature: "温度", maxTokens: "最大输出", show: "显示", hide: "隐藏", save: "保存", cancel: "取消",
+
+      name: "名称", description: "描述", keywords: "关键词", tools: "工具", body: "正文",
+
+      addKey: "+ 添加 Key", confirmDelete: "确认", newMemory: "新建记忆", editing: "编辑中",
+
+      enabled: "已启用", disabled: "已禁用", noMemory: "暂无记忆", noSkills: "暂无 Skill",
+
+      light: "亮", dark: "暗", followSystem: "系统",
+
+      skillPath: "文件路径", skillExplicitOnly: "此 Skill 仅支持显式调用",
+
+    },
+
+    en: {
+
+      settings: "Settings", models: "Models", memory: "Memory", skills: "Skills", system: "System Prompt", theme: "Theme", language: "Language", update: "Update", account: "Account",
+
+      baseUrl: "Base URL", apiKeys: "API Keys", refreshModels: "Refresh", availableModels: "Models",
+
+      temperature: "Temperature", maxTokens: "Max Tokens", show: "Show", hide: "Hide", save: "Save", cancel: "Cancel",
+
+      name: "Name", description: "Description", keywords: "Keywords", tools: "Tools", body: "Body",
+
+      addKey: "+ Add Key", confirmDelete: "Confirm", newMemory: "New Memory", editing: "Editing",
+
+      enabled: "Enabled", disabled: "Disabled", noMemory: "No memories", noSkills: "No skills",
+
+      light: "Light", dark: "Dark", followSystem: "System",
+
+      skillPath: "File Path", skillExplicitOnly: "This skill requires explicit invocation via",
+
+    },
+
+  };
+
+  const I18N = {
+    zh: {
+      toolListFiles: "列出文件", toolReadFile: "读取文件", toolSearchFiles: "搜索文件",
+      toolGlobFiles: "匹配文件", toolProposeEdit: "生成修改方案", toolApplyEdit: "应用修改",
+      toolRunCommand: "执行命令", toolWriteFile: "写入文件", toolDeleteFile: "删除文件",
+      toolWebFetch: "抓取网页", toolTask: "子任务", toolUseSkill: "加载 Skill", toolReadSkill: "读取 Skill 资源", toolSaveMemory: "保存记忆",
+      newSession: "+ 新建会话", newSkill: "+ 新建 Skill", sessionTitleDefault: "新会话", untitledSession: "未命名会话",
+      skillDesc: "描述", skillKeywords: "关键词", skillTools: "工具", skillPathLabel: "文件路径",
+      skillExplicitHint: "此 Skill 可以通过 /{name} 命令手动触发", skillEmptyHint: "点击 + 新建 Skill，或在左侧选择 Skill",
+      skillCreateHint: "将在 data/skills/ 下创建 SKILL.md 文件",
+      applyEdit: "应用修改", rejectEdit: "拒绝",
+      allowLabel: "允许", rejectLabel: "拒绝",
+      copyBtn: "copy", copiedBtn: "copied", failedBtn: "failed",
+      appliedLabel: "已应用", rejectedLabel: "已拒绝",
+      sessionInfo: "会话信息", messages: "消息", tokens: "Token",
+      sessionName: "名称", created: "创建", active: "活跃", file: "文件",
+      totalLabel: "合计", userLabel: "用户", agentLabel: "Agent",
+      inputLabel: "输入", outputLabel: "输出", cacheLabel: "缓存", contextLabel: "上下文",
+      input: "输入", output: "输出", cache: "缓存", context: "上下文",
+      user: "用户", agent: "Agent",
+      previewBtn: "预览", noFileOpen: "未打开文件", selectFileToPreview: "选择文件以预览",
+      exportBtn: "导出", tools: "工具", toolLog: "工具日志", settingsBtn: "设置",
+      files: "文件", chooseFolder: "选择文件夹", recentLabel: "最近使用",
+      welcome: "我是 Code，你的本地 AI 编程伙伴。\\n\\n我可以读文件、搜代码、跑命令、改项目。",
+      welcomeHeadline: "把想法变成可运行的代码",
+      inputPlaceholder: "描述需求、粘贴代码，或输入 / 调用命令",
+      processingLabel: "处理中", networkRecovering: "网络恢复中", networkReconnectStatus: "网络连接已中断，正在自动恢复 · 已尝试 {attempt} 次 · ", networkReconnectSuffix: " 后重试", completedLabel: "完成",
+      refreshBtn: "刷新", closePreview: "关闭", filterFiles: "筛选文件…",
+      statusDone: "完成", statusFail: "失败", statusRunning: "准备",
+      toolExecFailed: "工具执行失败", fetchFailed: "抓取失败",
+      fillRequired: "请补全必填内容", nameExists: "名称已存在",
+      enterMemoryName: "请输入记忆名称", enterMemoryBody: "请输入记忆内容",
+      memNamePlaceholder: "name，只能使用英文、数字、中划线和下划线，例如 coding-conventions",
+      memDescPlaceholder: "description，简要说明",
+      memBodyPlaceholder: "记忆内容...",
+      saveFailed: "保存失败", deleteFailed: "删除失败",
+      enterApiKey: "请先输入 API Key", noModelsFound: "未找到可用模型",
+      imageDroppedHint: "图片已发送，但当前模型不支持图片输入，已自动转为纯文本对话",
+      toolLogEmpty: "暂无工具动作", toolLogHint: "工具调用、搜索、读文件、修改确认和命令执行会显示在这里。",
+      toolActions: "条工具动作", toolCalls: "次调用", toolResults: "条结果", toolFailures: "条失败",
+      compactContext: "压缩上下文", compacting: "压缩中",
+      confirmWrite: "确认写入", applyEditLabel: "应用修改", userCancelled: "用户取消了本次工具调用",
+      settingsSaved: "设置已更新", copiedLabel: "已复制",
+      permNotifyEdit: "修改方案", permNotifyWrite: "文件写入", permNotifyPending: "待确认", permNotifyTitle: "Agent 请求确认",
+      auto: "自动", plan: "计划", request: "请求",
+      thinkingAuto: "自动", thinkingOff: "关闭", thinkingHigh: "高", thinkingMax: "最高",
+      permRead: "只读分析", permPlan: "计划", permAccept: "接受编辑", permBypass: "自动",
+      permReadTip: "仅分析项目，不修改任何内容", permPlanTip: "仅规划，不执行写操作", permAcceptTip: "可读写文件，编辑需用户确认", permBypassTip: "自动执行所有操作，无需确认",
+      permTitle: "权限策略",
+      addFile: "选择项目文件并插入路径",
+      pin: "置顶", unpin: "取消置顶", rename: "重命名", delete: "删除",
+      chatLabel: "聊天", pinnedLabel: "置顶",
+      dragSidebar: "拖拽调整侧栏宽度", dragSessions: "拖拽调整会话与文件区域高度", toggleSidebar: "收起/展开侧栏", goUp: "上一层",
+      manageProjectDir: "点击管理项目目录", filePreview: "文件预览",
+      selectModel: "选择模型", reasoningEffort: "推理强度", pauseBtn: "暂停", sendTip: "发送消息", emptyTip: "请输入内容",
+      addKey: "+ 添加 Key", edit: "编辑", editing: "编辑中", models: "模型", baseUrl: "Base URL", apiKeys: "API Keys",
+      temperature: "Temperature", maxTokens: "Max Tokens", memory: "记忆", newMemory: "新建记忆",
+      cancel: "取消", save: "保存", skills: "Skills", system: "System Prompt", deleteSkill: "删除 Skill",
+      keyBulkPlaceholder: "每行一个 Key，格式：名称 Key值（空格或者冒号分隔）。可以粘贴多个；空行自动跳过。",
+      selectSkillHint: "选择 Skill 查看详情",
+      statInputTitle: "输入 Token", statOutputTitle: "输出 Token", statCacheTitle: "缓存 Token",
+      statContextTitle: "上下文占比 · 超95%自动压缩", viewSessionInfo: "查看 Session Info",
+      usageStripTitle: "上下文 {current} / {limit} tokens",
+      deleteConfirmMsg: "确定删除「{name}」？",
+      deleteMemoryMsg: "删除记忆「{name}」？此操作不可恢复。",
+      noProjectContext: "📄 无项目上下文",
+      noSessions: "暂无历史会话", noProjectDir: "未选择项目目录",
+      projectContextHint: "在项目根目录放置 CLAUDE.md 或 AGENT.md 文件，描述项目结构和约定",
+      noMemoryContext: "🧠 无长期记忆",
+      memoryContextHint: "通过 Memory 面板添加跨会话保留的知识，Agent 每次对话都能引用",
+      light: "浅色", dark: "深色", followSystem: "跟随系统",
+      newFolder: "新建文件夹", refreshFiles: "刷新文件",
+      availableModels: "可用模型", refreshModels: "刷新模型",
+      systemPromptHint: "这里作为 Agent 的 System Prompt", resetDefault: "恢复默认",
+      language: "语言", theme: "主题", settings: "设置",
+      dragSort: "拖拽排序", keyNamePlaceholder: "名称（可选）",
+      collapseExpand: "点击收起/展开", fileAtTitle: "引用到输入框",
+      toolExpand: "详情", toolSection: "工具：", toolCount: "{count} 个工具", tasksDone: "{count} 已完成", tasksFail: "{count} 失败",
+      fetchDone: "已抓取",
+      fmtFilenameMatch: "文件名匹配", fmtRegexMode: "模式：正则", fmtTruncated: "结果已截断",
+      fmtKeyword: "关键词", fmtHitCount: "命中数量", fmtNoMatch: "没有找到匹配项",
+      fmtGlobPattern: "glob 模式", fmtMatchCount: "匹配数量", fmtNoGlobMatch: "没有匹配项",
+      fmtProposeEdit: "已生成修改方案", fmtAppliedEdit: "已应用修改", fmtBackup: "备份",
+      fmtCommand: "命令", fmtCwd: "目录", fmtExitCode: "退出码",
+      fmtSubAgentDone: "子 Agent 执行完成", fmtSubAgentFail: "子 Agent 执行失败",
+      fmtTask: "任务", fmtRounds: "轮", fmtToolCalls: "工具调用", fmtTimes: "次", fmtNoResult: "(无返回内容)",
+      fmtWroteFile: "已写入文件", fmtSize: "大小", fmtDeletedFile: "已删除文件",
+      fmtOrigSize: "原大小", fmtNoBackup: "无",
+      fmtFetched: "抓取", fmtStatus: "状态", fmtTruncatedContent: "内容已截断",
+      fmtToolResult: "工具结果",
+      fmtDir: "目录", fmtFileCount: "文件数量", fmtTruncatedList: "结果较多，已截断显示",
+      fmtEmptyDir: "目录为空", fmtLineRange: "行范围", fmtReadFile: "已读取文件",
+      fmtTruncatedFile: "，内容已截断", fmtRegexSearch: "正则搜索", fmtSearch: "搜索",
+      fmtToolLogSep: "·",
+      thoughtCollapsed: "思考已折叠", thoughtCategoryTool: "工具判断",
+      srvFileNotFound: "文件不存在", srvDirNotFound: "目录不存在", srvPathNotFound: "路径不存在",
+      srvCmdEmpty: "命令不能为空", srvCmdBlocked: "命令包含写入、删除、重定向或危险操作，已被安全策略拦截",
+      srvSearchEmpty: "搜索关键词不能为空", srvRegexInvalid: "正则无效",
+      srvGlobEmpty: "glob 模式不能为空", srvGlobInvalid: "glob 模式无效",
+      srvUnknownTool: "未知工具", srvToolFail: "工具执行失败",
+      srvNoProject: "项目目录不存在", srvNoProjectDir: "项目目录不存在或不是文件夹",
+      srvFileNameEmpty: "文件名不能为空", srvAttachEmpty: "附件内容不能为空",
+      srvTaskEmpty: "子任务描述不能为空", srvFilePathEmpty: "文件路径不能为空",
+      srvUrlEmpty: "URL 不能为空", srvFolderNameEmpty: "文件夹名称不能为空",
+      srvParentNotExist: "父目录不存在", srvBinaryFile: "binary file is not supported",
+      srvNoFilePicker: "当前环境无法打开文件选择窗口",
+      thoughtCategoryDebug: "排查判断", thoughtCategoryImpl: "实现判断",
+      toggleVisibility: "显示/隐藏", enabledStatus: "已启用", disabledStatus: "已禁用",
+      checkUpdate: "检查更新", checkingUpdate: "正在检查...",
+      upToDate: "已是最新版本", updateAvailable: "发现新版本",
+      downloadUpdate: "下载更新", downloading: "下载中...",
+      installRestart: "安装并重启", restarting: "重启中...",
+      updateFailed: "更新失败", openDownloadPage: "打开下载页面",
+      devModeUpdate: "开发模式下请手动更新", versionLabel: "版本",
+      readyToInstall: "就绪，点击安装",
+      oboWelcome: "欢迎使用 Code",
+      oboWelcomeDesc: "一个运行在你电脑上的 AI 编程助手。像聊天一样让它读代码、改 bug、搜文件、执行命令，所有操作都在你的电脑上完成。",
+      oboFeat1: "读代码、搜文件", oboFeat2: "改 bug、写功能", oboFeat3: "执行命令、运行测试", oboFeat4: "数据不出本地、操作可控",
+      oboStart: "开始配置", oboNext: "下一步", oboBack: "上一步", oboSkip: "跳过", oboDone: "开始使用",
+      oboStep1: "配置 API Key", oboStep1Desc: "Code 不内置模型，需要连接你的 API 服务：",
+      oboStep1Item1: "点击左下角设置 → Models → + 添加 Key",
+      oboStep1Item2: "输入 Base URL 和 API Key（名称可选），保存",
+      oboStep1Item3: "点击刷新模型，列表中会出现所有可用模型",
+      oboStep1Tip: "支持 OpenAI 接口格式的 API（New API 网关 / 直连等），可随时在设置中增删",
+      oboStep2: "选择项目目录", oboStep2Desc: "在左侧文件区域点击文件夹按钮，选择你要工作的项目文件夹。",
+      oboStep2Item1: "Agent 的读写操作限定在这个目录内",
+      oboStep2Item2: "目录外的文件可以读取，但写操作需要确认",
+      oboStep2Tip: "可以随时在文件树顶部切换目录",
+      oboStep3: "开始对话", oboStep3Desc: "点击新建会话按钮，选择模型，输入需求，Enter 发送。试试这个：",
+      oboStep3Example: "帮我分析一下这个项目的结构",
+      oboStep4: "权限与安全", oboStep4Desc: "选择适合你的权限模式，可以随时在输入框左侧切换：",
+      oboStep4Item1: "只能读取和搜索，不能修改",
+      oboStep4Item2: "修改操作需要你确认（推荐新手使用）",
+      oboStep4Item3: "所有操作自动执行（谨慎使用）",
+      oboStep4Tip: "Agent 改代码会先生成 Diff 供你审查，确认后才写入。修改前自动备份到 data/file-backups/",
+      appTitle: "Code",
+      apiKeysMultiline: "API Key（一行一个，支持多个）", rememberCredentials: "本机记住 API Key 和 Base URL",
+      create: "创建", createInCurrentDir: "在当前目录下创建", folderNamePlaceholder: "文件夹名称",
+      confirmCompact: "确认压缩", confirmDeleteTitle: "确认删除", confirmDeleteAction: "确认删除",
+      systemPromptDesc: "这里会作为每次对话的 System Prompt，决定 Agent 的工作边界与编程风格。",
+      modePromptPreview: "Mode Prompt 预览", newSkillTitle: "新建 Skill",
+      skillNameLabel: "名称（英文标识）", skillNamePlaceholder: "例如 code-review",
+      skillDescPlaceholder: "用于自动匹配的简短描述", skillKeywordsLabel: "关键词（逗号分隔）",
+      skillKeywordsPlaceholder: "例如 review, 审查, bug", skillToolsLabel: "工具（逗号分隔）",
+      skillToolsPlaceholder: "例如 read_file, search_files", skillBodyLabel: "正文（Markdown）",
+      skillBodyPlaceholder: "Skill 的具体规范、流程和输出格式...",
+      confirmApplyTitle: "确认应用修改", confirmApplyDesc: "Agent 已生成修改方案。确认后会写入下面这个项目文件，并自动保留备份。",
+      confirmApplyNote: "建议先快速检查 Diff 内容；不确定时可以取消，文件不会被改动。",
+      fileSortTip: "左键切换升序降序，右键切换排序规则", sortDefault: "默认", sortType: "类型", sortTime: "时间",
+      ignoredDuplicateKeys: "已忽略 {count} 个重复的 API Key", nameConflict: "名称“{name}”已存在，请使用其他名称",
+      projectContextLabel: "项目上下文", projectContextScoped: "仅当前项目生效，切换项目目录后自动更换",
+      longTermMemory: "长期记忆", memoryContextCount: "{count} 条 · 跨会话和项目保留，通过 Memory 面板管理",
+      explicitSkillTitle: "仅支持显式调用 /{name}", copy: "复制", copied: "已复制", copyFailed: "复制失败",
+      openInPreview: "在预览区打开", unnamedFile: "未命名文件", editProposal: "编辑建议", fileWriteProposal: "文件写入建议",
+      proposalOnly: "仅方案", waitingApproval: "等待批准", pendingConfirmation: "待确认",
+      modelRunning: "模型执行中", unreadMessage: "有新消息", more: "更多", sessionNameAria: "会话名称",
+      chooseFileFailed: "选择文件失败", openDefaultApp: "用默认程序打开", copyPath: "复制路径",
+      revealInFolder: "在文件夹中显示", openExplorer: "用文件资源管理器打开", openTerminal: "在此打开终端",
+      openFailed: "打开失败", pathCopied: "路径已复制", noMatchingFiles: "无匹配文件", emptyDirectory: "该目录为空",
+      writeFailed: "写入失败", compactFailed: "压缩失败", readMemoryFailed: "读取 Memory 失败",
+      notEnoughToExtract: "没有足够的对话内容可提取 Memory", loginFirst: "请先登录",
+      platformAccount: "平台账户", loggedOut: "已退出登录", notLoggedIn: "未登录中转站", loginPlatform: "登录平台账号", platformUrl: "平台地址",
+      loggedInAs: "已登录：{name}", loginExpired: "登录已过期，请重新登录", syncFailed: "同步失败：{message}",
+      syncGatewayKeys: "同步中转站 API Key", syncKeysTitle: "同步中转站 API Key", keyCount: "共 {count} 个 API Key",
+      newKeyCount: "{count} 个未添加", copyAll: "复制全部", allKeysAdded: "所有 API Key 已添加",
+      pasteKeysHint: "复制后粘贴到上方 API Key 输入框", unnamed: "未命名",
+      syncing: "同步中...", noPlatformKeys: "平台中没有可用的 API Key", alreadyAdded: "已添加",
+      accountLoggedIn: "已登录中转站", logout: "退出登录",
+      autoUpdated: "已自动更新", collapse: "收起", writing: "写入中...",
+      branches: "分支", newBranch: "+ 新建分支", branchesBtn: "分支",
+      branchesBtnTip: "查看和切换当前会话的分支，支持从当前消息创建新的对话分支",
+      noBranches: "暂无分支，点击上方按钮基于当前消息创建", createSessionFirst: "请先创建会话",
+      stopBeforeBranch: "请先停止当前输出再创建分支", branchFailed: "创建分支失败", branchCreated: "分支已创建", branchedFromHere: "已从「{title}」创建分支", branchTitleTemplate: "分支 - {title}", compactMarker: "上下文已压缩", compactMarkerMessages: "{count} 条消息", compactMarkerSaved: "预计节省 ~{tokens} tokens", compactMarkerWithDetails: "上下文已压缩 · {details}", collapseDiff: "收起 Diff", expandDiff: "展开全部 {count} 行",
+      editingMemory: "编辑中：{name}", accountUserId: "User ID", extractMemory: "提取 Memory",
+      yesterday: "昨天", backgroundPending: "等待后台处理", backgroundRunning: "后台处理中", backgroundReply: "回复",
+      toolPresetDefault: "默认", toolPresetOff: "关闭", toolPresetFull: "完整",
+      roundLimitTitle: "工具调用轮次已达到上限", roundLimitDesc: "任务可能还没完成，可以让 Agent 继续处理后续步骤。", continueTask: "继续处理",
+      loadFailed: "加载失败", imageReadFailed: "无法读取图片文件", binaryFile: "二进制文件",
+      previewUnsupported: "无法预览图片、数据库、压缩包或可执行文件", emptyFile: "空文件", noTextContent: "暂无文本内容",
+      previewRendered: "预览", previewSource: "源码", previewTable: "表格", previewFit: "适应窗口",
+      previewActualSize: "原始尺寸", previewZoomIn: "放大", previewZoomOut: "缩小",
+      previewPreviousPage: "上一页", previewNextPage: "下一页", previewPageOf: "第 {page} / {total} 页",
+      previewRows: "{count} 行", previewColumns: "{count} 列", previewPdf: "PDF 文档",
+      previewTableLimited: "仅解析前 {count} 行用于预览", previewNoRows: "文件中没有可预览的数据行",
+      errorPrefix: "错误", compactIntro: "将把较早的 {compress} 条消息压缩为一段摘要，保留最近的 {keep} 条。",
+      toCompact: "待压缩", keepRecent: "保留", estimatedSavings: "预计节省", messageUnit: "条",
+      compactNote: "压缩后的摘要会保留关键信息（需求、操作、文件修改、未完成事项），但原始对话细节无法恢复。",
+      compactButton: "压缩", noDescription: "无描述", availableSkills: "可用 Skills：", executeSkillTask: "执行 {name} 任务",
+      fileLabel: "文件", searchLabel: "搜索", subAgentLabel: "子 Agent", subTaskLabel: "子任务", mainAgentLabel: "主 Agent",
+      actionEdit: "修改", actionWrite: "写入", actionDelete: "删除", actionRun: "运行", actionGeneric: "操作", commandLabel: "命令",
+      fileOpsCount: "{count} 个文件操作", commandsCount: "{count} 条命令", awaitingApproval: "等待批准 · {count} 项操作",
+      confirmationRequired: "需要确认 · {count} 项操作", itemCount: "{count} 项", view: "查看", rejectAll: "全部拒绝",
+      approveSelected: "批准所选", progressRead: "正在读取 {target}…", progressWrite: "正在写入 {target}…",
+      progressSearch: "正在搜索 {target}…", progressList: "正在列出 {target}…", progressRun: "正在执行 {target}…",
+      progressGlob: "正在匹配 {target}…", progressEdit: "正在编辑 {target}…", progressDelete: "正在删除 {target}…",
+      progressFetch: "正在获取 {target}…", progressTask: "正在执行子任务：{target}…",
+      questionnaireTitle: "需要你的决定", questionnaireEyebrow: "关键决策",
+      questionnaireProgress: "{done}/{total} 已处理", questionnaireHint: "每个问题可独立确认或跳过；全部处理后 Agent 会自动继续。",
+      questionnaireConfirm: "确认", questionnaireCancel: "跳过",
+      questionnaireTextPlaceholder: "输入你的想法", questionnaireOtherPlaceholder: "其他想法或跳过原因（可选）",
+      questionnaireAnswered: "已确认", questionCanceled: "已跳过", questionnaireSummary: "问卷结果",
+      multiSelect: "多选",
+    },
+    en: {
+      toolListFiles: "List Files", toolReadFile: "Read File", toolSearchFiles: "Search Files",
+      toolGlobFiles: "Glob Files", toolProposeEdit: "Propose Edit", toolApplyEdit: "Apply Edit",
+      toolRunCommand: "Run Command", toolWriteFile: "Write File", toolDeleteFile: "Delete File",
+      toolWebFetch: "Web Fetch", toolTask: "Sub Task", toolUseSkill: "Use Skill", toolReadSkill: "Read Skill Resource", toolSaveMemory: "Save Memory",
+      newSession: "+ New Session", newSkill: "+ New Skill", sessionTitleDefault: "New Session", untitledSession: "Untitled",
+      skillDesc: "Description", skillKeywords: "Keywords", skillTools: "Tools", skillPathLabel: "File Path",
+      skillExplicitHint: "Can be invoked via /{name}", skillEmptyHint: "Click + New Skill or select one from the left",
+      skillCreateHint: "Creates SKILL.md under data/skills/",
+      applyEdit: "Apply edit", rejectEdit: "Reject",
+      allowLabel: "Allow", rejectLabel: "Reject",
+      copyBtn: "copy", copiedBtn: "copied", failedBtn: "failed",
+      appliedLabel: "Applied", rejectedLabel: "Rejected",
+      sessionInfo: "Session Info", messages: "Messages", tokens: "Tokens",
+      sessionName: "Name", created: "Created", active: "Active", file: "File",
+      totalLabel: "Total", userLabel: "User", agentLabel: "Agent",
+      inputLabel: "Input", outputLabel: "Output", cacheLabel: "Cache", contextLabel: "Context",
+      input: "Input", output: "Output", cache: "Cache", context: "Context",
+      user: "User", agent: "Agent",
+      previewBtn: "Preview", noFileOpen: "No file open", selectFileToPreview: "Select a file to preview",
+      exportBtn: "Export", tools: "Tools", toolLog: "Tool Log", settingsBtn: "Settings",
+      files: "Files", chooseFolder: "Choose Folder", recentLabel: "Recent",
+      welcome: "I'm Code, your local AI coding partner. I can read files, search code, run commands, and modify projects.",
+      welcomeHeadline: "Turn ideas into working code",
+      inputPlaceholder: "Describe your task, paste code, or type / for commands",
+      processingLabel: "Working", networkRecovering: "Reconnecting", networkReconnectStatus: "Connection lost. Recovering automatically · Attempt {attempt} · retry in ", networkReconnectSuffix: "", completedLabel: "Completed",
+      refreshBtn: "Refresh", closePreview: "Close", filterFiles: "Filter files...",
+      statusDone: "Done", statusFail: "Failed", statusRunning: "Preparing",
+      toolExecFailed: "Tool execution failed", fetchFailed: "Fetch failed",
+      fillRequired: "Please fill in required fields", nameExists: "Name already exists",
+      enterMemoryName: "Enter memory name", enterMemoryBody: "Enter memory content",
+      memNamePlaceholder: "name, use letters, numbers, hyphens and underscores, e.g. coding-conventions",
+      memDescPlaceholder: "description, a brief summary",
+      memBodyPlaceholder: "Memory content...",
+      saveFailed: "Save failed", deleteFailed: "Delete failed",
+      enterApiKey: "Please enter API Key first", noModelsFound: "No models found",
+      imageDroppedHint: "Image sent, but the current model does not support image input — automatically switched to text-only.",
+      toolLogEmpty: "No tool actions", toolLogHint: "Tool calls, searches, reads, edits, and commands appear here.",
+      toolActions: "tool actions", toolCalls: "calls", toolResults: "results", toolFailures: "failed",
+      compactContext: "Compact context", compacting: "Compacting",
+      confirmWrite: "Confirm write", applyEditLabel: "Apply edit", userCancelled: "User cancelled the tool call",
+      settingsSaved: "Settings saved", copiedLabel: "Copied",
+      permNotifyEdit: "Edit proposal", permNotifyWrite: "File write", permNotifyPending: "Confirm", permNotifyTitle: "Agent Request",
+      auto: "Auto", plan: "Plan", request: "Accept",
+      thinkingAuto: "Auto", thinkingOff: "Off", thinkingHigh: "High", thinkingMax: "Max",
+      permRead: "Read only", permPlan: "Plan", permAccept: "Accept edits", permBypass: "Auto",
+      permReadTip: "Analyze the project without changing it", permPlanTip: "Plan only, no writes", permAcceptTip: "Read & write, edits need confirmation", permBypassTip: "Auto-execute all",
+      permTitle: "Permissions", addFile: "Select a project file to insert its path",
+      pin: "Pin", unpin: "Unpin", rename: "Rename", delete: "Delete",
+      chatLabel: "Chats", pinnedLabel: "Pinned",
+      dragSidebar: "Drag to resize sidebar", dragSessions: "Drag to resize sections", toggleSidebar: "Toggle sidebar", goUp: "Go up",
+      manageProjectDir: "Manage project directory", filePreview: "File preview",
+      selectModel: "Select model", reasoningEffort: "Reasoning effort", pauseBtn: "Pause", sendTip: "Send", emptyTip: "Type a message",
+      addKey: "+ Add Key", edit: "Edit", editing: "Editing", models: "Models", baseUrl: "Base URL", apiKeys: "API Keys",
+      temperature: "Temperature", maxTokens: "Max Tokens", memory: "Memory", newMemory: "New Memory",
+      cancel: "Cancel", save: "Save", skills: "Skills", system: "System Prompt", deleteSkill: "Delete Skill",
+      keyBulkPlaceholder: "One key per line, format: Name KeyValue (space or colon separated). Paste multiple; blank lines skipped.",
+      selectSkillHint: "Select a Skill to view details",
+      statInputTitle: "Input tokens", statOutputTitle: "Output tokens", statCacheTitle: "Cache tokens",
+      statContextTitle: "Context usage · auto-compact above 95%", viewSessionInfo: "View Session Info",
+      usageStripTitle: "Context {current} / {limit} tokens",
+      deleteConfirmMsg: "Delete 「{name}」?",
+      deleteMemoryMsg: "Delete memory 「{name}」? This cannot be undone.",
+      noProjectContext: "📄 No project context",
+      noSessions: "No sessions", noProjectDir: "No project directory selected",
+      projectContextHint: "Place CLAUDE.md or AGENT.md in project root to describe structure and conventions",
+      noMemoryContext: "🧠 No long-term memory",
+      memoryContextHint: "Add knowledge in Memory panel that persists across sessions",
+      light: "Light", dark: "Dark", followSystem: "System",
+      newFolder: "New Folder", refreshFiles: "Refresh Files",
+      availableModels: "Available Models", refreshModels: "Refresh Models",
+      systemPromptHint: "This serves as the Agent's system prompt", resetDefault: "Reset to Default",
+      language: "Language", theme: "Theme", settings: "Settings",
+      dragSort: "Drag to sort", keyNamePlaceholder: "Name (optional)",
+      collapseExpand: "Click to collapse/expand", fileAtTitle: "Insert path to input",
+      toolExpand: "Details", toolSection: "Tools: ", toolCount: "{count} tools", tasksDone: "{count} completed", tasksFail: "{count} failed",
+      fetchDone: "Fetched",
+      fmtFilenameMatch: "filename match", fmtRegexMode: "Mode: regex", fmtTruncated: "Results truncated",
+      fmtKeyword: "Keyword", fmtHitCount: "Matches", fmtNoMatch: "No matches",
+      fmtGlobPattern: "Glob pattern", fmtMatchCount: "Match count", fmtNoGlobMatch: "No matches",
+      fmtProposeEdit: "Edit proposal generated", fmtAppliedEdit: "Edit applied", fmtBackup: "Backup",
+      fmtCommand: "Command", fmtCwd: "Directory", fmtExitCode: "Exit code",
+      fmtSubAgentDone: "Sub-agent completed", fmtSubAgentFail: "Sub-agent failed",
+      fmtTask: "Task", fmtRounds: "rounds", fmtToolCalls: "tool calls", fmtTimes: "times", fmtNoResult: "(No result)",
+      fmtWroteFile: "File written", fmtSize: "Size", fmtDeletedFile: "File deleted",
+      fmtOrigSize: "Original size", fmtNoBackup: "None",
+      fmtFetched: "Fetched", fmtStatus: "Status", fmtTruncatedContent: "Content truncated",
+      fmtToolResult: "Tool result",
+      fmtDir: "Directory", fmtFileCount: "File count", fmtTruncatedList: "Many results, truncated",
+      fmtEmptyDir: "Directory empty", fmtLineRange: "Line range", fmtReadFile: "File read",
+      fmtTruncatedFile: ", content truncated", fmtRegexSearch: "Regex search", fmtSearch: "Search",
+      fmtToolLogSep: "via",
+      thoughtCollapsed: "Thought collapsed", thoughtCategoryTool: "Tool planning",
+      srvFileNotFound: "File not found", srvDirNotFound: "Directory not found", srvPathNotFound: "Path not found",
+      srvCmdEmpty: "Command cannot be empty", srvCmdBlocked: "Command blocked by security policy",
+      srvSearchEmpty: "Search query cannot be empty", srvRegexInvalid: "Invalid regex",
+      srvGlobEmpty: "Glob pattern cannot be empty", srvGlobInvalid: "Invalid glob pattern",
+      srvUnknownTool: "Unknown tool", srvToolFail: "Tool execution failed",
+      srvNoProject: "Project directory not found", srvNoProjectDir: "Project directory not found or not a folder",
+      srvFileNameEmpty: "File name cannot be empty", srvAttachEmpty: "Attachment content cannot be empty",
+      srvTaskEmpty: "Sub-task description cannot be empty", srvFilePathEmpty: "File path cannot be empty",
+      srvUrlEmpty: "URL cannot be empty", srvFolderNameEmpty: "Folder name cannot be empty",
+      srvParentNotExist: "Parent directory not found", srvBinaryFile: "Binary file is not supported",
+      srvNoFilePicker: "Cannot open file picker in current environment",
+      thoughtCategoryDebug: "Debugging", thoughtCategoryImpl: "Implementation",
+      toggleVisibility: "Show/Hide", enabledStatus: "Enabled", disabledStatus: "Disabled",
+      checkUpdate: "Check for Updates", checkingUpdate: "Checking...",
+      upToDate: "Up to date", updateAvailable: "Update available",
+      downloadUpdate: "Download", downloading: "Downloading...",
+      installRestart: "Install & Restart", restarting: "Restarting...",
+      updateFailed: "Update failed", openDownloadPage: "Open download page",
+      devModeUpdate: "Dev mode: update manually", versionLabel: "Version",
+      readyToInstall: "Ready to install",
+      oboWelcome: "Welcome to Code",
+      oboWelcomeDesc: "An AI coding assistant running on your computer. Chat naturally to read code, fix bugs, search files, and run commands - all operations stay local.",
+      oboFeat1: "Read code, search files", oboFeat2: "Fix bugs, write features", oboFeat3: "Run commands and tests", oboFeat4: "Local data, controllable ops",
+      oboStart: "Get Started", oboNext: "Next", oboBack: "Back", oboSkip: "Skip", oboDone: "Start Using",
+      oboStep1: "Configure API Key", oboStep1Desc: "Code needs an API service to work:",
+      oboStep1Item1: "Click the gear icon, Settings, Models, then Add Key",
+      oboStep1Item2: "Enter the Base URL and API Key (name optional), then save",
+      oboStep1Item3: "Click Refresh Models to see all available models",
+      oboStep1Tip: "Supports OpenAI-compatible APIs (New API gateway, direct, etc.). Manage keys anytime in Settings.",
+      oboStep2: "Select Project Folder", oboStep2Desc: "Click the folder button in the file tree area to choose your project folder.",
+      oboStep2Item1: "All file operations are restricted to this folder",
+      oboStep2Item2: "Files outside the project can be read, but writes require confirmation",
+      oboStep2Tip: "You can switch project folders anytime via the file tree header",
+      oboStep3: "Start Chatting", oboStep3Desc: "Click New Session, select a model, type your request, then press Enter. Try this:",
+      oboStep3Example: "Analyze the structure of this project for me",
+      oboStep4: "Permissions & Safety", oboStep4Desc: "Choose a permission mode (switchable anytime via the dropdown left of the input):",
+      oboStep4Item1: "Read and search only, no modifications",
+      oboStep4Item2: "Edits require your confirmation (recommended)",
+      oboStep4Item3: "All operations run automatically (use with caution)",
+      oboStep4Tip: "Agent generates a diff for review before writing. All changes are backed up to data/file-backups/",
+      appTitle: "Code",
+      apiKeysMultiline: "API Keys (one per line)", rememberCredentials: "Remember API Keys and Base URL on this device",
+      create: "Create", createInCurrentDir: "Create in the current directory", folderNamePlaceholder: "Folder name",
+      confirmCompact: "Compact", confirmDeleteTitle: "Confirm Delete", confirmDeleteAction: "Delete",
+      systemPromptDesc: "Used as the System Prompt for every conversation, defining the Agent's boundaries and coding style.",
+      modePromptPreview: "Mode Prompt Preview", newSkillTitle: "New Skill",
+      skillNameLabel: "Name (English identifier)", skillNamePlaceholder: "e.g. code-review",
+      skillDescPlaceholder: "Short description used for automatic matching", skillKeywordsLabel: "Keywords (comma separated)",
+      skillKeywordsPlaceholder: "e.g. review, audit, bug", skillToolsLabel: "Tools (comma separated)",
+      skillToolsPlaceholder: "e.g. read_file, search_files", skillBodyLabel: "Body (Markdown)",
+      skillBodyPlaceholder: "Skill guidelines, workflow, and output format...",
+      confirmApplyTitle: "Confirm Edit", confirmApplyDesc: "The Agent generated an edit proposal. Confirm to write it to the project file and create a backup.",
+      confirmApplyNote: "Review the diff first. Cancel if unsure; the file will remain unchanged.",
+      fileSortTip: "Left-click to reverse order; right-click to change sorting", sortDefault: "Default", sortType: "Type", sortTime: "Time",
+      ignoredDuplicateKeys: "Ignored {count} duplicate API Keys", nameConflict: "Name “{name}” already exists. Choose another name.",
+      projectContextLabel: "Project Context", projectContextScoped: "Applies only to this project and changes with the project directory",
+      longTermMemory: "Long-term Memory", memoryContextCount: "{count} items · retained across sessions and projects; manage in Memory",
+      explicitSkillTitle: "Explicit invocation only: /{name}", copy: "Copy", copied: "Copied", copyFailed: "Copy failed",
+      openInPreview: "Open in preview", unnamedFile: "Untitled file", editProposal: "Edit proposal", fileWriteProposal: "File write proposal",
+      proposalOnly: "Proposal only", waitingApproval: "Awaiting approval", pendingConfirmation: "Confirmation required",
+      modelRunning: "Model running", unreadMessage: "New message", more: "More", sessionNameAria: "Session name",
+      chooseFileFailed: "File selection failed", openDefaultApp: "Open with default app", copyPath: "Copy path",
+      revealInFolder: "Show in folder", openExplorer: "Open in File Explorer", openTerminal: "Open terminal here",
+      openFailed: "Open failed", pathCopied: "Path copied", noMatchingFiles: "No matching files", emptyDirectory: "Directory is empty",
+      writeFailed: "Write failed", compactFailed: "Compaction failed", readMemoryFailed: "Failed to load Memory",
+      notEnoughToExtract: "Not enough conversation content to extract Memory", loginFirst: "Please sign in first",
+      platformAccount: "Platform Account", loggedOut: "Signed out", notLoggedIn: "Not signed in to the gateway", loginPlatform: "Sign in to platform", platformUrl: "Platform URL",
+      loggedInAs: "Signed in as {name}", loginExpired: "Session expired. Please sign in again.", syncFailed: "Sync failed: {message}",
+      syncGatewayKeys: "Sync Gateway API Keys", syncKeysTitle: "Sync Gateway API Keys", keyCount: "{count} API Keys",
+      newKeyCount: "{count} not added", copyAll: "Copy all", allKeysAdded: "All API Keys have been added",
+      pasteKeysHint: "Copy and paste them into the API Key field above", unnamed: "Unnamed",
+      syncing: "Syncing...", noPlatformKeys: "No API Keys found on the platform", alreadyAdded: "Added",
+      accountLoggedIn: "Signed in to the gateway", logout: "Sign out",
+      autoUpdated: "Auto-updated", collapse: "Collapse", writing: "Writing...",
+      branches: "Branches", newBranch: "+ New Branch", branchesBtn: "Branches",
+      branchesBtnTip: "View and switch between conversation branches, or create a new branch from the current messages",
+      noBranches: "No branches yet. Click the button above to create one from the current messages.",
+      createSessionFirst: "Create a session first", stopBeforeBranch: "Stop the current output before branching",
+      branchFailed: "Branch creation failed", branchCreated: "Branch created", branchedFromHere: "Branched from \"{title}\"", branchTitleTemplate: "Branch - {title}", compactMarker: "Context compacted", compactMarkerMessages: "{count} messages", compactMarkerSaved: "about {tokens} tokens saved", compactMarkerWithDetails: "Context compacted · {details}", collapseDiff: "Collapse Diff", expandDiff: "Expand all {count} lines",
+      editingMemory: "Editing: {name}", accountUserId: "User ID", extractMemory: "Extract Memory",
+      yesterday: "Yesterday", backgroundPending: "Waiting in background", backgroundRunning: "Processing in background", backgroundReply: "Reply to",
+      toolPresetDefault: "Default", toolPresetOff: "Off", toolPresetFull: "Full",
+      roundLimitTitle: "Tool-call round limit reached", roundLimitDesc: "The task may be incomplete. Ask the Agent to continue with the remaining steps.", continueTask: "Continue",
+      loadFailed: "Load failed", imageReadFailed: "Unable to read image", binaryFile: "Binary file",
+      previewUnsupported: "Preview is unavailable for images, databases, archives, and executables", emptyFile: "Empty file", noTextContent: "No text content",
+      previewRendered: "Preview", previewSource: "Source", previewTable: "Table", previewFit: "Fit",
+      previewActualSize: "Actual size", previewZoomIn: "Zoom in", previewZoomOut: "Zoom out",
+      previewPreviousPage: "Previous page", previewNextPage: "Next page", previewPageOf: "Page {page} / {total}",
+      previewRows: "{count} rows", previewColumns: "{count} columns", previewPdf: "PDF document",
+      previewTableLimited: "Only the first {count} rows were parsed for preview", previewNoRows: "No data rows to preview",
+      errorPrefix: "Error", compactIntro: "Compress {compress} earlier messages into a summary and keep the latest {keep} messages.",
+      toCompact: "To compact", keepRecent: "Keep", estimatedSavings: "Estimated savings", messageUnit: "messages",
+      compactNote: "The summary retains requirements, actions, file changes, and pending work, but original conversation details cannot be restored.",
+      compactButton: "Compact", noDescription: "No description", availableSkills: "Available Skills:", executeSkillTask: "Run {name} task",
+      fileLabel: "File", searchLabel: "Search", subAgentLabel: "Sub-agent", subTaskLabel: "Sub-task", mainAgentLabel: "Main Agent",
+      actionEdit: "Edit", actionWrite: "Write", actionDelete: "Delete", actionRun: "Run", actionGeneric: "Operation", commandLabel: "Command",
+      fileOpsCount: "{count} file operations", commandsCount: "{count} commands", awaitingApproval: "Awaiting approval · {count} operations",
+      confirmationRequired: "Confirmation required · {count} operations", itemCount: "{count} items", view: "View", rejectAll: "Reject all",
+      approveSelected: "Approve selected", progressRead: "Reading {target}…", progressWrite: "Writing {target}…",
+      progressSearch: "Searching {target}…", progressList: "Listing {target}…", progressRun: "Running {target}…",
+      progressGlob: "Matching {target}…", progressEdit: "Editing {target}…", progressDelete: "Deleting {target}…",
+      progressFetch: "Fetching {target}…", progressTask: "Running sub-task: {target}…",
+      questionnaireTitle: "Your decision is needed", questionnaireEyebrow: "Critical decision",
+      questionnaireProgress: "{done}/{total} resolved", questionnaireHint: "Resolve or skip each question independently. The Agent resumes automatically when all are done.",
+      questionnaireConfirm: "Confirm", questionnaireCancel: "Skip",
+      questionnaireTextPlaceholder: "Enter your answer", questionnaireOtherPlaceholder: "Other thoughts or reason for skipping (optional)",
+      questionnaireAnswered: "Confirmed", questionCanceled: "Skipped", questionnaireSummary: "Questionnaire result",
+      multiSelect: "Multiple choice",
+    },
+  };
+  const MANAGED_ELEMENT_IDS = new Set([
+    "modelPillLabel",
+    "thinkingPillLabel",
+    "permPillLabel",
+    "sessionTitle",
+  ]);
+
+  const ELEMENT_TRANSLATION_KEYS = Object.freeze({
+    newChat: "newSession",
+    togglePreview: "previewBtn",
+    exportChat: "exportBtn",
+    settingsMenuBtn: "settingsBtn",
+    toolLogToggle: "toolLog",
+    settingsModels: "models",
+    settingsMemory: "memory",
+    settingsSkills: "skills",
+    settingsSystem: "system",
+  });
+
+  const THEME_TRANSLATION_KEYS = Object.freeze({
+    light: "light",
+    dark: "dark",
+    system: "followSystem",
+  });
+
+  const SORT_TRANSLATION_KEYS = Object.freeze({
+    default: "sortDefault",
+    type: "sortType",
+    time: "sortTime",
+  });
+
+  function normalizeLanguage(language) {
+    return language === "en" ? "en" : "zh";
+  }
+
+  function translate(key, params = {}, language = "zh") {
+    const resolvedLanguage = (language || "zh") === "zh" ? "zh" : "en";
+    const template = I18N[resolvedLanguage]?.[key]
+      || LANG[resolvedLanguage]?.[key]
+      || LANG.zh?.[key]
+      || I18N.zh?.[key]
+      || key;
+    return String(template).replace(/\{(\w+)\}/g, (_, name) => params[name] ?? `{${name}}`);
+  }
+
+  function updateElementText(element, value) {
+    const uiLabel = element.querySelector("[data-ui-label]");
+    if (uiLabel) {
+      uiLabel.textContent = value;
+      return;
+    }
+    const textNode = [...element.childNodes].reverse().find((node) => node.nodeType === 3);
+    if (textNode) textNode.nodeValue = value;
+    else element.textContent = value;
+  }
+
+  function createI18nRuntime(options = {}) {
+    const getLanguage = options.getLanguage || (() => "zh");
+    const setLanguage = options.setLanguage || (() => {});
+    const persistLanguage = options.persistLanguage || (() => {});
+    const getFileSortMode = options.getFileSortMode || (() => "default");
+    const onLanguageChanged = options.onLanguageChanged || (() => {});
+    const getDocument = options.getDocument || (() => global.document);
+
+    function t(key, params = {}) {
+      return translate(key, params, getLanguage());
+    }
+
+    function applyI18n() {
+      const documentRoot = getDocument();
+      if (!documentRoot) return;
+
+      documentRoot.documentElement.lang = getLanguage() === "en" ? "en" : "zh-CN";
+      documentRoot.title = t("appTitle");
+
+      documentRoot.querySelectorAll("[data-i18n]").forEach((element) => {
+        if (MANAGED_ELEMENT_IDS.has(element.id)) return;
+        const key = element.dataset.i18n;
+        const uiLabel = element.querySelector("[data-ui-label]");
+        if (uiLabel) {
+          uiLabel.textContent = t(key);
+        } else if (element.tagName === "INPUT" || element.tagName === "TEXTAREA") {
+          element.placeholder = t(key);
+        } else if (element.childNodes.length === 1 && element.childNodes[0].nodeType === 3) {
+          element.textContent = t(key);
+        } else {
+          const textNode = [...element.childNodes].reverse().find((node) => node.nodeType === 3);
+          if (textNode) textNode.nodeValue = t(key);
+        }
+      });
+
+      documentRoot.querySelectorAll("[data-i18n-title]").forEach((element) => {
+        element.title = t(element.dataset.i18nTitle);
+      });
+
+      for (const [id, key] of Object.entries(ELEMENT_TRANSLATION_KEYS)) {
+        const element = documentRoot.getElementById(id);
+        if (element) updateElementText(element, t(key));
+      }
+
+      documentRoot.querySelectorAll(".theme-opt").forEach((element) => {
+        element.textContent = t(THEME_TRANSLATION_KEYS[element.dataset.theme] || "followSystem");
+      });
+
+      const welcome = documentRoot.querySelector(".welcome-text");
+      if (welcome) welcome.textContent = t("welcome");
+
+      const prompt = documentRoot.getElementById("prompt");
+      if (prompt) prompt.placeholder = t("inputPlaceholder");
+
+      const sortLabel = documentRoot.getElementById("fileSortLabel");
+      if (sortLabel) {
+        const sortKey = SORT_TRANSLATION_KEYS[getFileSortMode() || "default"] || "sortDefault";
+        sortLabel.textContent = t(sortKey);
+      }
+    }
+
+    function setLang(language) {
+      const nextLanguage = normalizeLanguage(language);
+      setLanguage(nextLanguage);
+      persistLanguage(nextLanguage);
+      applyI18n();
+      onLanguageChanged(nextLanguage);
+      return nextLanguage;
+    }
+
+    return Object.freeze({
+      t,
+      setLang,
+      applyI18n,
+    });
+  }
+
+  core.i18n = Object.freeze({
+    LANG,
+    I18N,
+    normalizeLanguage,
+    translate,
+    createI18nRuntime,
+  });
+})(window);

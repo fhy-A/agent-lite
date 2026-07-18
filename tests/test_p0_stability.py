@@ -189,6 +189,35 @@ class TestFrontendRefreshRecovery(unittest.TestCase):
         self.assertIn("_time: completedAt", projection)
         self.assertIn("assistant._time = assistant._time || completedAt", projection)
 
+    def test_completed_elapsed_is_persisted_before_checkpoint_clear(self):
+        clear_start = APP_SOURCE.index("async function clearRunCheckpoint(ctx)")
+        clear_end = APP_SOURCE.index("function getSessionMessages", clear_start)
+        clear_checkpoint = APP_SOURCE[clear_start:clear_end]
+        finalize_index = clear_checkpoint.index("finalizeRunTiming(ctx.sessionId)")
+        serialize_index = clear_checkpoint.index("const serialized = msgs.map")
+
+        self.assertLess(finalize_index, serialize_index)
+        self.assertIn("meta: msg.meta || {}", clear_checkpoint)
+
+        timing_start = APP_SOURCE.index("function finalizeRunTiming(sessionId)")
+        timing_end = APP_SOURCE.index("function placeMainResultByCompletionOrder", timing_start)
+        timing = APP_SOURCE[timing_start:timing_end]
+        self.assertIn("lastMsg._responseTime = display", timing)
+        self.assertIn("_responseTime: display", timing)
+
+    def test_missing_historical_elapsed_does_not_render_fake_zero_seconds(self):
+        status_start = APP_SOURCE.index("function renderCompletedRunStatus")
+        status_end = APP_SOURCE.index("function hasUsageStats", status_start)
+        status = APP_SOURCE[status_start:status_end]
+        response_start = APP_SOURCE.index("function renderAssistantResponseInfo")
+        response_end = APP_SOURCE.index("function renderBackgroundReplyReference", response_start)
+        response = APP_SOURCE[response_start:response_end]
+
+        self.assertIn("const elapsedHtml = elapsed", status)
+        self.assertIn("usageHtml && elapsedHtml", status)
+        self.assertNotIn('elapsed || "0s"', response)
+        self.assertIn("renderCompletedRunStatus", response)
+
 
 class TestServerRunStatePersistence(unittest.TestCase):
     def setUp(self):

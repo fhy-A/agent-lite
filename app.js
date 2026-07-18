@@ -283,6 +283,9 @@ async function persistRunCheckpoint(ctx, status = "running", phase = "model", ex
 
 async function clearRunCheckpoint(ctx) {
   if (!ctx?.sessionId || ctx.isSubAgent) return;
+  // Finalize timing before the completed message is serialized. Both normal
+  // runs and reload recovery finish through this shared persistence boundary.
+  finalizeRunTiming(ctx.sessionId);
   const backgroundRuns = getBackgroundRunCheckpoints(ctx.sessionId);
   const clearedRunState = backgroundRuns.length
     ? { backgroundRuns: backgroundRuns.map((item) => ({ ...item })) }
@@ -2619,7 +2622,11 @@ function renderUsageParts(usage) {
 
 function renderCompletedRunStatus(_model, elapsed, usage = null) {
   const usageHtml = renderUsageParts(usage).join(`<span class="run-separator">·</span>`);
-  return `<span class="run-status completed">${usageHtml ? `${usageHtml}<span class="run-separator">·</span>` : ""}<span class="run-time"><svg class="stat-icon stat-time-svg" viewBox="0 0 1024 1024" width="13" height="13"><path d="M711.7 655.4c-5.1 0-10.2-1.5-14.8-4.1l-199.7-112.6c-9.7-5.6-15.9-15.9-15.9-26.6V276.5c0-16.9 13.8-30.7 30.7-30.7s30.7 13.8 30.7 30.7v217.6l183.8 103.9c14.8 8.2 20 27.1 11.8 42-5.6 9.7-15.9 15.4-26.6 15.4z" fill="currentColor"/><circle cx="512" cy="512" r="378.9" fill="none" stroke="currentColor" stroke-width="61.4"/></svg>${escapeHtml(elapsed)}</span></span>`;
+  const elapsedHtml = elapsed
+    ? `<span class="run-time"><svg class="stat-icon stat-time-svg" viewBox="0 0 1024 1024" width="13" height="13"><path d="M711.7 655.4c-5.1 0-10.2-1.5-14.8-4.1l-199.7-112.6c-9.7-5.6-15.9-15.9-15.9-26.6V276.5c0-16.9 13.8-30.7 30.7-30.7s30.7 13.8 30.7 30.7v217.6l183.8 103.9c14.8 8.2 20 27.1 11.8 42-5.6 9.7-15.9 15.4-26.6 15.4z" fill="currentColor"/><circle cx="512" cy="512" r="378.9" fill="none" stroke="currentColor" stroke-width="61.4"/></svg>${escapeHtml(elapsed)}</span>`
+    : "";
+  const separator = usageHtml && elapsedHtml ? `<span class="run-separator">·</span>` : "";
+  return `<span class="run-status completed">${usageHtml}${separator}${elapsedHtml}</span>`;
 }
 
 function hasUsageStats(usage) {
@@ -2909,7 +2916,7 @@ function renderAssistantResponseInfo(msg) {
   const usage = meta._usage || msg._usage || null;
   const elapsed = msg._responseTime || meta._responseTime || "";
   if (!hasUsageStats(usage) && !elapsed) return "";
-  return `<div class="response-info">${renderCompletedRunStatus(meta._model || msg._model || "", elapsed || "0s", usage)}</div>`;
+  return `<div class="response-info">${renderCompletedRunStatus(meta._model || msg._model || "", elapsed, usage)}</div>`;
 }
 
 function renderBackgroundReplyReference(msg) {

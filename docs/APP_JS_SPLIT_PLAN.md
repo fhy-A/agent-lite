@@ -228,6 +228,7 @@ code/
 
 - [x] 抽离 Markdown、代码块、语法高亮与 ANSI 渲染到 `src/ui/markdown.js`；本地路径、外部链接和本地图片后处理统一由模块生成，消息与流式 DOM 生命周期保持不变。
 - [x] 抽离 Diff 解析和编辑建议卡片到 `src/ui/diff.js`；应用/拒绝、折叠、复制、路径打开和文件授权状态继续由应用装配层管理。
+- [x] 修复最终回复耗时晚于消息持久化的问题；刷新恢复后保留真实耗时，历史缺失耗时不再显示为 `0s`。
 - [ ] 抽离消息投影和渲染到 `src/ui/messages.js`。
 - [ ] 抽离时间线、分支和压缩标记到 `src/ui/timeline.js`。
 - [ ] 抽离顶部面板和 Session Info 到 `src/ui/panels.js`。

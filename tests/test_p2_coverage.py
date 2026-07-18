@@ -432,6 +432,30 @@ class TestSkillsCRUD(unittest.TestCase):
         self.assertEqual(result["name"], "read-test")
         self.assertEqual(result["body"], "Read carefully.")
 
+    def test_read_skill_resource_stays_inside_packaged_resource_dirs(self):
+        server_mod.create_skill(
+            name="resource-test",
+            description="Resource test",
+            body_text="Read the reference.",
+        )
+        reference_dir = self.tmp_skills / "resource-test" / "references"
+        reference_dir.mkdir()
+        (reference_dir / "guide.md").write_text("Safe reference", encoding="utf-8")
+
+        self.assertEqual(
+            server_mod.read_skill_file("resource-test", "references/guide.md"),
+            "Safe reference",
+        )
+        for skill_name, rel_path in (
+            ("..", "memory/secret.md"),
+            ("resource-test", "../SKILL.md"),
+            ("resource-test", "references/../SKILL.md"),
+            ("resource-test", "SKILL.md"),
+        ):
+            with self.subTest(skill=skill_name, path=rel_path):
+                with self.assertRaises(ValueError):
+                    server_mod.read_skill_file(skill_name, rel_path)
+
     def test_read_nonexistent(self):
         with self.assertRaises(ValueError):
             server_mod.read_skill("nonexistent")

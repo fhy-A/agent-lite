@@ -14,6 +14,20 @@
 
 ---
 
+## 2026-07-18 15:12 · Codex
+
+### 将网络与 Skills 只读能力迁入持久 AgentRun
+
+- **共享工具服务**：将 `web_fetch`、`use_skill` 和 `read_skill_resource` 从 HTTP Handler 抽成可直接调用的服务函数，并加入 `SERVER_TOOL_REGISTRY`，统一声明为 `effect=read`、`idempotent=true`、`background=true`；现有 `/api/tools/*` 路由与 AgentRun 现在共用同一实现，不再存在浏览器接口和后台任务两套执行逻辑。
+- **后台闭环**：AgentRun 可按任务允许的工具集合连续完成“模型 → 加载 Skill → 读取 Skill 资源 → 抓取网页 → 模型”，工具开始、结果和调用指纹沿用原持久检查点；浏览器完全不轮询时任务仍可完成，服务重启后的已完成结果继续遵循通用回放协议。
+- **迁移边界**：本阶段没有扩大正式“只读分析”入口的产品工具集合，也没有切换 `plan` / `accept` 的执行所有权；计划/接受编辑仍由浏览器编排，下一阶段处理命令的持久输出、取消和不可重放边界，然后再迁移直接写入/删除和子任务。
+- **Skill 资源安全**：`read_skill_resource` 现在同时校验 Skill 名称、资源一级目录和解析后的真实路径，只允许读取 Skill 包中的 `scripts/`、`references/`、`assets/`，拒绝通过 Skill 名称、`..` 或目录回退读取包外文件；Skill 根目录不存在时统一返回可预期错误。
+- **凭据与回归**：新增真实 HTTP 注册表一致性、三工具无浏览器 AgentRun、多工具结果持久化、API Key 不落盘及 Skill 路径穿越回归；Python 编译、JavaScript 所有权边界测试和 `git diff --check` 通过，定向回归 `111 passed, 10 subtests passed` 与 `71 passed`，最终全量回归 `512 passed, 12 subtests passed`。
+
+**涉及文件**：`server.py`、`tests/test_agent_runtime.py`、`tests/test_routes.py`、`tests/test_p2_coverage.py`、`README.md`、`docs/SERVER_AGENT_LOOP_PLAN.md`、`data/memory/code-architecture.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 07:51 · Codex
 
 ### 将持久编辑授权接入正式审查卡片：刷新恢复、会话隔离与原任务续跑

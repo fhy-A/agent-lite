@@ -2531,6 +2531,8 @@ def list_skills(brief=False):
 
 def read_skill(name, brief=False):
     """Read a single skill by name. brief=True returns metadata only."""
+    if not SKILLS_DIR.exists():
+        raise ValueError("skill not found")
     for skill_dir in SKILLS_DIR.iterdir():
         if not skill_dir.is_dir():
             continue
@@ -2573,15 +2575,72 @@ def _list_skill_resources(skill_dir):
 
 def read_skill_file(name, rel_path):
     """Read a resource file within a skill directory (sandboxed)."""
-    skill_dir = SKILLS_DIR / name
+    safe_name = str(name or "").strip()
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", safe_name):
+        raise ValueError("invalid skill name")
+    skill_dir = SKILLS_DIR / safe_name
     if not skill_dir.is_dir():
         raise ValueError("skill not found")
-    safe_path = (skill_dir / rel_path).resolve()
-    if not str(safe_path).startswith(str(skill_dir.resolve()) + os.sep):
+    normalized_path = str(rel_path or "").replace("\\", "/").strip("/")
+    parts = [part for part in normalized_path.split("/") if part]
+    if not parts or parts[0] not in {"scripts", "references", "assets"}:
+        raise ValueError("skill resources must be inside scripts, references, or assets")
+    resource_root = (skill_dir / parts[0]).resolve()
+    safe_path = (resource_root / Path(*parts[1:])).resolve()
+    try:
+        safe_path.relative_to(resource_root)
+    except ValueError:
         raise ValueError("path traversal rejected")
     if not safe_path.is_file():
         raise ValueError("file not found")
     return safe_path.read_text(encoding="utf-8-sig")
+
+
+def execute_use_skill_tool(body):
+    body = dict(body or {})
+    skill_name = (body.get("name") or "").strip()
+    if not skill_name:
+        raise ValueError("skill name is required")
+    try:
+        skill = read_skill(skill_name)
+    except ValueError:
+        available = [skill["name"] for skill in list_skills()]
+        return {
+            "ok": False,
+            "action": "use_skill",
+            "error": f"Skill '{skill_name}' not found. Available: {', '.join(available) or 'none'}",
+        }
+    return {
+        "ok": True,
+        "action": "use_skill",
+        "name": skill["name"],
+        "description": skill["description"],
+        "body": skill["body"],
+        "tools": skill.get("tools", []),
+    }
+
+
+def execute_read_skill_resource_tool(body):
+    body = dict(body or {})
+    skill_name = (body.get("skill") or "").strip()
+    rel_path = (body.get("file") or "").strip()
+    if not skill_name or not rel_path:
+        raise ValueError("skill and file are required")
+    try:
+        content = read_skill_file(skill_name, rel_path)
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "action": "read_skill_resource",
+            "error": str(exc),
+        }
+    return {
+        "ok": True,
+        "action": "read_skill_resource",
+        "skill": skill_name,
+        "file": rel_path,
+        "content": content,
+    }
 
 
 def match_skills(user_message):
@@ -3243,6 +3302,85 @@ def execute_glob_files_tool(body):
     }
 
 
+def execute_web_fetch_tool(body):
+    body = dict(body or {})
+    url = (body.get("url") or "").strip()
+    if not url:
+        raise ValueError("URL 不能为空。请提供要抓取的网页链接，例如：https://example.com")
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://" + url
+
+    # Preserve the existing HTTP tool's SSRF boundary when the implementation
+    # is also called from a background AgentRun.
+    try:
+        host = parse.urlparse(url).hostname or ""
+        import ipaddress
+        addr = ipaddress.ip_address(host)
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            raise ValueError("不允许访问内网地址")
+    except ValueError as exc:
+        if "不允许访问内网地址" in str(exc):
+            raise
+        # A domain name is resolved by urllib. Literal private addresses have
+        # already been rejected above.
+        pass
+
+    try:
+        req = request.Request(url, method="GET", headers={
+            "User-Agent": "Code/0.4",
+            "Accept": "text/html,text/plain,application/json",
+        })
+        with request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+            content_type = resp.headers.get("Content-Type", "")
+            charset = "utf-8"
+            if "charset=" in content_type:
+                charset = content_type.split("charset=")[-1].split(";")[0].strip()
+
+            max_bytes = 256 * 1024
+            truncated = len(data) > max_bytes
+            preview = data[:max_bytes]
+            try:
+                text = preview.decode(charset, errors="replace")
+            except Exception:
+                text = preview.decode("utf-8", errors="replace")
+
+            import html as html_mod
+            if "text/html" in content_type:
+                text = re.sub(r"<script[\s\S]*?</script>", "", text, flags=re.IGNORECASE)
+                text = re.sub(r"<style[\s\S]*?</style>", "", text, flags=re.IGNORECASE)
+                text = re.sub(r"<[^>]+>", " ", text)
+                text = re.sub(r"\s+", " ", text)
+                text = html_mod.unescape(text).strip()
+
+            _, text = scan_injection(text)
+            return {
+                "ok": True,
+                "action": "web_fetch",
+                "url": url,
+                "status": resp.status,
+                "contentType": content_type,
+                "size": len(data),
+                "truncated": truncated,
+                "content": text[:50000],
+            }
+    except error.HTTPError as exc:
+        return {
+            "ok": False,
+            "action": "web_fetch",
+            "url": url,
+            "status": exc.code,
+            "error": f"HTTP {exc.code}: {exc.reason}",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "action": "web_fetch",
+            "url": url,
+            "error": str(exc),
+        }
+
+
 _SERVER_TOOL_DEFINITIONS = {
     "request_user_input": {
         "type": "function",
@@ -3360,6 +3498,52 @@ _SERVER_TOOL_DEFINITIONS = {
             },
         },
     },
+    "web_fetch": {
+        "type": "function",
+        "function": {
+            "name": "web_fetch",
+            "description": "Fetch a public webpage or API and return readable text. HTML scripts, styles, and tags are removed.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "Public HTTP or HTTPS URL."},
+                },
+                "required": ["url"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "use_skill": {
+        "type": "function",
+        "function": {
+            "name": "use_skill",
+            "description": "Load an installed Skill by name and return its specialized instructions and declared tools.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Installed Skill name."},
+                },
+                "required": ["name"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "read_skill_resource": {
+        "type": "function",
+        "function": {
+            "name": "read_skill_resource",
+            "description": "Read a file packaged under an installed Skill's scripts, references, or assets directory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill": {"type": "string", "description": "Installed Skill name."},
+                    "file": {"type": "string", "description": "Resource path such as references/api.md."},
+                },
+                "required": ["skill", "file"],
+                "additionalProperties": False,
+            },
+        },
+    },
     "propose_edit": {
         "type": "function",
         "function": {
@@ -3413,6 +3597,27 @@ SERVER_TOOL_REGISTRY = {
     "glob_files": {
         "execute": execute_glob_files_tool,
         "definition": _SERVER_TOOL_DEFINITIONS["glob_files"],
+        "effect": "read",
+        "idempotent": True,
+        "background": True,
+    },
+    "web_fetch": {
+        "execute": execute_web_fetch_tool,
+        "definition": _SERVER_TOOL_DEFINITIONS["web_fetch"],
+        "effect": "read",
+        "idempotent": True,
+        "background": True,
+    },
+    "use_skill": {
+        "execute": execute_use_skill_tool,
+        "definition": _SERVER_TOOL_DEFINITIONS["use_skill"],
+        "effect": "read",
+        "idempotent": True,
+        "background": True,
+    },
+    "read_skill_resource": {
+        "execute": execute_read_skill_resource_tool,
+        "definition": _SERVER_TOOL_DEFINITIONS["read_skill_resource"],
         "effect": "read",
         "idempotent": True,
         "background": True,
@@ -4527,49 +4732,12 @@ class CodeHandler(BaseHTTPRequestHandler):
         self.send_json(create_skill(name, desc, body_text, tools, keywords), 201)
 
     def tool_use_skill(self):
-        body = self.read_body_json()
-        skill_name = (body.get("name") or "").strip()
-        if not skill_name:
-            raise ValueError("skill name is required")
-        try:
-            skill = read_skill(skill_name)
-            self.send_json({
-                "ok": True,
-                "action": "use_skill",
-                "name": skill["name"],
-                "description": skill["description"],
-                "body": skill["body"],
-                "tools": skill.get("tools", []),
-            })
-        except ValueError:
-            available = [s["name"] for s in list_skills()]
-            self.send_json({
-                "ok": False,
-                "action": "use_skill",
-                "error": f"Skill '{skill_name}' not found. Available: {', '.join(available) or 'none'}",
-            }, 400)
+        result = execute_registered_tool("use_skill", self.read_body_json())
+        self.send_json(result, 200 if result.get("ok") else 400)
 
     def tool_read_skill_resource(self):
-        body = self.read_body_json()
-        skill_name = (body.get("skill") or "").strip()
-        rel_path = (body.get("file") or "").strip()
-        if not skill_name or not rel_path:
-            raise ValueError("skill and file are required")
-        try:
-            content = read_skill_file(skill_name, rel_path)
-            self.send_json({
-                "ok": True,
-                "action": "read_skill_resource",
-                "skill": skill_name,
-                "file": rel_path,
-                "content": content,
-            })
-        except ValueError as e:
-            self.send_json({
-                "ok": False,
-                "action": "read_skill_resource",
-                "error": str(e),
-            }, 404)
+        result = execute_registered_tool("read_skill_resource", self.read_body_json())
+        self.send_json(result, 200 if result.get("ok") else 404)
 
     def get_sessions(self):
         index = _read_session_index()
@@ -5201,84 +5369,8 @@ class CodeHandler(BaseHTTPRequestHandler):
         })
 
     def tool_web_fetch(self):
-        body = self.read_body_json()
-        url = (body.get("url") or "").strip()
-        if not url:
-            raise ValueError("URL 不能为空。请提供要抓取的网页链接，例如：https://example.com")
-        if not url.startswith("http://") and not url.startswith("https://"):
-            url = "https://" + url
-
-        # SSRF protection: block internal/private IPs
-        try:
-            host = parse.urlparse(url).hostname or ""
-            import ipaddress
-            addr = ipaddress.ip_address(host)
-            if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-                raise ValueError("不允许访问内网地址")
-        except ValueError as exc:
-            if "不允许访问内网地址" in str(exc):
-                raise
-            # If host is not an IP (e.g., a domain), allow it
-            pass
-
-        try:
-            req = request.Request(url, method="GET", headers={
-                "User-Agent": "Code/0.4",
-                "Accept": "text/html,text/plain,application/json",
-            })
-            with request.urlopen(req, timeout=30) as resp:
-                data = resp.read()
-                content_type = resp.headers.get("Content-Type", "")
-                charset = "utf-8"
-                if "charset=" in content_type:
-                    charset = content_type.split("charset=")[-1].split(";")[0].strip()
-
-                max_bytes = 256 * 1024
-                truncated = len(data) > max_bytes
-                preview = data[:max_bytes]
-
-                try:
-                    text = preview.decode(charset, errors="replace")
-                except Exception:
-                    text = preview.decode("utf-8", errors="replace")
-
-                # Strip HTML tags for cleaner output
-                import html as html_mod
-                if "text/html" in content_type:
-                    # Simple HTML to text
-                    text = re.sub(r"<script[\s\S]*?</script>", "", text, flags=re.IGNORECASE)
-                    text = re.sub(r"<style[\s\S]*?</style>", "", text, flags=re.IGNORECASE)
-                    text = re.sub(r"<[^>]+>", " ", text)
-                    text = re.sub(r"\s+", " ", text)
-                    text = html_mod.unescape(text)
-                    text = text.strip()
-
-                _, text = scan_injection(text)
-                self.send_json({
-                    "ok": True,
-                    "action": "web_fetch",
-                    "url": url,
-                    "status": resp.status,
-                    "contentType": content_type,
-                    "size": len(data),
-                    "truncated": truncated,
-                    "content": text[:50000],
-                })
-        except error.HTTPError as exc:
-            self.send_json({
-                "ok": False,
-                "action": "web_fetch",
-                "url": url,
-                "status": exc.code,
-                "error": f"HTTP {exc.code}: {exc.reason}",
-            }, 400)
-        except Exception as exc:
-            self.send_json({
-                "ok": False,
-                "action": "web_fetch",
-                "url": url,
-                "error": str(exc),
-            }, 400)
+        result = execute_registered_tool("web_fetch", self.read_body_json())
+        self.send_json(result, 200 if result.get("ok") else 400)
 
     def tool_save_memory(self):
         body = self.read_body_json()

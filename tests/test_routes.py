@@ -158,13 +158,16 @@ class TestFileTools(TestServerFixture):
     def test_registry_declares_read_interaction_and_proposal_effects(self):
         self.assertEqual(set(server_mod.SERVER_TOOL_REGISTRY), {
             "request_user_input", "list_files", "read_file", "search_files", "glob_files",
-            "propose_edit",
+            "web_fetch", "use_skill", "read_skill_resource", "propose_edit",
         })
         interaction = server_mod.SERVER_TOOL_REGISTRY["request_user_input"]
         self.assertEqual(interaction["effect"], "interaction")
         self.assertTrue(interaction["idempotent"])
         self.assertFalse(interaction["background"])
-        for name in ("list_files", "read_file", "search_files", "glob_files"):
+        for name in (
+            "list_files", "read_file", "search_files", "glob_files",
+            "web_fetch", "use_skill", "read_skill_resource",
+        ):
             spec = server_mod.SERVER_TOOL_REGISTRY[name]
             self.assertEqual(spec["effect"], "read")
             self.assertTrue(spec["idempotent"])
@@ -187,6 +190,48 @@ class TestFileTools(TestServerFixture):
                 status, routed = _req("POST", f"/api/tools/{action}", json=payload)
                 self.assertEqual(status, 200)
                 self.assertEqual(routed, direct)
+
+    def test_http_network_and_skill_tools_share_registry_results(self):
+        skill_dir = self._tmp_data / "skills" / "registered-skill"
+        references_dir = skill_dir / "references"
+        references_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: registered-skill\ndescription: Registry test\n"
+            "tools: read_file\n---\n\nFollow the registered instructions.\n",
+            encoding="utf-8",
+        )
+        (references_dir / "guide.md").write_text("Registered reference", encoding="utf-8")
+
+        cases = [
+            ("use_skill", {"name": "registered-skill"}),
+            ("read_skill_resource", {
+                "skill": "registered-skill",
+                "file": "references/guide.md",
+            }),
+        ]
+        for action, payload in cases:
+            with self.subTest(action=action):
+                direct = server_mod.execute_registered_tool(action, payload)
+                status, routed = _req("POST", f"/api/tools/{action}", json=payload)
+                self.assertEqual(status, 200)
+                self.assertEqual(routed, direct)
+
+        web_result = {
+            "ok": True,
+            "action": "web_fetch",
+            "url": "https://example.com",
+            "status": 200,
+            "content": "Example",
+        }
+        with mock.patch.dict(
+            server_mod.SERVER_TOOL_REGISTRY["web_fetch"],
+            {"execute": lambda _payload: dict(web_result)},
+        ):
+            status, routed = _req(
+                "POST", "/api/tools/web_fetch", json={"url": "https://example.com"},
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual(routed, web_result)
 
     # ── list_files ──
     def test_list_files_root(self):

@@ -55,8 +55,56 @@ class _AgentUpstream(BaseHTTPRequestHandler):
             message.get("role") == "user" and message.get("content") == "propose edit"
             for message in messages
         )
+        uses_network_and_skills = any(
+            message.get("role") == "user"
+            and message.get("content") == "inspect skill and network"
+            for message in messages
+        )
         should_call_tool = tool_result_count == 0 or (repeat_id and tool_result_count < 2)
-        if proposes_edit and tool_result_count == 0:
+        if uses_network_and_skills and tool_result_count == 0:
+            calls = [
+                ("agent-skill-1", "use_skill", {"name": "runtime-skill"}),
+                (
+                    "agent-skill-resource-1",
+                    "read_skill_resource",
+                    {"skill": "runtime-skill", "file": "references/guide.md"},
+                ),
+                ("agent-web-1", "web_fetch", {"url": "https://example.com/docs"}),
+            ]
+            frames = [{
+                "choices": [{
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": index,
+                                "id": call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": name,
+                                    "arguments": json.dumps(arguments),
+                                },
+                            }
+                            for index, (call_id, name, arguments) in enumerate(calls)
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }],
+            }]
+        elif uses_network_and_skills:
+            frames = [
+                {
+                    "choices": [{
+                        "delta": {"content": "network and skill task complete"},
+                        "finish_reason": "stop",
+                    }],
+                },
+                {"choices": [], "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 4,
+                    "total_tokens": 14,
+                }},
+            ]
+        elif proposes_edit and tool_result_count == 0:
             frames = [{
                 "choices": [{
                     "delta": {"tool_calls": [{
@@ -188,6 +236,7 @@ class TestDurableAgentRuntime(unittest.TestCase):
             mock.patch.object(server_mod, "DATA_DIR", self.data_dir),
             mock.patch.object(server_mod, "CONFIG_PATH", self.config_path),
             mock.patch.object(server_mod, "FILE_BACKUP_DIR", self.data_dir / "file-backups"),
+            mock.patch.object(server_mod, "SKILLS_DIR", self.data_dir / "skills"),
         ]
         for patcher in self.patchers:
             patcher.start()
@@ -278,6 +327,63 @@ class TestDurableAgentRuntime(unittest.TestCase):
         self.assertNotIn("agent-secret-key", persisted)
         self.assertNotIn("agent-secret-key", json.dumps(snapshot))
         self.assertEqual(_AgentUpstream.authorizations, ["Bearer agent-secret-key"] * 2)
+
+    def test_agent_executes_network_and_skill_tools_without_browser_polling(self):
+        skill_dir = self.data_dir / "skills" / "runtime-skill"
+        reference_dir = skill_dir / "references"
+        reference_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: runtime-skill\ndescription: Runtime test\n"
+            "tools: read_file\n---\n\nFollow runtime guidance.\n",
+            encoding="utf-8",
+        )
+        (reference_dir / "guide.md").write_text("Runtime reference", encoding="utf-8")
+        web_result = {
+            "ok": True,
+            "action": "web_fetch",
+            "url": "https://example.com/docs",
+            "status": 200,
+            "content": "Public documentation",
+        }
+
+        with mock.patch.dict(
+            server_mod.SERVER_TOOL_REGISTRY["web_fetch"],
+            {"execute": lambda _payload: dict(web_result)},
+        ):
+            run = server_mod._create_agent_run(
+                "network-skill-session",
+                {
+                    "model": "test-model",
+                    "messages": [{"role": "user", "content": "inspect skill and network"}],
+                    "tools": [
+                        server_mod._SERVER_TOOL_DEFINITIONS["use_skill"],
+                        server_mod._SERVER_TOOL_DEFINITIONS["read_skill_resource"],
+                        server_mod._SERVER_TOOL_DEFINITIONS["web_fetch"],
+                    ],
+                },
+                self.base_url,
+                ["network-skill-key"],
+                allowed_tools=["use_skill", "read_skill_resource", "web_fetch"],
+            )
+            # The worker owns all three calls; no browser snapshot or tool relay
+            # is needed before it reaches the final model response.
+            self._wait_terminal(run)
+
+        snapshot = server_mod._agent_snapshot(run, 0)
+        self.assertEqual(snapshot["status"], "completed")
+        self.assertEqual(snapshot["result"]["content"], "network and skill task complete")
+        self.assertEqual(
+            snapshot["allowedTools"],
+            ["use_skill", "read_skill_resource", "web_fetch"],
+        )
+        executions = {item["name"]: item for item in snapshot["toolExecutions"]}
+        self.assertEqual(set(executions), {"use_skill", "read_skill_resource", "web_fetch"})
+        self.assertIn("runtime guidance", json.dumps(executions["use_skill"]["result"]))
+        self.assertIn("Runtime reference", json.dumps(executions["read_skill_resource"]["result"]))
+        self.assertEqual(executions["web_fetch"]["result"], web_result)
+        persisted = server_mod._agent_run_path(run["id"]).read_text(encoding="utf-8")
+        self.assertNotIn("network-skill-key", persisted)
+        self.assertNotIn("network-skill-key", json.dumps(snapshot))
 
     def test_agent_questionnaire_waits_durably_and_continues_after_valid_answer(self):
         run = server_mod._create_agent_run(

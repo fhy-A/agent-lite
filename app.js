@@ -87,8 +87,7 @@ const state = {
 
   isStreaming: false,
   streamingSessionId: null,
-  _subAgentDepth: 0,
-  branchPanelOpen: false,     // Whether branch panel is visible  // >0 means a sub-agent is running; skip UI/persistence mutations
+  branchPanelOpen: false,
 
   // Per-session message cache for session switching
   _sessionMsgs: {},
@@ -134,7 +133,6 @@ const state = {
   attachedImages: [],
 
   responseStartTime: null,
-  messageQueue: [],
 
   lang: localStorage.getItem("code-lang") || "zh",
 
@@ -162,7 +160,6 @@ function ensureSessionRun(sessionId) {
       sessionId,
       isStreaming: false,
       abortController: null,
-      messageQueue: [],
       responseStartTime: null,
       taskStartTime: null,      // persisted across tool rounds; cleared only on task end
       timerInterval: null,
@@ -364,7 +361,6 @@ function getModelContextLimit(model) {
 
 function resetRenderCache() {
   state._lastRenderedHtml = "";
-  state._lastQueueLen = -1;
 }
 
 function cacheActiveSessionState() {
@@ -477,7 +473,6 @@ function buildRunContext(sessionId) {
     stats: getSessionStats(sessionId),
     responseUsage: { input: 0, output: 0, cache: 0 },
     taskUsage: { input: 0, output: 0, cache: 0 },
-    autoCompacted: 0,
     apiKey: els.apiKey.value.trim(),
     model,
     temperature: Number(els.temperature.value || 0.2),
@@ -5480,13 +5475,6 @@ function renderMessages() {
   if (hasActiveRun && !activeRunAnchorInserted) insertActiveRunAnchor();
   insertBranchMarker();
 
-  // Render queued messages (sent while agent is busy)
-  if (run && run.messageQueue.length > 0) {
-    for (const q of run.messageQueue) {
-      rows.push(`<article class="msg queued"><div class="bubble"><em>${escapeHtml(q.text || "").slice(0, 80)}</em></div></article>`);
-    }
-  }
-
   var html = rows.filter(Boolean).join("");
   const stableHtml = html
     .replace(/<span class="streaming-timer">[^<]*<\/span>/g, '<span class="streaming-timer"></span>')
@@ -10161,114 +10149,7 @@ async function _callModelOnceAttempt(assistantIndex, useNativeTools = true, ctx 
 }
 
 
-async function callModelOnce(assistantIndex, useNativeTools = true, ctx = null) {
-  ctx = ctx || buildRunContext(state.sessionId);
-  const run = ctx.run || ensureSessionRun(ctx.sessionId);
-  const maxAttempts = 5;
-  const delays = [1000, 2000, 4000, 8000, 15000];
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const statsSnapshot = { ...(ctx.stats || {}) };
-    const taskUsageSnapshot = { ...(ctx.taskUsage || {}) };
-    const responseUsageSnapshot = { ...(ctx.responseUsage || {}) };
-    try {
-      const result = await _callModelOnceAttempt(assistantIndex, useNativeTools, ctx);
-      run.recovery = null;
-      if (!ctx.isSubAgent) {
-        await persistRunCheckpoint(ctx, "running", "model", {
-          recoveryCount: attempt - 1,
-          nextRetryAt: "",
-          lastError: "",
-          runtimeRunId: "",
-        }).catch(() => {});
-      }
-      return result;
-    } catch (error) {
-      ctx.runtimeRunId = "";
-      run.runtimeRunId = "";
-      if (error?.name === "AbortError" || !isTransientModelError(error) || attempt >= maxAttempts) {
-        run.recovery = null;
-        throw error;
-      }
-      ctx.stats = statsSnapshot;
-      ctx.taskUsage = taskUsageSnapshot;
-      ctx.responseUsage = responseUsageSnapshot;
-      if (!ctx.isSubAgent) setSessionStats(ctx.sessionId, ctx.stats);
-      resetAssistantForModelRetry(ctx, assistantIndex);
-      const jitter = Math.floor(Math.random() * 250);
-      const delayMs = delays[Math.min(attempt - 1, delays.length - 1)] + jitter;
-      await waitForModelRetry(ctx, attempt, maxAttempts, delayMs, error);
-    }
-  }
-  throw createModelRequestError("Model request failed");
-}
-
-
-
-function extractToolCall(text = "") {
-
-  const fenced = text.match(/```agent-tool\s*([\s\S]*?)```/i);
-
-  const tagged = text.match(/<agent-tool>([\s\S]*?)<\/agent-tool>/i);
-
-  const raw = fenced?.[1] || tagged?.[1];
-
-  if (!raw) return null;
-
-  try {
-
-    return JSON.parse(raw.trim());
-
-  } catch {
-
-    return { action: "invalid", raw: raw.trim() };
-
-  }
-
-}
-
-
-
-function stripToolBlock(text = "") {
-
-  return text
-
-    .replace(/```agent-tool\s*[\s\S]*?```/gi, "")
-
-    .replace(/<agent-tool>[\s\S]*?<\/agent-tool>/gi, "")
-
-    .trim();
-
-}
-
-
-
 function _safeMd(text = "") { return String(text).replace(/`/g, "\\`"); }
-
-function trimOldToolResults(messages) {
-  // Collapse verbose tool results that the model has already processed.
-  // Keep the most recent N tool results intact; older ones get trimmed.
-  let trimmed = 0;
-  const collapseThreshold = 3000; // chars — above this, a result is "verbose"
-  const keepRecent = 4;           // keep the last 4 tool results fully intact
-  let recentCount = 0;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (msg.role === "tool-result" && !msg._collapsed) {
-      recentCount++;
-      if (recentCount > keepRecent && String(msg.content || "").length > collapseThreshold) {
-        // Collapse: keep a one-line summary
-        const original = String(msg.content || "");
-        const firstLine = original.split(/\r?\n/).find(Boolean) || "(empty)";
-        msg._collapsedContent = original;
-        msg.content = `[已折叠] ${firstLine.slice(0, 200)}...（${original.length} 字符）`;
-        msg._collapsed = true;
-        trimmed++;
-      }
-    }
-  }
-  return trimmed;
-}
 
 function truncateForDisplay(text = "", max = 6000) {
 
@@ -10465,22 +10346,6 @@ function formatToolResult(result) {
 
 }
 
-function requireActionableEditResult(result) {
-  if (!result?.ok || result.action !== "propose_edit") return result;
-  const diffText = normalizeDiffText(result.diff || "");
-  const stats = getDiffStats(diffText);
-  const noChanges = !diffText || /^\(no changes\)$/i.test(diffText.trim())
-    || (stats.additions === 0 && stats.removals === 0);
-  if (!noChanges) return result;
-  return {
-    ...result,
-    ok: false,
-    error: "未检测到实际文件变化。请重新读取文件，并检查 oldText/newText 后重试。",
-  };
-}
-
-
-
 async function extractAndSuggestMemories() {
   const recent = state.messages.filter((m) => m.role === "user" || m.role === "assistant").slice(-20);
   if (recent.length < 2) { showToast("Not enough conversation content to extract memories"); return; }
@@ -10520,160 +10385,6 @@ async function extractAndSuggestMemories() {
   renderMessages();
   els.messages.scrollTop = els.messages.scrollHeight;
 }
-
-async function executeToolCall(tool, options = {}) {
-
-  if (!tool || !tool.action) {
-
-    return { ok: false, action: "invalid", error: "工具调用缺少 action" };
-
-  }
-
-  if (tool.action === "invalid") {
-
-    return { ok: false, action: "invalid", error: "工具调用 JSON 无法解析", raw: tool.raw };
-
-  }
-
-  if (tool.action === "apply_edit") {
-
-    return { ok: false, action: "apply_edit", error: 'apply_edit 必须由用户点击"应用修改"触发，Agent 不能自动写入文件' };
-
-  }
-
-  const known = new Set(nativeTools.map((item) => item.function?.name).filter(Boolean));
-
-  if (!known.has(tool.action)) {
-
-    return { ok: false, action: tool.action, error: `未知工具：${tool.action}` };
-
-  }
-
-  if (!isToolAllowed(tool.action)) {
-
-    return { ok: false, action: tool.action, error: `当前模式或权限不允许调用 ${tool.action}` };
-
-  }
-
-  if (tool.action === "request_user_input") {
-    return requestUserInput(tool, options.context || null);
-  }
-
-  // A task tool is itself the user's delegation boundary. Child agents may
-  // execute only the tools exposed by their inherited policy; suppressing the
-  // shared UI confirmation prevents concurrent children from deadlocking on
-  // overlapping inline prompts. Server-side path and command checks still run.
-  if (shouldAskBeforeTool(tool.action)) {
-
-    const ok = typeof options.authorizationDecision === "boolean"
-      ? options.authorizationDecision
-      : await requestAuthorization(tool, options.context || null);
-
-    if (!ok) {
-
-      return { ok: false, action: tool.action, error: "用户取消了本次工具调用" };
-
-    }
-
-  }
-
-
-
-  try {
-
-    const extra = {
-
-      permissionProfile: getPermissionProfile(),
-
-      agentMode: state.mode,
-
-    };
-
-    if (tool.action === "task") {
-
-      extra.model = getSelectedModel();
-
-    }
-
-    const headers = {};
-
-    if (tool.action === "task") {
-
-      const key = getBestKey(tool.model);
-
-      if (key) headers.Authorization = `Bearer ${key}`;
-
-    }
-
-    const result = await apiJson(`/api/tools/${tool.action}`, {
-
-      method: "POST",
-
-      headers: Object.keys(headers).length ? headers : undefined,
-
-      body: JSON.stringify({ ...tool, ...extra }),
-
-      signal: state.abortController?.signal,
-
-    });
-
-    return result;
-
-  } catch (err) {
-
-    return { ok: false, action: tool.action, error: err.message };
-
-  }
-
-}
-
-
-function toolImageVisionPayload(result) {
-  if (!result?.ok || result.action !== "read_file" || !result.binary || !result.visual) return null;
-  if (!String(result.mime || "").startsWith("image/")) return null;
-  const path = String(result.path || "image");
-  // SVG: use raw text with data URI instead of base64 (avoids 33% inflation)
-  if (result.svgText) {
-    const encoded = encodeURIComponent(result.svgText).replace(/'/g, "%27");
-    return {
-      path,
-      name: path.split(/[\\/]/).pop() || "image",
-      mime: result.mime,
-      base64: encoded,
-      _isSvg: true,
-    };
-  }
-  if (!result.base64) return null;
-  return {
-    path,
-    name: path.split(/[\\/]/).pop() || "image",
-    mime: result.mime,
-    base64: result.base64,
-  };
-}
-
-
-function buildToolImageVisionMessage(images) {
-  if (!images?.length) return null;
-  const paths = images.map((image) => image.path).join("、");
-  return {
-    role: "user",
-    content: [
-      {
-        type: "text",
-        text: `[系统] read_file 已读取图片：${paths}。以下图片是对应的视觉内容，请直接观察图片并继续完成用户原任务，不要再次读取同一路径。`,
-      },
-      ...images.map((image) => ({
-        type: "image_url",
-        image_url: { url: image._isSvg ? `data:${image.mime};utf8,${image.base64}` : `data:${image.mime};base64,${image.base64}` },
-      })),
-    ],
-    _images: images.map((image) => ({ path: image.path, name: image.name, mime: image.mime })),
-    meta: { _system: true, kind: "tool-image-vision" },
-  };
-}
-
-
 
 async function applyPendingEdit(editId) {
 
@@ -10798,7 +10509,6 @@ async function commitPendingEdit() {
 function createSubContext(parentCtx, taskPrompt) {
   const prompt = String(taskPrompt || "").trim();
   const authorizationLabel = prompt.replace(/\s+/g, " ").slice(0, 24) || "子任务";
-  const requiresToolUse = /(创建|写入|修改|编辑|删除|读取|搜索|查找|列出|运行|执行|验证|测试|抓取|文件|目录|路径|create|write|edit|delete|read|search|list|run|execute|verify|test|fetch|file|folder|directory|path)/i.test(prompt);
   const subSystem = [
     SYSTEM_SECURITY_LAYER,
     `你是一个编程子 Agent，负责亲自完成主 Agent 分配的子任务。你只能使用主 Agent 当前权限策略开放给你的工具，不得尝试提升权限。`,
@@ -10814,23 +10524,12 @@ function createSubContext(parentCtx, taskPrompt) {
       { role: "system", content: subSystem },
       { role: "user", content: taskPrompt },
     ],
-    parent: parentCtx,
     isSubAgent: true,
     authorizationId: `sub-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     authorizationLabel,
-    depth: (parentCtx.depth || 0) + 1,
-    subResult: null,
-    requiresToolUse,
-    toolCallCount: 0,
-    toolRoundCount: 0,
-    successfulToolCount: 0,
-    toolMutationEpoch: 0,
-    successfulToolSignatures: new Set(),
-    noToolRetries: 0,
     tools: (parentCtx.tools || getNativeTools()).filter((tool) => !["task", "request_user_input"].includes(tool.function?.name)),
     stats: { input: 0, output: 0, cache: 0 },
     taskUsage: { input: 0, output: 0, cache: 0 },
-    autoCompacted: 0,
   };
   return subCtx;
 }
@@ -10945,16 +10644,6 @@ function backgroundJobElapsed(job, finishedAt = Date.now()) {
   return formatElapsedMs(Math.max(0, Number(finishedAt) - submittedAt));
 }
 
-function mergeDelegatedUsage(parentCtx, childUsage) {
-  if (!parentCtx || !childUsage) return;
-  for (const key of ["input", "output", "cache"]) {
-    const amount = Number(childUsage[key] || 0);
-    parentCtx.stats[key] = Number(parentCtx.stats[key] || 0) + amount;
-    parentCtx.taskUsage[key] = Number(parentCtx.taskUsage[key] || 0) + amount;
-  }
-  if (!parentCtx.isSubAgent) setSessionStats(parentCtx.sessionId, parentCtx.stats);
-}
-
 function createBackgroundServerContext(job) {
   const parentCtx = job.parentCtx || {
     sessionId: job.sessionId,
@@ -10991,7 +10680,6 @@ function createBackgroundServerContext(job) {
     sessionId: job.sessionId,
     isStreaming: false,
     abortController: new AbortController(),
-    messageQueue: [],
   };
   return subCtx;
 }
@@ -11356,80 +11044,6 @@ async function resumePersistedBackgroundRuns() {
     });
   }
   pumpBackgroundDispatcher();
-}
-
-async function executeToolWithDelegation(tool, parentCtx, options = {}) {
-  let signature = "";
-  if (parentCtx?.isSubAgent) {
-    const args = Object.fromEntries(
-      Object.entries(tool || {})
-        .filter(([key]) => !key.startsWith("_") && key !== "action")
-        .sort(([left], [right]) => left.localeCompare(right)),
-    );
-    const readOnlyAction = ["list_files", "read_file", "search_files", "glob_files", "web_fetch", "use_skill", "read_skill_resource"].includes(tool.action);
-    signature = `${tool.action}:${JSON.stringify(args)}${readOnlyAction ? `:epoch-${parentCtx.toolMutationEpoch || 0}` : ""}`;
-    if (parentCtx.successfulToolSignatures?.has(signature)) {
-      return {
-        ok: false,
-        action: tool.action,
-        error: "已跳过完全相同且此前成功的工具调用。请使用已有结果完成总结，不要重复执行。",
-      };
-    }
-  }
-
-  let result = requireActionableEditResult(await executeToolCall(tool, {
-    context: parentCtx || null,
-    authorizationDecision: options.authorizationDecision,
-  }));
-  if (parentCtx?.isSubAgent && result.ok) {
-    parentCtx.successfulToolSignatures?.add(signature);
-    parentCtx.successfulToolCount = (parentCtx.successfulToolCount || 0) + 1;
-    if (["write_file", "delete_file", "run_command"].includes(tool.action)) {
-      parentCtx.toolMutationEpoch = (parentCtx.toolMutationEpoch || 0) + 1;
-    }
-  }
-  if (!result.delegated || tool.action !== "task") return result;
-
-  const taskPrompt = result.prompt || tool.prompt || "";
-  const subCtx = createSubContext(parentCtx, taskPrompt);
-  try {
-    await runAgentLoop(subCtx);
-    mergeDelegatedUsage(parentCtx, subCtx.taskUsage);
-    const sub = subCtx.subResult || { ok: false, result: "Sub-agent did not produce a result" };
-    return {
-      ok: sub.ok,
-      action: "task",
-      prompt: taskPrompt,
-      result: sub.result,
-      rounds: sub.rounds || 0,
-      tool_rounds: sub.tool_rounds || 0,
-      tool_calls: sub.tool_calls || 0,
-    };
-  } catch (err) {
-    mergeDelegatedUsage(parentCtx, subCtx.taskUsage);
-    return {
-      ok: false,
-      action: "task",
-      prompt: taskPrompt,
-      result: `Sub-agent error: ${err.message || err}`,
-      rounds: 0,
-      tool_rounds: 0,
-      tool_calls: 0,
-    };
-  }
-}
-
-async function mapWithConcurrency(items, limit, worker) {
-  const results = new Array(items.length);
-  let nextIndex = 0;
-  const runners = Array.from({ length: Math.min(Math.max(1, limit), items.length) }, async () => {
-    while (nextIndex < items.length) {
-      const index = nextIndex++;
-      results[index] = await worker(items[index], index);
-    }
-  });
-  await Promise.all(runners);
-  return results;
 }
 
 function isServerOwnedRun(ctx) {
@@ -12018,751 +11632,6 @@ async function executeRunContext(ctx) {
   return runServerAgentLoop(ctx);
 }
 
-async function runAgentLoop(ctx = null) {
-
-  ctx = ctx || buildRunContext(state.sessionId);
-  ctx.messages = Array.isArray(ctx.messages) ? ctx.messages.filter(Boolean) : [];
-  if (ctx.isSubAgent) state._subAgentDepth++;
-  try {
-  if (!ctx.isSubAgent) {
-    setSessionMessages(ctx.sessionId, ctx.messages);
-    setSessionStats(ctx.sessionId, ctx.stats);
-  }
-
-  if (!ctx.taskUsage) ctx.taskUsage = { input: 0, output: 0, cache: 0 };
-
-  ctx.autoCompacted = 0;
-
-  // Sub-agent depth guard: prevent infinite nesting
-  if (ctx.isSubAgent && ctx.depth > 2) {
-    ctx.subResult = { ok: false, result: "不允许嵌套子 Agent", rounds: 0, tool_rounds: 0 };
-    return;
-  }
-
-  // Sub-agents should stop when the delegated objective is complete, not at an
-  // arbitrary small round count. Timeout, cancellation and duplicate-tool
-  // suppression remain the safety boundaries for background work.
-  const maxRounds = MAX_TOOL_ROUNDS;
-
-  for (let round = 0; round < maxRounds; round += 1) {
-
-    // Check abort signal so stop button works even mid-tool-execution
-    if (ctx.run.abortController?.signal.aborted) throw new DOMException("Aborted", "AbortError");
-
-    if (!ctx.isSubAgent) {
-      await persistRunCheckpoint(ctx, "running", "model", { round }).catch(() => {});
-    }
-
-    // Trim old verbose tool results to reduce context bloat (every round)
-    const trimmedCount = trimOldToolResults(ctx.messages);
-
-    // Auto-compact whenever context reaches the 95% threshold.
-    if (true) {
-
-      const ctxPct = calcStats(ctx.messages, ctx.stats, ctx.sessionId, ctx.model).contextPct;
-
-      if (ctxPct >= 95 && ctx.messages.length >= 8) {
-
-        const key = ctx.apiKey || els.apiKey.value.trim();
-
-        const model = ctx.model || getSelectedModel();
-
-        if (key && model) {
-
-          try {
-
-            const modelContext = getModelContextMessages(ctx.messages);
-            const result = await apiJson("/api/compact", {
-
-              method: "POST",
-
-              headers: { Authorization: `Bearer ${key}` },
-
-              body: JSON.stringify({
-
-                model,
-
-                messages: modelContext.map((m) => ({ role: m.role, content: m.content || "" })),
-
-              }),
-
-            });
-
-            if (result.ok) {
-
-              const keepCount = result.kept || 5;
-              const summaryMsg = createCompactSummaryMessage(result);
-              const kept = modelContext.filter((msg) => !isCompactSummaryMessage(msg)).slice(-keepCount);
-              const firstKept = kept[0];
-              const insertAt = firstKept ? ctx.messages.indexOf(firstKept) : ctx.messages.length;
-
-              // Keep full history for the UI and persist the summary at the exact
-              // model-context boundary. Future requests start at the latest marker.
-              ctx.messages.splice(insertAt >= 0 ? insertAt : ctx.messages.length, 0, summaryMsg);
-              if (!ctx.isSubAgent) setSessionMessages(ctx.sessionId, ctx.messages);
-
-              ctx.stats = { input: 0, output: 0, cache: 0 };
-              setSessionStats(ctx.sessionId, ctx.stats);
-              setSessionLastUsage(ctx.sessionId, null);
-
-              ctx.autoCompacted = (ctx.autoCompacted || 0) + 1;
-
-              if (!ctx.isSubAgent) {
-                renderSessionMessages(ctx.sessionId);
-                await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats);
-              }
-
-            }
-
-          } catch (_) { /* auto-compact failed silently, continue */ }
-
-        }
-
-      }
-
-    }
-
-
-
-    let assistantIndex = -1;
-    if (ctx._reuseRuntimeAssistant) {
-      for (let index = ctx.messages.length - 1; index >= 0; index -= 1) {
-        if (ctx.messages[index]?.role === "assistant" && ctx.messages[index]?.streaming) {
-          assistantIndex = index;
-          ctx.messages[index] = {
-            ...ctx.messages[index],
-            content: "",
-            streaming: true,
-            _streamProjection: "pending",
-            _model: ctx.model || getSelectedModel(),
-          };
-          break;
-        }
-      }
-      ctx._reuseRuntimeAssistant = false;
-    }
-    if (assistantIndex < 0) {
-      assistantIndex = ctx.messages.push({ role: "assistant", content: "", streaming: true, _streamProjection: "pending", _model: ctx.model || getSelectedModel() }) - 1;
-    }
-
-    ctx.responseUsage = { input: 0, output: 0, cache: 0 };
-
-    if (!ctx.isSubAgent) renderSessionMessages(ctx.sessionId);
-
-    const modelResult = await callModelOnce(assistantIndex, true, ctx);
-
-    const turnUsage = ctx.responseUsage ? { ...ctx.responseUsage } : null;
-    ctx.responseUsage = null;
-
-    // Main sessions may have switched while streaming. Sub-agents always keep
-    // their private message array; reading the session cache here would replace
-    // it with the parent's messages and corrupt assistant/tool indexes.
-    if (!ctx.isSubAgent) ctx.messages = getSessionMessages(ctx.sessionId);
-    ctx.messages = Array.isArray(ctx.messages) ? ctx.messages.filter(Boolean) : [];
-    if (turnUsage) {
-      const currentAssistant = ctx.messages[assistantIndex] || {};
-      ctx.messages[assistantIndex] = {
-        ...currentAssistant,
-        meta: {
-          ...(currentAssistant.meta || {}),
-          _usage: turnUsage,
-        },
-      };
-      if (!ctx.isSubAgent) { setSessionMessages(ctx.sessionId, ctx.messages); }
-    }
-
-    const rawContent = modelResult.content || "";
-
-    const nativeCalls = modelResult.toolCalls || [];
-
-
-
-    if (nativeCalls.length > 0) {
-
-      ctx.toolCallCount = (ctx.toolCallCount || 0) + nativeCalls.length;
-      ctx.toolRoundCount = (ctx.toolRoundCount || 0) + 1;
-
-      const current = ctx.messages[assistantIndex] || {};
-
-      // Preserve timer & usage from previous message object
-      const _prevTimer = current._responseTime;
-      const _prevUsage = (current.meta || {})._usage;
-
-      ctx.messages[assistantIndex] = {
-
-        ...current,
-
-        role: "assistant",
-
-        content: (current.content || "").trim() || "",
-
-        streaming: false,
-        ...(_prevTimer ? { _responseTime: _prevTimer } : {}),
-
-        meta: {
-
-          ...(current.meta || {}),
-          ...(_prevUsage ? { _usage: _prevUsage } : {}),
-
-          toolCalls: nativeCalls,
-
-        },
-
-      };
-
-
-
-      const pendingVisionImages = [];
-      const pendingVisionPaths = new Set();
-
-      const normalizedCalls = nativeCalls.map(normalizeNativeToolCall);
-      const questionnaireCallIndex = normalizedCalls.findIndex((tool) => tool.action === "request_user_input");
-      const questionnaireExclusive = questionnaireCallIndex >= 0;
-      if (!ctx.isSubAgent) {
-        await persistRunCheckpoint(ctx, "running", "tools", {
-          round,
-          pendingTools: normalizedCalls.map((tool) => ({
-            action: tool.action || "unknown",
-            path: tool.path || "",
-          })),
-        }).catch(() => {});
-      }
-      for (const tool of normalizedCalls) {
-        ctx.messages.push({
-          role: "tool-call",
-          content: formatToolCall(tool),
-          meta: {
-            action: tool.action,
-            tool,
-            toolCallId: tool._toolCallId,
-            native: true,
-          },
-        });
-      }
-      if (!ctx.isSubAgent) {
-        renderSessionMessages(ctx.sessionId);
-        await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats);
-        renderSessions();
-      }
-
-      // Queue all direct destructive operations from this model turn before
-      // executing any of them, so the user can review the whole batch once.
-      const authorizationDecisions = new Map();
-      if (!questionnaireExclusive && getPermissionProfile() === "accept") {
-        const gatedCalls = normalizedCalls
-          .map((tool, index) => ({ tool, index }))
-          .filter(({ tool }) => shouldAskBeforeTool(tool.action));
-        if (gatedCalls.length) {
-          const decisions = await Promise.all(gatedCalls.map(({ tool }) => requestAuthorization(tool, ctx)));
-          gatedCalls.forEach(({ index }, decisionIndex) => authorizationDecisions.set(index, decisions[decisionIndex]));
-        }
-      }
-
-      // A model can dispatch several independent task calls in one response.
-      // Execute an all-task batch concurrently, with a conservative limit so
-      // one request cannot flood the local gateway.
-      let parallelTaskResults = null;
-      if (!questionnaireExclusive && normalizedCalls.length > 1 && normalizedCalls.every((tool) => tool.action === "task")) {
-        parallelTaskResults = await mapWithConcurrency(
-          normalizedCalls,
-          3,
-          (tool) => executeToolWithDelegation(tool, ctx),
-        );
-      }
-
-      for (let callIndex = 0; callIndex < normalizedCalls.length; callIndex += 1) {
-
-        const tool = normalizedCalls[callIndex];
-        let result;
-        if (questionnaireExclusive && callIndex !== questionnaireCallIndex) {
-          result = {
-            ok: false,
-            action: tool.action,
-            error: "request_user_input must be the only tool call in its model turn. This operation was not executed.",
-          };
-        } else {
-          result = parallelTaskResults
-            ? parallelTaskResults[callIndex]
-            : await executeToolWithDelegation(tool, ctx, {
-                authorizationDecision: authorizationDecisions.has(callIndex)
-                  ? authorizationDecisions.get(callIndex)
-                  : undefined,
-              });
-        }
-
-        const visionImage = toolImageVisionPayload(result);
-        if (visionImage && !pendingVisionPaths.has(visionImage.path)) {
-          pendingVisionPaths.add(visionImage.path);
-          pendingVisionImages.push(visionImage);
-        }
-
-        const meta = {
-
-          action: result.action || tool.action,
-
-          path: result.path,
-
-          toolCallId: tool._toolCallId,
-
-          native: true,
-
-        };
-
-        let proposalContent = "";
-        if (result.ok && result.action === "propose_edit") {
-
-          const editId = `edit-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-
-          state.pendingEdits[editId] = {
-
-            path: result.path,
-
-            newContent: result.newContent,
-
-            applied: false,
-            mtime: result.mtime || 0,
-
-          };
-
-          meta.pendingEditId = editId;
-
-          meta.newContent = result.newContent;
-
-          meta.applied = false;
-
-          meta.proposalOnly = getPermissionProfile() === "plan";
-
-          proposalContent = formatToolResult(result);
-
-          // Automatic mode is the only mode that writes without authorization.
-          if (getPermissionProfile() === "bypass") {
-            const applied = await apiJson("/api/tools/apply_edit", {
-              method: "POST",
-              body: JSON.stringify({ action: "apply_edit", path: result.path, newContent: result.newContent }),
-            });
-            state.pendingEdits[editId].applied = true;
-            meta.applied = true;
-            result = applied;
-            result.action = "propose_edit"; // keep original action for labeling
-          }
-
-        }
-
-        const resultMessage = {
-
-          role: "tool-result",
-
-          content: proposalContent || formatToolResult(result),
-
-          meta,
-
-        };
-        ctx.messages.push(resultMessage);
-
-        // Sub-agent edit proposals must be reviewable in the parent conversation.
-        // Sharing the same meta object keeps approval state synchronized.
-        if (ctx.isSubAgent && meta.pendingEditId && ctx.parent) {
-          meta.detachedFromMain = true;
-          ctx.parent.messages = getSessionMessages(ctx.parent.sessionId);
-          ctx.parent.messages.push({ ...resultMessage, meta });
-          setSessionMessages(ctx.parent.sessionId, ctx.parent.messages);
-          if (ctx.parent.sessionId === state.sessionId) renderMessages();
-          await saveSessionState(ctx.parent.sessionId, ctx.parent.messages, ctx.parent.stats);
-        }
-
-        if (!ctx.isSubAgent) { renderSessionMessages(ctx.sessionId); }
-
-        // Notify if page is not visible and a permission-required action arrived
-        if (!ctx.isSubAgent && isUserAway() && (result.action === "propose_edit" || result.action === "write_file") && getPermissionProfile() !== "bypass") {
-          notifyPermissionNeeded(result.action, result.path);
-        }
-
-        if (!ctx.isSubAgent) { await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions(); }
-
-        // ── Accept mode: queue edit authorization for main and sub-agents ──
-        const profile = getPermissionProfile();
-        if (profile === "accept" && result.action === "propose_edit" && !meta.applied) {
-          const editId = meta.pendingEditId;
-          if (editId) {
-            const stats = getDiffStats(normalizeDiffText(proposalContent));
-            const approved = await requestAuthorization({
-              action: "propose_edit",
-              path: result.path,
-              newContent: result.newContent,
-            }, ctx, { editId, stats });
-            if (approved) {
-              try {
-                await apiJson("/api/tools/apply_edit", {
-                  method: "POST",
-                  body: JSON.stringify({ action: "apply_edit", path: result.path, newContent: result.newContent }),
-                });
-                state.pendingEdits[editId].applied = true;
-                meta.applied = true;
-                await loadFiles().catch(() => {});
-              } catch (error) {
-                meta.applyError = error.message;
-                ctx.messages.push({
-                  role: "user",
-                  content: `[系统] 用户已批准修改，但写入失败：${error.message}。请说明失败原因，不要假装修改成功。`,
-                  meta: { _system: true },
-                });
-              }
-            } else {
-              meta.rejected = true;
-              state.pendingEdits[editId].resolved = true;
-              ctx.messages.push({
-                role: "user",
-                content: "[系统] 用户拒绝了这项修改。请保留其他已批准操作的结果，并简洁说明该项未执行。",
-                meta: { _system: true },
-              });
-            }
-            if (ctx.isSubAgent && ctx.parent) {
-              setSessionMessages(ctx.parent.sessionId, ctx.parent.messages);
-              if (ctx.parent.sessionId === state.sessionId) renderMessages();
-              await saveSessionState(ctx.parent.sessionId, ctx.parent.messages, ctx.parent.stats);
-            } else {
-              renderSessionMessages(ctx.sessionId);
-              await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats);
-              renderSessions();
-            }
-          }
-        }
-
-        // ── Consecutive failure detection ──
-        const FAIL_SIGNALS = ["工具执行失败", "已被安全策略拦截", "文件不存在", "路径不存在",
-                              "Tool execution failed", "Blocked by security policy",
-                              "File not found", "Path not found",
-                              "unknown error", "binary file is not supported",
-                              "不能为空", "cannot be empty", "is required",
-                              "NameError", "SyntaxError", "TypeError", "AttributeError",
-                              "ModuleNotFoundError", "ImportError", "FileNotFoundError",
-                              "is not defined", "Assignment to constant",
-                              "IndentationError", "KeyError", "ValueError", "IndexError",
-                              "PermissionError", "OSError", "UnicodeDecodeError",
-                              "ZeroDivisionError", "KeyboardInterrupt",
-                              "pip install", "No module named"];
-        const RUNTIME_ERRORS = ["NameError", "SyntaxError", "TypeError", "AttributeError",
-                                "ModuleNotFoundError", "ImportError", "FileNotFoundError",
-                                "is not defined", "Assignment to constant", "Error:",
-                                "IndentationError", "KeyError", "ValueError", "IndexError",
-                                "No module named", "pip install", "Traceback"];
-        const isFailure = (msg) => {
-          const c = msg.content || "";
-          if (msg.meta && msg.meta.action === "run_command"
-              && !c.includes("工具执行失败") && !c.includes("Tool execution failed")
-              && !RUNTIME_ERRORS.some(s => c.includes(s))) {
-            return false; // commands that ran cleanly but had non-zero exit are not hard failures
-          }
-          return FAIL_SIGNALS.some(s => c.includes(s));
-        };
-
-        const recentResults = ctx.messages.filter(m => m.role === "tool-result").slice(-8);
-        let consecutiveFails = 0;
-        let lastNameErrors = 0;
-        for (let i = recentResults.length - 1; i >= 0; i--) {
-          const c = recentResults[i].content || "";
-          if (isFailure(recentResults[i])) {
-            consecutiveFails++;
-            if (c.includes("is not defined") || c.includes("NameError")) lastNameErrors++;
-          } else { break; }
-        }
-
-        // Hard stop: 3+ consecutive NameError/undefined-var failures → session is broken
-        if (lastNameErrors >= 3) {
-          ctx.messages.push({
-            role: "user",
-            content: "[系统] 代码中重复出现未定义变量错误。请停止生成代码，直接告诉用户：当前会话出现了重复的代码质量错误，建议开启新会话重试。不要再调用任何工具。",
-            meta: { _system: true },
-          });
-          if (!ctx.isSubAgent) { renderSessionMessages(ctx.sessionId); }
-          if (!ctx.isSubAgent) { await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions(); }
-          break;
-        }
-
-        if (consecutiveFails >= 5 && ctx._failureWarned < 5) {
-          ctx._failureWarned = 5;
-          ctx.messages.push({
-            role: "user",
-            content: "[系统] 已连续失败 5 次。请停止尝试，直接告诉用户哪里出了问题，不要再调用工具。",
-            meta: { _system: true },
-          });
-          if (!ctx.isSubAgent) { renderSessionMessages(ctx.sessionId); }
-          if (!ctx.isSubAgent) { await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions(); }
-          continue;
-        }
-        if (consecutiveFails >= 5) { break; } // already warned, stop
-
-        if (consecutiveFails >= 3 && round > 1 && ctx._failureWarned < 3) {
-          ctx._failureWarned = 3;
-          ctx.messages.push({
-            role: "user",
-            content: "[系统] 已连续失败 3 次。请换一个完全不同的方法，不要再重复已失败的命令。",
-            meta: { _system: true },
-          });
-          if (!ctx.isSubAgent) {
-            renderSessionMessages(ctx.sessionId);
-            await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
-          }
-        }
-
-      }
-
-      const visionMessage = buildToolImageVisionMessage(pendingVisionImages);
-      if (visionMessage) {
-        ctx.messages.push(visionMessage);
-        if (!ctx.isSubAgent) {
-          renderSessionMessages(ctx.sessionId);
-          await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
-        }
-      }
-
-      continue;
-
-    }
-
-
-
-    // Only try text-based extraction if content actually contains agent-tool markers
-    const hasToolMarker = /```agent-tool|<agent-tool>/i.test(rawContent);
-
-    if (!hasToolMarker) {
-      if (ctx.messages[assistantIndex]) {
-        ctx.messages[assistantIndex].content = rawContent.trim();
-        ctx.messages[assistantIndex].streaming = false;
-      }
-      if (ctx.isSubAgent) {
-        if (ctx.requiresToolUse && (ctx.toolCallCount || 0) === 0 && ctx.noToolRetries < 1) {
-          ctx.noToolRetries += 1;
-          ctx.messages.push({
-            role: "user",
-            content: "[系统] 你尚未真正执行任何工具，因此任务还没有完成。不要输出或模拟工具调用 JSON；现在必须亲自调用可用工具完成任务并验证结果。",
-            meta: { _system: true },
-          });
-          continue;
-        }
-        ctx.subResult = {
-          ok: !ctx.requiresToolUse || (ctx.successfulToolCount || 0) > 0,
-          result: rawContent.trim() || "(sub-agent returned empty response)",
-          rounds: round + 1,
-          tool_rounds: ctx.toolRoundCount || 0,
-          tool_calls: ctx.toolCallCount || 0,
-        };
-        return;
-      }
-      attachTaskUsageToAssistant(ctx, assistantIndex);
-      renderSessionMessages(ctx.sessionId);
-      setStreaming(false, ctx.sessionId);
-      await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
-      // Execute pending session switch
-      return;
-    }
-
-    const tool = extractToolCall(rawContent);
-
-    if (!tool) {
-
-      ctx.messages[assistantIndex].streaming = false;
-      attachTaskUsageToAssistant(ctx, assistantIndex);
-      setStreaming(false, ctx.sessionId);
-      await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
-      return;
-
-    }
-
-
-
-    const cleanContent = stripToolBlock(rawContent);
-
-    if (ctx.messages[assistantIndex]) {
-      ctx.messages[assistantIndex].content = cleanContent || "";
-      ctx.messages[assistantIndex].streaming = false;
-    }
-
-
-
-    ctx.messages.push({
-
-      role: "tool-call",
-
-      content: formatToolCall(tool),
-
-      meta: { action: tool.action, tool },
-
-    });
-
-    if (!ctx.isSubAgent) renderSessionMessages(ctx.sessionId);
-
-    if (!ctx.isSubAgent) { await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions(); }
-
-
-
-    const result = requireActionableEditResult(await executeToolCall(tool, { context: ctx }));
-
-    const meta = { action: result.action || tool.action, path: result.path };
-
-    let proposalContent = "";
-    if (result.ok && result.action === "propose_edit") {
-
-      const editId = `edit-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-
-      state.pendingEdits[editId] = {
-
-        path: result.path,
-
-        newContent: result.newContent,
-
-        applied: false,
-        mtime: result.mtime || 0,
-
-      };
-
-      meta.pendingEditId = editId;
-
-      meta.newContent = result.newContent;
-
-      meta.applied = false;
-
-      meta.proposalOnly = getPermissionProfile() === "plan";
-
-      proposalContent = formatToolResult(result);
-
-      if (getPermissionProfile() === "bypass") {
-        await apiJson("/api/tools/apply_edit", {
-          method: "POST",
-          body: JSON.stringify({ action: "apply_edit", path: result.path, newContent: result.newContent }),
-        });
-        state.pendingEdits[editId].applied = true;
-        meta.applied = true;
-      }
-
-    }
-
-    const resultMessage = {
-
-      role: "tool-result",
-
-      content: proposalContent || formatToolResult(result),
-
-      meta,
-
-    };
-    ctx.messages.push(resultMessage);
-
-    if (ctx.isSubAgent && meta.pendingEditId && ctx.parent) {
-      meta.detachedFromMain = true;
-      ctx.parent.messages = getSessionMessages(ctx.parent.sessionId);
-      ctx.parent.messages.push({ ...resultMessage, meta });
-      setSessionMessages(ctx.parent.sessionId, ctx.parent.messages);
-      if (ctx.parent.sessionId === state.sessionId) renderMessages();
-      await saveSessionState(ctx.parent.sessionId, ctx.parent.messages, ctx.parent.stats);
-    }
-
-    const visionMessage = buildToolImageVisionMessage([toolImageVisionPayload(result)].filter(Boolean));
-    if (visionMessage) ctx.messages.push(visionMessage);
-
-    if (!ctx.isSubAgent) renderSessionMessages(ctx.sessionId);
-
-    if (isUserAway() && (result.action === "propose_edit" || result.action === "write_file") && getPermissionProfile() !== "bypass") {
-      notifyPermissionNeeded(result.action, result.path);
-    }
-
-    if (!ctx.isSubAgent) { await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions(); }
-
-    if (getPermissionProfile() === "accept" && result.action === "propose_edit" && !meta.applied && meta.pendingEditId) {
-      const approved = await requestAuthorization({
-        action: "propose_edit",
-        path: result.path,
-        newContent: result.newContent,
-      }, ctx, { editId: meta.pendingEditId, stats: getDiffStats(normalizeDiffText(proposalContent)) });
-      if (approved) {
-        try {
-          await apiJson("/api/tools/apply_edit", {
-            method: "POST",
-            body: JSON.stringify({ action: "apply_edit", path: result.path, newContent: result.newContent }),
-          });
-          state.pendingEdits[meta.pendingEditId].applied = true;
-          meta.applied = true;
-          await loadFiles().catch(() => {});
-        } catch (error) {
-          meta.applyError = error.message;
-        }
-      } else {
-        meta.rejected = true;
-        state.pendingEdits[meta.pendingEditId].resolved = true;
-        ctx.messages.push({
-          role: "user",
-          content: "[系统] 用户拒绝了这项修改。请保留其他已批准操作的结果，并简洁说明该项未执行。",
-          meta: { _system: true },
-        });
-      }
-      if (ctx.isSubAgent && ctx.parent) {
-        setSessionMessages(ctx.parent.sessionId, ctx.parent.messages);
-        if (ctx.parent.sessionId === state.sessionId) renderMessages();
-        await saveSessionState(ctx.parent.sessionId, ctx.parent.messages, ctx.parent.stats);
-      } else {
-        renderSessionMessages(ctx.sessionId);
-        await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats);
-      }
-    }
-
-  }
-
-
-
-  if (ctx.isSubAgent) {
-    // Sub-agent exhausted: capture last assistant content as result
-    let lastContent = "";
-    for (let i = ctx.messages.length - 1; i >= 0; i--) {
-      const m = ctx.messages[i];
-      if (m && m.role === "assistant" && m.content) {
-        lastContent = m.content;
-        break;
-      }
-    }
-    if (!lastContent) {
-      const completedActions = ctx.messages
-        .filter((message) => message?.role === "tool-result" && !/失败|error|failed/i.test(message.content || ""))
-        .slice(-6)
-        .map((message) => {
-          const action = message.meta?.action || "tool";
-          const firstLine = String(message.content || "").split(/\r?\n/).find(Boolean) || "完成";
-          return `- ${action}: ${firstLine.slice(0, 180)}`;
-        });
-      lastContent = completedActions.length
-        ? `子 Agent 已完成工具操作，但未生成最终文字总结。\n${completedActions.join("\n")}`
-        : "(sub-agent completed without final response)";
-    }
-    ctx.subResult = {
-      ok: !ctx.requiresToolUse || (ctx.successfulToolCount || 0) > 0,
-      result: lastContent,
-      rounds: maxRounds,
-      tool_rounds: ctx.toolRoundCount || 0,
-      tool_calls: ctx.toolCallCount || 0,
-    };
-    return;
-  }
-
-  ctx.messages.push({
-
-    role: "assistant",
-
-    content: "This run reached the tool-round safety limit. Please ask the Agent to summarize progress or continue with the next step.",
-
-    meta: { kind: "tool-round-limit" },
-
-  });
-
-  if (!ctx.isSubAgent) {
-    await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats); renderSessions();
-    renderSessionMessages(ctx.sessionId);
-  }
-
-  } finally { if (ctx && ctx.isSubAgent) state._subAgentDepth--; }
-
-}
-
-
-
 async function compactConversation() {
 
   if (state.isStreaming) { showToast("Please wait for the current task to finish before compacting.", "warning"); return; }
@@ -13116,118 +11985,6 @@ async function sendMessage(userText) {
           loopError = retryErr;
         }
       }
-    }
-  }
-
-  // Handle queued messages: on error/abort, return them to input box; on success, flush normally
-  const hadQueue = run.messageQueue.length > 0;
-  let parallelSubTasks = null;
-  if (hadQueue) {
-    const queued = [...run.messageQueue];
-    run.messageQueue = [];
-    renderSessionMessages(sessionId);
-
-    if (loopError) {
-      // Error/abort: return queued messages to the input box
-      for (let i = queued.length - 1; i >= 0; i--) {
-        const q = queued[i];
-        els.prompt.value = (q.text || "") + (els.prompt.value ? "\n" + els.prompt.value : "");
-        if (q.images && q.images.length > 0) {
-          state.attachedImages = [...q.images, ...state.attachedImages];
-        }
-      }
-      renderImageThumbs();
-      updateSendButtonState();
-    } else {
-      // Success: dispatch queued messages as parallel sub-agents
-      parallelSubTasks = [];
-      for (const q of queued) {
-        const imgs = q.images || [];
-        const imgRefs = await uploadImagesForStorage(imgs);
-        const taskPrompt = q.text || "";
-        parallelSubTasks.push({
-          prompt: taskPrompt,
-          images: imgRefs.length > 0 ? imgRefs : undefined,
-          text: q.text || "",
-        });
-      }
-      state.attachedImages = [];
-      renderImageThumbs();
-
-      if (parallelSubTasks.length === 1) {
-        // Single queued message — push directly and run normal loop
-        const msgContent = parallelSubTasks[0].images && parallelSubTasks[0].images.length > 0
-          ? [{ type: "text", text: parallelSubTasks[0].text }, ...parallelSubTasks[0].images.map((img) => ({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.base64}` } }))]
-          : parallelSubTasks[0].text;
-        ctx.messages.push({ role: "user", content: msgContent, _images: parallelSubTasks[0].images, _model: ctx.model || getSelectedModel(), _time: new Date().toISOString() });
-        setSessionMessages(sessionId, ctx.messages);
-        renderSessionMessages(sessionId);
-        await saveSessionState(sessionId, ctx.messages, ctx.stats);
-      } else if (parallelSubTasks.length > 1) {
-        // Multiple queued messages — dispatch as parallel sub-agents
-        ctx.messages.push({
-          role: "user",
-          content: `[系统] 以下 ${parallelSubTasks.length} 条排队消息已派发给子 Agent 并行处理：\n${parallelSubTasks.map((t, i) => `${i + 1}. ${t.text.slice(0, 80)}`).join("\n")}`,
-          meta: { _system: true },
-        });
-        setSessionMessages(sessionId, ctx.messages);
-        renderSessionMessages(sessionId);
-        await saveSessionState(sessionId, ctx.messages, ctx.stats);
-
-        // Run sub-agents in parallel (max 3 concurrent)
-        const results = await mapWithConcurrency(
-          parallelSubTasks,
-          3,
-          async (task) => {
-            try {
-              const subCtx = createSubContext(ctx, task.prompt);
-              subCtx.authorizationLabel = task.text.slice(0, 24) || "队列任务";
-              await runAgentLoop(subCtx);
-              const sub = subCtx.subResult || { ok: false, result: "队列子任务未返回结果" };
-              return { text: task.text, ok: sub.ok, result: sub.result, rounds: sub.rounds || 0 };
-            } catch (err) {
-              return { text: task.text, ok: false, result: `队列子任务错误: ${err.message || err}`, rounds: 0 };
-            }
-          },
-        );
-
-        // Collect results into the session
-        for (const r of results) {
-          const label = r.ok ? "完成" : "失败";
-          ctx.messages.push({
-            role: "assistant",
-            content: `**排队任务**：${r.text.slice(0, 80)}
-
-${label} · ${r.rounds || 0} 轮
-
-${r.result}`,
-            meta: { kind: "queued-subtask" },
-            _model: ctx.model || getSelectedModel(),
-            _time: new Date().toISOString(),
-          });
-        }
-        setSessionMessages(sessionId, ctx.messages);
-        renderSessionMessages(sessionId);
-        await saveSessionState(sessionId, ctx.messages, ctx.stats);
-      }
-    }
-  }
-
-  // Only trigger API call if no error AND we had single queued messages to respond to
-  if (!loopError && hadQueue && !(parallelSubTasks && parallelSubTasks.length > 1)) {
-    ctx.taskUsage = { input: 0, output: 0, cache: 0 };
-    ctx.responseUsage = { input: 0, output: 0, cache: 0 };
-    const drainRun = ensureSessionRun(sessionId);
-    if (drainRun) drainRun._model = ctx.model || getSelectedModel();
-    setStreaming(true, sessionId);
-    let drainError = null;
-    try {
-      await executeRunContext(ctx);
-    } catch (err) {
-      drainError = err;
-    }
-    if (drainError) {
-      loopError = drainError;
     }
   }
 
@@ -15727,17 +14484,6 @@ els.chatForm.addEventListener("submit", async (event) => {
 
       if (last?.role === "assistant") last.content = `${last.content || ""}\n\n[已暂停输出]`;
 
-      // Drain queued messages into session as user messages so they don't get stuck
-      const run = state._sessionRuns[sessionId];
-      if (run && run.messageQueue.length > 0) {
-        for (const q of run.messageQueue) {
-          messages.push({ role: "user", content: q.text || "", _images: q.images, _model: getSelectedModel(), _time: new Date().toISOString() });
-        }
-        run.messageQueue = [];
-        state.attachedImages = [];
-        renderImageThumbs();
-      }
-
       setSessionMessages(sessionId, messages);
       renderSessionMessages(sessionId);
 
@@ -15781,17 +14527,15 @@ els.chatForm.addEventListener("submit", async (event) => {
 els.newChat.addEventListener("click", () => {
 
   // Starting a new conversation only changes the foreground view. Any task
-  // bound to the previous session keeps its own controller, queue and cache.
+  // bound to the previous session keeps its own controller and cache.
   cacheActiveSessionState();
   invalidateForegroundSessionNavigation();
-  state.messageQueue = [];
 
   state.sessionId = null;
 
   state.messages = [];
 
   state._lastRenderedHtml = null;
-  state._lastQueueLen = 0;
 
   state.stats = { input: 0, output: 0, cache: 0 };
 

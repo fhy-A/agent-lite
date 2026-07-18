@@ -28,13 +28,44 @@ class TestImageVisionBridge(unittest.TestCase):
     def test_image_limit_is_separate_from_text_limit(self):
         self.assertGreater(server.MAX_TOOL_IMAGE_BYTES, server.MAX_TOOL_READ_BYTES)
 
-    def test_frontend_injects_tool_images_as_image_url(self):
-        source = (ROOT / "app.js").read_text(encoding="utf-8")
-        self.assertIn("function buildToolImageVisionMessage(images)", source)
-        self.assertIn('type: "image_url"', source)
-        self.assertIn('kind: "tool-image-vision"', source)
-        self.assertIn("pendingVisionImages", source)
-        self.assertNotIn("工具现在对图片会返回 base64 编码数据", source)
+    def test_server_agent_injects_tool_images_as_image_url(self):
+        result = {
+            "ok": True,
+            "action": "read_file",
+            "path": "assets/example.png",
+            "binary": True,
+            "visual": True,
+            "mime": "image/png",
+            "base64": "aW1hZ2U=",
+        }
+        marker = server._agent_tool_vision_marker(result, "call-image")
+        run = {
+            "messages": [marker],
+            "tool_executions": {"call-image": {"result": result}},
+        }
+
+        messages = server._agent_model_messages(run)
+
+        self.assertEqual(marker["_agentToolVisionCallId"], "call-image")
+        self.assertEqual(messages[0]["role"], "user")
+        self.assertEqual(messages[0]["content"][1]["type"], "image_url")
+        self.assertEqual(
+            messages[0]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,aW1hZ2U=",
+        )
+
+    def test_durable_vision_marker_does_not_duplicate_base64(self):
+        result = {
+            "ok": True,
+            "action": "read_file",
+            "path": "assets/example.png",
+            "binary": True,
+            "visual": True,
+            "mime": "image/png",
+            "base64": "aW1hZ2U=",
+        }
+        marker = server._agent_tool_vision_marker(result, "call-image")
+        self.assertNotIn("aW1hZ2U=", json.dumps(marker))
 
 
 class TestExistingBrowserRefresh(unittest.TestCase):

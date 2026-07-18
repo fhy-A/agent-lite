@@ -14,9 +14,12 @@ class TestSubAgentFrontend(unittest.TestCase):
         self.assertIn('if (msg.role === "system")', self.source)
         self.assertIn('return { role: "system", content: getMsgText(msg) };', self.source)
 
-    def test_subagent_keeps_private_message_array(self):
+    def test_background_agent_builds_private_prompt_before_server_dispatch(self):
+        self.assertIn('const subCtx = createSubContext(parentCtx, job.taskPrompt);', self.source)
+        self.assertIn('{ role: "system", content: subSystem }', self.source)
+        self.assertIn('{ role: "user", content: taskPrompt }', self.source)
         self.assertIn(
-            'if (!ctx.isSubAgent) ctx.messages = getSessionMessages(ctx.sessionId);',
+            'const prepared = await buildModelRequestPayload(subCtx, true, serverTools);',
             self.source,
         )
 
@@ -35,34 +38,26 @@ class TestSubAgentFrontend(unittest.TestCase):
         self.assertIn('不要把整个原始任务不加拆分地转交给单个子 Agent', self.source)
         self.assertIn('仅在并行收益明显高于额外成本时委派', self.source)
 
-    def test_task_batches_use_bounded_concurrency(self):
-        self.assertIn('async function mapWithConcurrency', self.source)
-        self.assertIn('normalizedCalls.every((tool) => tool.action === "task")', self.source)
-        self.assertIn('mapWithConcurrency(\n          normalizedCalls,\n          3,', self.source)
+    def test_legacy_browser_agent_orchestration_is_removed(self):
+        for obsolete in (
+            'async function runAgentLoop(',
+            'async function executeToolWithDelegation(',
+            'async function executeToolCall(',
+            'async function mapWithConcurrency(',
+            'function mergeDelegatedUsage(',
+            'messageQueue:',
+        ):
+            self.assertNotIn(obsolete, self.source)
 
-    def test_no_tool_text_is_not_accepted_as_success(self):
-        self.assertIn('ctx.requiresToolUse && (ctx.toolCallCount || 0) === 0', self.source)
-        self.assertIn('不要输出或模拟工具调用 JSON', self.source)
-
-    def test_subagent_tools_use_grouped_authorization(self):
-        self.assertIn('async function executeToolCall(tool, options = {})', self.source)
-        self.assertIn('requestAuthorization(tool, options.context || null)', self.source)
-        self.assertIn('context: parentCtx || null', self.source)
-        self.assertIn('label: `${t("subAgentLabel")} · ${ctx.authorizationLabel || t("subTaskLabel")}`', self.source)
+    def test_foreground_and_background_agents_use_durable_server_runs(self):
+        self.assertIn('return runServerAgentLoop(ctx);', self.source)
+        self.assertIn('async function runBackgroundSubAgentJob(job)', self.source)
+        self.assertGreaterEqual(self.source.count('window.AgentRuntime.createAgentRun'), 2)
+        self.assertGreaterEqual(self.source.count('window.AgentRuntime.watchAgentRun'), 2)
 
     def test_plan_mode_can_delegate_without_mutation_tools(self):
         self.assertIn('plan: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "task", "use_skill", "read_skill_resource"])', self.source)
         self.assertIn('.filter((tool) => !["task", "request_user_input"].includes(tool.function?.name))', self.source)
-
-    def test_subagent_edits_wait_for_accept_mode_authorization(self):
-        self.assertIn('profile === "accept" && result.action === "propose_edit"', self.source)
-        self.assertNotIn('getPermissionProfile() === "bypass" || ctx.isSubAgent', self.source)
-        self.assertIn('Sub-agent edit proposals must be reviewable in the parent conversation.', self.source)
-
-    def test_same_turn_operations_are_authorized_as_a_batch(self):
-        self.assertIn('const authorizationDecisions = new Map();', self.source)
-        self.assertIn('await Promise.all(gatedCalls.map(({ tool }) => requestAuthorization(tool, ctx)))', self.source)
-        self.assertIn('authorizationDecision: authorizationDecisions.has(callIndex)', self.source)
 
     def test_authorization_panel_groups_main_and_subagents(self):
         self.assertIn('return { key: "main", label: t("mainAgentLabel") };', self.source)
@@ -71,26 +66,10 @@ class TestSubAgentFrontend(unittest.TestCase):
         self.assertIn('data-auth-action="approve"', self.source)
         self.assertIn('data-auth-action="reject-all"', self.source)
 
-    def test_subagent_suppresses_successful_duplicate_tools(self):
-        self.assertIn('successfulToolSignatures: new Set()', self.source)
-        self.assertIn('此前成功的工具调用', self.source)
-        self.assertIn('const maxRounds = MAX_TOOL_ROUNDS;', self.source)
-
-    def test_subagent_is_not_stopped_by_a_small_round_limit(self):
-        self.assertNotIn('ctx.isSubAgent ? 6 : MAX_TOOL_ROUNDS', self.source)
-        self.assertIn('Timeout, cancellation and duplicate-tool', self.source)
-
     def test_parallel_subagent_usage_uses_private_ledgers(self):
         self.assertIn('if (!ctx?.isSubAgent) setSessionStats(sessionId, stats);', self.source)
         self.assertIn('mergeBackgroundUsage(job.sessionId, sub.usage);', self.source)
         self.assertNotIn('mergeBackgroundUsage(sessionId, subCtx.stats);', self.source)
-
-    def test_delegated_usage_merges_once_into_parent_task(self):
-        self.assertIn('function mergeDelegatedUsage(parentCtx, childUsage)', self.source)
-        self.assertEqual(
-            self.source.count('mergeDelegatedUsage(parentCtx, subCtx.taskUsage);'),
-            2,
-        )
 
     def test_background_result_keeps_its_own_usage(self):
         self.assertIn('_usage: sub.usage', self.source)
@@ -194,11 +173,10 @@ class TestSubAgentFrontend(unittest.TestCase):
             self.source,
         )
 
-    def test_subagent_edit_projection_is_detached_from_parent_context(self):
-        self.assertGreaterEqual(
-            self.source.count('meta.detachedFromMain = true;'),
-            2,
-        )
+    def test_background_edit_projection_is_detached_from_parent_context(self):
+        self.assertIn('if (ctx.isDetachedBackground)', self.source)
+        self.assertIn('projection.meta.detachedFromMain = true;', self.source)
+        self.assertIn('detachedFromMain: true', self.source)
 
     def test_background_dispatch_owns_abort_controller(self):
         self.assertIn('abortController: new AbortController()', self.source)
@@ -210,8 +188,7 @@ class TestSubAgentFrontend(unittest.TestCase):
         self.assertIn('state._sessionSaveChains[sessionId] = savePromise;', self.source)
 
     def test_active_subagent_does_not_block_main_session_updates(self):
-        self.assertNotIn('if (!sessionId || state._subAgentDepth > 0) return;', self.source)
-        self.assertNotIn('if (active && state._subAgentDepth > 0) return;', self.source)
+        self.assertNotIn('_subAgentDepth', self.source)
 
 
 if __name__ == "__main__":

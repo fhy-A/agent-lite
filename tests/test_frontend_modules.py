@@ -467,7 +467,7 @@ eval(source);
         self.assertLess(helper.index("current.meta.toolCalls = toolCalls"), helper.index("renderSessionMessages"))
 
         stream_start = APP_SOURCE.index("const toolCallsByIndex = new Map()")
-        stream_end = APP_SOURCE.index("async function callModelOnce", stream_start)
+        stream_end = APP_SOURCE.index("function _safeMd", stream_start)
         stream = APP_SOURCE[stream_start:stream_end]
         self.assertIn(
             'markStreamingAssistantProjection(assistantIndex, "thinking"',

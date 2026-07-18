@@ -288,18 +288,18 @@ class TestCompactSummaryMarker(unittest.TestCase):
         self.assertIn("renderCompactSummaryProjection(msg, j)", self.source)
         self.assertIn('class="msg branch-indicator compact-indicator"', self.source)
 
-    def test_auto_and_manual_compaction_share_message_factory(self):
-        self.assertEqual(self.source.count("const summaryMsg = createCompactSummaryMessage(result)"), 2)
+    def test_manual_compaction_uses_summary_message_factory(self):
+        self.assertEqual(self.source.count("const summaryMsg = createCompactSummaryMessage(result)"), 1)
         self.assertIn('kind: "compact-summary"', self.source)
 
     def test_marker_is_localized(self):
         self.assertIn('compactMarker: "上下文已压缩"', self.source)
         self.assertIn('compactMarker: "Context compacted"', self.source)
 
-    def test_repeated_auto_compaction_keeps_marker_chronology(self):
-        self.assertIn("getModelContextMessages(ctx.messages)", self.source)
-        self.assertIn("ctx.messages.splice(", self.source)
-        self.assertIn("await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats)", self.source)
+    def test_manual_compaction_keeps_marker_chronology(self):
+        self.assertIn("const kept = state.messages.slice(-keepCount)", self.source)
+        self.assertIn("state.messages = [summaryMsg, ...kept]", self.source)
+        self.assertIn("await saveSessionState(state.sessionId, state.messages, state.stats)", self.source)
         self.assertNotIn("_compactPrefix", self.source)
 
     def test_usage_is_isolated_and_persisted_per_session(self):

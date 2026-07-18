@@ -975,6 +975,65 @@ def _agent_tool_message_content(result):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
+def _agent_tool_vision_marker(result, call_id):
+    if not isinstance(result, dict):
+        return None
+    mime = str(result.get("mime") or "")
+    if not (
+        result.get("ok")
+        and result.get("action") == "read_file"
+        and result.get("binary")
+        and result.get("visual")
+        and mime.startswith("image/")
+        and (result.get("base64") or result.get("svgText"))
+    ):
+        return None
+    path = str(result.get("path") or "image")
+    return {
+        "role": "user",
+        "content": f"[System] Visual content loaded from read_file: {path}",
+        "_agentToolVisionCallId": str(call_id or ""),
+    }
+
+
+def _agent_model_messages(run):
+    """Expand durable image markers only for the next model request."""
+    expanded = []
+    executions = run.get("tool_executions") or {}
+    for source in run.get("messages") or []:
+        if not isinstance(source, dict) or not source.get("_agentToolVisionCallId"):
+            expanded.append(_json_clone(source))
+            continue
+
+        call_id = str(source.get("_agentToolVisionCallId") or "")
+        result = (executions.get(call_id) or {}).get("result") or {}
+        mime = str(result.get("mime") or "")
+        path = str(result.get("path") or "image")
+        if not (mime.startswith("image/") and result.get("visual")):
+            continue
+        if result.get("svgText"):
+            image_url = f"data:{mime};utf8,{parse.quote(str(result['svgText']), safe='')}"
+        elif result.get("base64"):
+            image_url = f"data:{mime};base64,{result['base64']}"
+        else:
+            continue
+        expanded.append({
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        f"[System] read_file loaded the image {path}. "
+                        "Inspect the attached visual content and continue the original task "
+                        "without reading the same path again."
+                    ),
+                },
+                {"type": "image_url", "image_url": {"url": image_url}},
+            ],
+        })
+    return expanded
+
+
 def _agent_has_current_tool_message(run, call_id):
     """Check only tool results following the latest assistant tool-call turn."""
     messages = run.get("messages") or []
@@ -2263,6 +2322,13 @@ def _execute_agent_pending_tools(run):
                 "name": name,
                 "content": _agent_tool_message_content(result),
             })
+        vision_marker = _agent_tool_vision_marker(result, call_id)
+        if vision_marker and not any(
+            isinstance(message, dict)
+            and message.get("_agentToolVisionCallId") == call_id
+            for message in run.get("messages") or []
+        ):
+            run["messages"].append(vision_marker)
         run["pending_tool_calls"] = [
             pending for pending in run["pending_tool_calls"] if pending.get("id") != call_id
         ]
@@ -2310,7 +2376,7 @@ def _agent_run_worker(run):
 
             round_number = len(run["rounds"]) + 1
             payload = dict(run["request"])
-            payload["messages"] = _json_clone(run["messages"])
+            payload["messages"] = _agent_model_messages(run)
             if run["tools"]:
                 payload["tools"] = _json_clone(run["tools"])
                 payload["tool_choice"] = payload.get("tool_choice") or "auto"

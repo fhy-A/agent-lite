@@ -399,9 +399,9 @@ class TestDispatcherLimits(unittest.TestCase):
         self.assertIn('perSessionLimit: 2', self.source,
                       "Per-session dispatch limit must be 2")
 
-    def test_bounded_concurrency_function(self):
-        self.assertIn('async function mapWithConcurrency', self.source)
-        self.assertIn('mapWithConcurrency(\n          normalizedCalls,\n          3,', self.source)
+    def test_bounded_dispatcher_loop(self):
+        self.assertNotIn('async function mapWithConcurrency', self.source)
+        self.assertIn('while (dispatcher.activeCount < dispatcher.globalLimit)', self.source)
         self.assertIn('dispatcher.activeCount', self.source,
                       "Must track active dispatch count")
         self.assertIn('dispatcher.globalLimit', self.source,
@@ -425,7 +425,7 @@ class TestDispatcherLimits(unittest.TestCase):
         self.assertIn('msg.meta?.detachedFromMain', self.source)
         self.assertIn('function getModelContextMessages(messages)', self.source)
         self.assertIn('.filter((msg) => !isDetachedFromMainContext(msg))', self.source)
-        self.assertIn('getModelContextMessages(ctx.messages)', self.source)
+        self.assertIn('getModelContextMessages(streamMessages)', self.source)
 
     def test_parallel_usage_ledger_isolation(self):
         self.assertIn('if (!ctx?.isSubAgent) setSessionStats(sessionId, stats);', self.source)
@@ -433,9 +433,10 @@ class TestDispatcherLimits(unittest.TestCase):
         # Must NOT merge directly into parent context
         self.assertNotIn('mergeBackgroundUsage(sessionId, subCtx.stats);', self.source)
 
-    def test_delegated_usage_merged_once(self):
-        count = self.source.count('mergeDelegatedUsage(parentCtx, subCtx.taskUsage);')
-        self.assertEqual(count, 2, f"mergeDelegatedUsage should appear exactly twice, found {count}")
+    def test_legacy_browser_usage_merger_is_removed(self):
+        self.assertNotIn('function mergeDelegatedUsage(', self.source)
+        self.assertNotIn('mergeDelegatedUsage(parentCtx, subCtx.taskUsage)', self.source)
+        self.assertIn('mergeBackgroundUsage(job.sessionId, sub.usage);', self.source)
 
     def test_background_job_lifecycle(self):
         self.assertIn('backgroundDispatch: { id, status: "pending", agentRunId: "", parentTaskStartedAt }', self.source)

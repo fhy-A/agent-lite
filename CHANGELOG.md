@@ -14,6 +14,19 @@
 
 ---
 
+## 2026-07-18 19:40 · Codex
+
+### 删除旧浏览器 Agent 编排链，完成前端执行层瘦身
+
+- **不可达代码清理**：从 `app.js` 删除旧 `runAgentLoop`、浏览器工具执行、子任务委派、并发映射、重复工具抑制、旧自动压缩分支及相关辅助函数；同时移除已无写入入口的消息队列、排队渲染、停止回填和状态字段，共减少约千行旧执行代码。
+- **单一所有权固化**：正式主任务和同会话后台任务继续只进入服务端 AgentRun。结构测试改为明确禁止 `runAgentLoop`、`executeToolWithDelegation`、`executeToolCall`、`mapWithConcurrency`、`mergeDelegatedUsage` 和 `messageQueue` 回归，避免未来重新形成浏览器/服务端双重消费。
+- **视觉能力迁移**：保留原浏览器循环的图片工具能力，将 `read_file` 图片结果改由服务端 AgentRun 在下一模型轮次展开为 `image_url`。持久消息只保存工具调用 ID 标记，base64 仍以单份工具执行结果恢复，避免视觉消息再复制一份大数据；PNG/base64 与标记轻量化均有回归覆盖。
+- **测试同步**：把并发、授权、用量、网络退避、SSE 原子收束、上下文压缩和图片视觉测试更新为当前 Server Agent 边界；JavaScript 语法、`git diff --check` 与专项回归通过，最终全量回归为 `548 passed, 25 subtests passed`。
+
+**涉及文件**：`app.js`、`server.py`、`tests/test_concurrency.py`、`tests/test_frontend_modules.py`、`tests/test_image_vision_and_browser_refresh.py`、`tests/test_p0_stability.py`、`tests/test_p2_coverage.py`、`tests/test_subagent_frontend.py`、`README.md`、`docs/SERVER_AGENT_LOOP_PLAN.md`、`data/memory/code-architecture.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 19:09 · Codex
 
 ### 将同会话后台消息迁入持久 AgentRun，完成旧浏览器循环入口退役

@@ -1,4 +1,4 @@
-# Code TODO  _上次更新：2026-07-18 19:09_
+# Code TODO  _上次更新：2026-07-18 19:40_
 
 > 只记录尚未完成且可以继续执行的事项；已完成内容统一查阅 `CHANGELOG.md`。
 
@@ -11,7 +11,6 @@
 
 ## P1 · 核心能力
 
-- [ ] **删除旧浏览器 Agent 循环代码** — 历史浏览器检查点已停止重放，同一会话输出中再次发送的消息也已迁入独立持久 AgentRun；下一步删除 `app.js` 中已无正式入口的旧模型、工具与子任务编排代码，并保留任务提交、事件投影和用户决策层。详见 [`docs/SERVER_AGENT_LOOP_PLAN.md`](docs/SERVER_AGENT_LOOP_PLAN.md)。
 - [ ] **继续拆分 `app.js`** — 按 [`docs/APP_JS_SPLIT_PLAN.md`](docs/APP_JS_SPLIT_PLAN.md) 迁移 state、agent-loop、tools、render、events 和 session；边界稳定后再接入 esbuild。
 - [ ] **统一 i18n 架构** — 合并 HTML `data-i18n`、JS `t()`、服务端错误字典以及重复的 `LANG` / `I18N` 字典。
 - [ ] **评估 Token 优化效果** — 基于实际使用复查截断和压缩策略的成本收益及能力副作用。

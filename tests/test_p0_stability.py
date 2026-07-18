@@ -25,11 +25,16 @@ class TestFrontendNetworkRecovery(unittest.TestCase):
         self.assertIn("timedOut: () => timedOut", APP_SOURCE)
         self.assertNotIn("setTimeout(() => run.abortController.abort(), FETCH_TIMEOUT_MS)", APP_SOURCE)
 
-    def test_transient_failures_use_bounded_backoff(self):
-        self.assertIn("const maxAttempts = 5", APP_SOURCE)
-        self.assertIn("const delays = [1000, 2000, 4000, 8000, 15000]", APP_SOURCE)
-        self.assertIn("isTransientModelError(error)", APP_SOURCE)
-        self.assertIn('persistRunCheckpoint(ctx, "waiting-network", "model"', APP_SOURCE)
+    def test_runtime_poll_uses_bounded_backoff(self):
+        self.assertIn(
+            "const POLL_DELAYS = [500, 1000, 2000, 4000, 8000]",
+            RUNTIME_SOURCE,
+        )
+        self.assertIn(
+            "POLL_DELAYS[Math.min(failures, POLL_DELAYS.length - 1)]",
+            RUNTIME_SOURCE,
+        )
+        self.assertIn("await sleep(delay, signal)", RUNTIME_SOURCE)
 
     def test_incomplete_sse_is_not_treated_as_success(self):
         self.assertIn("let streamCompleted = false", APP_SOURCE)
@@ -152,6 +157,8 @@ class TestFrontendRefreshRecovery(unittest.TestCase):
         continue_action = APP_SOURCE[continue_start:continue_end]
         self.assertIn("await executeRunContext(ctx)", continue_action)
         self.assertNotIn("runAgentLoop(ctx)", continue_action)
+        self.assertNotIn("async function runAgentLoop(", APP_SOURCE)
+        self.assertNotIn("async function executeToolWithDelegation(", APP_SOURCE)
 
     def test_refresh_restores_original_task_timer_before_streaming(self):
         recovery_start = APP_SOURCE.index("async function resumePersistedSessionRun(summary)")

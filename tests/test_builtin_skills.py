@@ -112,6 +112,20 @@ class TestBuiltInSkillMetadata(unittest.TestCase):
             with self.subTest(skill=skill_dir.name, message=message):
                 self.assertTrue(valid, message)
 
+    def test_use_skill_requires_a_separate_tool_round(self):
+        description = server_mod.SERVER_TOOL_REGISTRY["use_skill"]["definition"]["function"]["description"]
+        self.assertIn("alone", description.lower())
+        self.assertIn("wait", description.lower())
+
+    def test_brainstorming_has_a_bounded_default_exploration_budget(self):
+        text = (SKILLS_ROOT / "brainstorming" / "SKILL.md").read_text(encoding="utf-8-sig")
+        self.assertIn("默认探索预算", text)
+        self.assertIn("最多进行 3 次搜索或文件枚举、4 次定向读取", text)
+        self.assertIn("不要用多个近义查询反复搜索同一实现", text)
+        self.assertIn("待验证", text)
+        self.assertIn("最终回答检查", text)
+        self.assertIn("没有基准测试支撑的性能排序", text)
+
 
 if __name__ == "__main__":
     unittest.main()

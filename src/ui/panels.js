@@ -20,8 +20,8 @@
     const sessionId = options.sessionId || session?.id || "";
     if (!sessionId) return "-";
     const absolutePath = String(options.absolutePath || "");
-    if (absolutePath.endsWith(`${sessionId}.json`)) return absolutePath;
-    return `code/data/sessions/${sessionId}.json`;
+    if (absolutePath.endsWith(`${sessionId}.jsonl`)) return absolutePath;
+    return `code/data/sessions/${sessionId}.jsonl`;
   }
 
   function formatSessionTimestamp(value) {
@@ -86,7 +86,7 @@
     function sessionFilePath(session = getSession()) {
       return resolveSessionFilePath(session, {
         sessionId: getSessionId(),
-        absolutePath: session?._sessionFilePath,
+        absolutePath: session?._sessionMessageFilePath,
       });
     }
 

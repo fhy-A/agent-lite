@@ -623,6 +623,75 @@ class TestDurableAgentRuntime(unittest.TestCase):
         self.assertNotIn("agent-secret-key", json.dumps(snapshot))
         self.assertEqual(_AgentUpstream.authorizations, ["Bearer agent-secret-key"] * 2)
 
+    def test_agent_enforces_and_persists_grouped_tool_budgets(self):
+        run = server_mod._create_agent_run(
+            "session-budget",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "bounded exploration"}],
+            },
+            self.base_url,
+            ["agent-secret-key"],
+            allowed_tools=["read_file", "search_files", "glob_files"],
+            start_worker=False,
+            tool_budgets=[
+                {
+                    "name": "discovery",
+                    "tools": ["search_files", "glob_files", "missing_tool"],
+                    "limit": 3,
+                    "exhaustedMessage": "synthesize now",
+                },
+                {"name": "reading", "tools": ["read_file"], "limit": 1},
+            ],
+        )
+        self.assertEqual(run["tool_budgets"][0]["tools"], ["search_files", "glob_files"])
+        run["messages"].append({"role": "assistant", "content": "", "tool_calls": []})
+        run["pending_tool_calls"] = server_mod._normalize_agent_tool_calls(
+            run,
+            [
+                {"index": 0, "id": "budget-read-1", "function": {"name": "read_file", "arguments": {"path": "README.md"}}},
+                {"index": 1, "id": "budget-read-2", "function": {"name": "read_file", "arguments": {"path": "README.md"}}},
+            ],
+            1,
+        )
+        run["status"] = "tools"
+        self.assertTrue(server_mod._execute_agent_pending_tools(run))
+        self.assertIn("Durable Agent", run["tool_executions"]["budget-read-1"]["result"]["content"])
+        blocked = run["tool_executions"]["budget-read-2"]["result"]
+        self.assertFalse(blocked["ok"])
+        self.assertIn("tool budget reading is exhausted", blocked["error"])
+        self.assertNotIn(
+            "read_file",
+            [item["function"]["name"] for item in server_mod._agent_model_tools(run)],
+        )
+
+        record = server_mod._agent_run_record(run)
+        restored = server_mod._agent_run_from_record(record)
+        self.assertEqual(restored["tool_budgets"], run["tool_budgets"])
+        self.assertEqual(
+            server_mod._agent_snapshot(restored, 0)["toolBudgetUsage"]["reading"],
+            2,
+        )
+
+    def test_agent_caps_the_entire_tool_message_sent_back_to_the_model(self):
+        result = {
+            "ok": True,
+            "action": "search_files",
+            "count": 100,
+            "results": [
+                {"path": f"file-{index}.py", "matches": ["x" * 5000]}
+                for index in range(20)
+            ],
+        }
+        content = server_mod._agent_tool_message_content(result)
+        self.assertLessEqual(len(content), server_mod._AGENT_TOOL_MESSAGE_LIMIT)
+        compact = json.loads(content)
+        self.assertTrue(compact["truncatedForModel"])
+        self.assertEqual(compact["action"], "search_files")
+        self.assertEqual(compact["count"], 100)
+        self.assertGreater(compact["originalCharacters"], server_mod._AGENT_TOOL_MESSAGE_LIMIT)
+        self.assertIn("file-0.py", compact["preview"])
+
     def test_task_tool_requires_plan_accept_or_bypass_permission(self):
         payload = {"tools": [server_mod._SERVER_TOOL_DEFINITIONS["task"]]}
         self.assertEqual(

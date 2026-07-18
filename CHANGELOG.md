@@ -14,6 +14,23 @@
 
 ---
 
+## 2026-07-19 05:44 · Codex
+
+### 完成内置 Skills 专项审查，并为 Agent 增加运行时工具边界
+
+- **专项 Skill 收口**：重写代码审查、Skill 查找、Hyperframes、图像生成、Office 文件和 Python 测试 6 个专项 Skill，统一触发边界、事实核验、工具选择、安全限制和验证闭环；头脑风暴同步补齐性能证据边界、默认探索预算与最终回答检查。
+- **打包资源兼容**：Skill 资源读取从固定的 `scripts/references/assets` 扩展到任意非隐藏打包目录及根目录文件，同时保留路径越界、隐藏文件、缓存目录和单文件大小限制；根目录 `**/*.md` 等 glob 现在能够正确匹配，文本搜索误用正则语法时返回明确提示。
+- **Skill 工具约束下沉**：系统注入 Skill 正文时同时声明 Preferred tools，并明确正文已加载、无需重复调用 `use_skill`；未声明 `task` 的 Skill 会在运行前从实际工具白名单中移除，用户明确要求并行 Agent 或子任务时仍可使用。
+- **探索预算持久化**：`brainstorming` 默认将搜索/枚举限制为 3 次、定向读取限制为 4 次；预算随服务端 Agent 任务持久化，达到上限后相关工具从后续模型轮次移除，同轮超额调用返回可恢复的预算错误。明确要求深度审计时不套用默认预算。
+- **修复工具结果 Token 放大**：Agent 原先只截断工具结果的 `content` 字段，宽泛搜索的 `results` 数组可把数十万字符完整带入模型上下文；现在整条模型工具消息统一限制为 12,000 字符，完整结果仍保留给界面和会话记录。
+- **会话信息改显消息记录**：会话创建、保存、加载和分支接口同时返回元数据 JSON 与消息 JSONL 的绝对路径；会话信息面板及复制按钮改为使用 `.jsonl` 消息记录地址，元数据 `.json` 仍保留给内部状态、用量和分支持久化。
+- **真实会话验证**：专项评估目录新增可重复的人工测试题；`brainstorming` 复测中无 `task`，发现类工具仅执行预算内 3 次。工具结果总量修复后，同一测试累计输入从 `861,440` 降至 `41,998`，非缓存新增输入从约 `286,336` 降至 `17,294`，最大单轮 prompt 从约 `282,338` 降至 `13,625`。
+- **验证结果**：Agent 预算、任务白名单、Skill 路由/结构、资源读取、根目录 glob、正则提示、完整工具消息截断和 JSONL 会话地址均有自动化覆盖；会话路径定向回归 `112 passed, 6 subtests passed`，最终全量回归 `583 passed, 148 subtests passed`。性能类最终回答偶尔仍会把未测量数字标作假设，已作为结构化输出校验的后续事项保留在 `TODO.md`。
+
+**涉及文件**：`agent-runtime.js`、`app.js`、`server.py`、`src/features/skills-memory.js`、`src/ui/panels.js`、`data/skills/brainstorming/SKILL.md`、`data/skills/code-review/SKILL.md`、`data/skills/find-skills/SKILL.md`、`data/skills/hyperframes/SKILL.md`、`data/skills/image-generation/SKILL.md`、`data/skills/office-files/SKILL.md`、`data/skills/python-testing/SKILL.md`、`tests/skill-evaluation.md`、`tests/test_agent_runtime.py`、`tests/test_branch.py`、`tests/test_builtin_skills.py`、`tests/test_frontend_modules.py`、`tests/test_p2_coverage.py`、`tests/test_routes.py`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-19 03:28 · Codex
 
 ### 将通用工作流 Skills 改写为 Code 原生指令，补齐结构验证

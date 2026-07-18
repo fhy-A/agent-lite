@@ -91,6 +91,7 @@ class TestSessionBranching(unittest.TestCase):
         self.assertEqual(status, 201)
         TestSessionBranching._parent_id = data["id"]
         self.assertTrue(Path(data["_filePath"]).exists())
+        self.assertTrue(Path(data["_messageFilePath"]).exists())
         # Save messages to parent
         messages = [
             {"role": "user", "content": "Hello"},
@@ -114,6 +115,8 @@ class TestSessionBranching(unittest.TestCase):
         self.assertEqual(data["messages"][0]["content"], "Hello")
         self.assertEqual(data.get("stats"), {"input": 1200, "output": 80, "cache": 256, "cost": 0.2})
         self.assertEqual(data.get("lastUsage"), {"prompt_tokens": 900, "completion_tokens": 40})
+        self.assertTrue(Path(data["_messageFilePath"]).exists())
+        self.assertEqual(Path(data["_messageFilePath"]).suffix, ".jsonl")
         TestSessionBranching._branch_id = data["id"]
 
     def test_02_parent_tracks_branch(self):

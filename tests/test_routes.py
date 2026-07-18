@@ -444,6 +444,40 @@ class TestFileTools(TestServerFixture):
         matches = data.get("items") or data.get("results") or data.get("matches") or []
         self.assertIsInstance(matches, list)
 
+    def test_search_files_recursive_glob_includes_project_root(self):
+        status, data = _req(
+            "POST",
+            "/api/tools/search_files",
+            json={"query": "Test Project", "glob": "**/*.md"},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(data.get("ok"))
+        paths = [item.get("path") for item in data.get("results") or []]
+        self.assertIn("README.md", paths)
+
+    def test_search_files_hints_when_regex_syntax_is_used_as_literal(self):
+        status, literal = _req(
+            "POST",
+            "/api/tools/search_files",
+            json={"query": "Test Project|Missing", "glob": "**/*.md"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(literal.get("results"), [])
+        self.assertIn("regex=true", literal.get("hint") or "")
+
+        status, regex = _req(
+            "POST",
+            "/api/tools/search_files",
+            json={
+                "query": "Test Project|Missing",
+                "regex": True,
+                "glob": "**/*.md",
+            },
+        )
+        self.assertEqual(status, 200)
+        paths = [item.get("path") for item in regex.get("results") or []]
+        self.assertIn("README.md", paths)
+
     # ── glob_files ──
     def test_glob_files(self):
         status, data = _req("POST", "/api/tools/glob_files",
@@ -452,6 +486,17 @@ class TestFileTools(TestServerFixture):
         self.assertTrue(data.get("ok"))
         results = data.get("items") or data.get("results") or data.get("matches") or []
         self.assertIsInstance(results, list)
+
+    def test_glob_files_recursive_pattern_includes_project_root(self):
+        status, data = _req(
+            "POST",
+            "/api/tools/glob_files",
+            json={"pattern": "**/*.md"},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(data.get("ok"))
+        paths = [item.get("path") for item in data.get("results") or []]
+        self.assertIn("README.md", paths)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -557,8 +602,11 @@ class TestSessionLifecycle(TestServerFixture):
         self.assertEqual(status, 201)
         self.assertIn("id", data)
         self.assertIn("_filePath", data)
+        self.assertIn("_messageFilePath", data)
         TestSessionLifecycle._session_id = data["id"]
         self.assertTrue(Path(data["_filePath"]).exists())
+        self.assertTrue(Path(data["_messageFilePath"]).exists())
+        self.assertEqual(Path(data["_messageFilePath"]).suffix, ".jsonl")
 
     def test_02_save_session(self):
         sid = TestSessionLifecycle._session_id
@@ -572,6 +620,7 @@ class TestSessionLifecycle(TestServerFixture):
         })
         self.assertEqual(status, 200)
         self.assertIn("_filePath", data)
+        self.assertIn("_messageFilePath", data)
 
     def test_03_load_session(self):
         sid = TestSessionLifecycle._session_id
@@ -580,6 +629,7 @@ class TestSessionLifecycle(TestServerFixture):
         self.assertEqual(status, 200)
         self.assertEqual(data.get("title"), "Integration Test Session Updated")
         self.assertEqual(len(data.get("messages", [])), 2)
+        self.assertEqual(Path(data["_messageFilePath"]).suffix, ".jsonl")
 
     def test_04_list_sessions(self):
         status, data = _req("GET", "/api/sessions")

@@ -42,6 +42,78 @@
       .slice(0, 3);
   }
 
+  function applySkillTaskPolicy(
+    allowedToolNames,
+    skills = [],
+    disabledSkills = new Set(),
+    userMessage = "",
+    explicitSkill = "",
+  ) {
+    const allowed = new Set(allowedToolNames || []);
+    if (!allowed.has("task")) return allowed;
+    const text = Array.isArray(userMessage)
+      ? (userMessage.find((content) => content.type === "text")?.text || "")
+      : String(userMessage || "");
+    const userRequestedDelegation = /(?:子\s*agent|子任务|sub-?agents?|parallel\s+agents?|并行.{0,6}(?:agent|任务))/i.test(text);
+    if (userRequestedDelegation) return allowed;
+
+    const activeSkills = explicitSkill
+      ? skills.filter((skill) => skill.name === explicitSkill && !disabledSkills.has(skill.name))
+      : rankMatchedSkills(skills, disabledSkills, text);
+    if (!activeSkills.length) return allowed;
+    const taskDeclared = activeSkills.some((skill) => (
+      Array.isArray(skill.tools) && skill.tools.includes("task")
+    ));
+    if (!taskDeclared) allowed.delete("task");
+    return allowed;
+  }
+
+  function getSkillToolBudgets(
+    skills = [],
+    disabledSkills = new Set(),
+    userMessage = "",
+    explicitSkill = "",
+  ) {
+    const text = Array.isArray(userMessage)
+      ? (userMessage.find((content) => content.type === "text")?.text || "")
+      : String(userMessage || "");
+    if (/(?:深度|全面|完整).{0,6}(?:审计|审查|调查)|deep\s+(?:audit|review)|exhaustive\s+(?:audit|review)/i.test(text)) {
+      return [];
+    }
+    const activeSkills = explicitSkill
+      ? skills.filter((skill) => skill.name === explicitSkill && !disabledSkills.has(skill.name))
+      : rankMatchedSkills(skills, disabledSkills, text);
+    if (!activeSkills.some((skill) => skill.name === "brainstorming")) return [];
+    return [
+      {
+        name: "brainstorming-discovery",
+        tools: ["search_files", "glob_files", "list_files"],
+        limit: 3,
+        exhaustedMessage: "已达到 brainstorming 的默认搜索预算。停止继续定位源码，使用已有证据汇总方案，并把缺失事实标为待验证。最终回答不得加入未实测的耗时、资源、规模阈值、优化倍数或性能排名。",
+      },
+      {
+        name: "brainstorming-reading",
+        tools: ["read_file"],
+        limit: 4,
+        exhaustedMessage: "已达到 brainstorming 的默认读取预算。停止继续读取文件，使用已有证据汇总方案，并把缺失事实标为待验证。最终回答不得加入未实测的耗时、资源、规模阈值、优化倍数或性能排名。",
+      },
+    ];
+  }
+
+  function formatSkillInstructions(skill) {
+    const body = String(skill?.body || "").trim();
+    const tools = Array.isArray(skill?.tools)
+      ? skill.tools.map((tool) => String(tool || "").trim()).filter(Boolean)
+      : [];
+    if (!tools.length) return body;
+    return [
+      `Preferred tools: ${tools.join(", ")}`,
+      "Tool guidance only; this does not expand the current mode's permissions.",
+      "Do not call task unless it is listed above or the user explicitly requests delegation.",
+      body,
+    ].filter(Boolean).join("\n");
+  }
+
   function createSkillsMemoryFeature(options = {}) {
     const state = options.state || {};
     const els = options.elements || {};
@@ -93,7 +165,9 @@
       if (!matched.length) return "";
       await Promise.all(matched.map(ensureSkillBody));
       matched.sort((a, b) => (a.body || "").length - (b.body || "").length);
-      return matched.map((skill) => `[Skill: ${skill.name}]\n${skill.body}`).join("\n\n---\n\n");
+      return matched.map((skill) => (
+        `[Skill: ${skill.name}]\n${formatSkillInstructions(skill)}`
+      )).join("\n\n---\n\n");
     }
 
     function toggleSkill(name) {
@@ -644,6 +718,7 @@
     return Object.freeze({
       bind,
       ensureSkillBody,
+      formatSkillInstructions,
       getMatchedSkillPrompts,
       loadMemoryContext,
       loadSkills,
@@ -658,8 +733,11 @@
   }
 
   Code.features.skillsMemory = Object.freeze({
+    applySkillTaskPolicy,
     EXPLICIT_ONLY_SKILLS,
     createSkillsMemoryFeature,
+    formatSkillInstructions,
+    getSkillToolBudgets,
     rankMatchedSkills,
   });
 })(window);

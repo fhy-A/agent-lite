@@ -471,6 +471,45 @@ class TestSkillsCRUD(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     server_mod.read_skill_file(skill_name, rel_path)
 
+    def test_skill_resources_include_root_files_and_custom_directories(self):
+        server_mod.create_skill(
+            name="extended-resources",
+            description="Extended resource layout",
+            body_text="Read the packaged resources.",
+        )
+        skill_dir = self.tmp_skills / "extended-resources"
+        (skill_dir / "guide.md").write_text("Root guide", encoding="utf-8")
+        palette_dir = skill_dir / "palettes"
+        palette_dir.mkdir()
+        (palette_dir / "dark.md").write_text("Dark palette", encoding="utf-8")
+
+        skill = server_mod.read_skill("extended-resources")
+        self.assertEqual(skill["resources"]["files"], ["guide.md"])
+        self.assertEqual(skill["resources"]["palettes"], ["palettes/dark.md"])
+        self.assertEqual(
+            server_mod.read_skill_file("extended-resources", "guide.md"),
+            "Root guide",
+        )
+        self.assertEqual(
+            server_mod.read_skill_file("extended-resources", "palettes/dark.md"),
+            "Dark palette",
+        )
+
+    def test_read_skill_resource_rejects_oversized_files(self):
+        server_mod.create_skill(
+            name="large-resource",
+            description="Large resource",
+            body_text="Read the packaged resource.",
+        )
+        resource = self.tmp_skills / "large-resource" / "guide.md"
+        resource.write_text(
+            "x" * (server_mod.MAX_TOOL_READ_BYTES + 1),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "resource is too large"):
+            server_mod.read_skill_file("large-resource", "guide.md")
+
     def test_read_nonexistent(self):
         with self.assertRaises(ValueError):
             server_mod.read_skill("nonexistent")

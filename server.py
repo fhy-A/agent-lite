@@ -575,6 +575,92 @@ def _agent_selected_tools(payload, allowed_tools=None, permission_profile="read"
     return selected
 
 
+def _normalize_agent_tool_budgets(value, selected_tools):
+    if value in (None, []):
+        return []
+    if not isinstance(value, list):
+        raise ValueError("toolBudgets must be an array")
+    if len(value) > 20:
+        raise ValueError("toolBudgets supports at most 20 groups")
+    selected_names = {
+        str((definition.get("function") or {}).get("name") or "")
+        for definition in selected_tools
+        if isinstance(definition, dict)
+    }
+    budgets = []
+    seen = set()
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ValueError("toolBudgets items must be objects")
+        name = str(item.get("name") or f"group-{index + 1}").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", name):
+            raise ValueError("tool budget name contains unsupported characters")
+        if name in seen:
+            raise ValueError(f"duplicate tool budget name: {name}")
+        seen.add(name)
+        raw_tools = item.get("tools")
+        if not isinstance(raw_tools, list) or not raw_tools or len(raw_tools) > 20:
+            raise ValueError("tool budget tools must be a non-empty array of at most 20 names")
+        tools = []
+        for tool_name in raw_tools:
+            normalized = str(tool_name or "").strip()
+            if normalized in selected_names and normalized not in tools:
+                tools.append(normalized)
+        if not tools:
+            continue
+        try:
+            limit = int(item.get("limit"))
+        except (TypeError, ValueError):
+            raise ValueError("tool budget limit must be an integer")
+        if limit < 1 or limit > 100:
+            raise ValueError("tool budget limit must be between 1 and 100")
+        exhausted_message = str(item.get("exhaustedMessage") or "").strip()
+        if len(exhausted_message) > 500:
+            raise ValueError("tool budget exhaustedMessage is too long")
+        budgets.append({
+            "name": name,
+            "tools": tools,
+            "limit": limit,
+            "exhaustedMessage": exhausted_message,
+        })
+    return budgets
+
+
+def _agent_tool_budget_usage(run, budget):
+    names = set(budget.get("tools") or [])
+    return sum(
+        1
+        for execution in (run.get("tool_executions") or {}).values()
+        if isinstance(execution, dict) and execution.get("name") in names
+    )
+
+
+def _agent_tool_budget_error(run, tool_name):
+    for budget in run.get("tool_budgets") or []:
+        if tool_name not in (budget.get("tools") or []):
+            continue
+        usage = _agent_tool_budget_usage(run, budget)
+        limit = int(budget.get("limit") or 0)
+        if usage <= limit:
+            continue
+        message = str(budget.get("exhaustedMessage") or "").strip()
+        suffix = message or "Stop calling tools in this budget group and synthesize from existing evidence."
+        return f"tool budget {budget.get('name')} is exhausted ({limit} calls): {suffix}"
+    return ""
+
+
+def _agent_model_tools(run):
+    exhausted = set()
+    for budget in run.get("tool_budgets") or []:
+        if _agent_tool_budget_usage(run, budget) >= int(budget.get("limit") or 0):
+            exhausted.update(budget.get("tools") or [])
+    return [
+        definition
+        for definition in run.get("tools") or []
+        if str((definition.get("function") or {}).get("name") or "") not in exhausted
+    ]
+
+
 def _agent_run_record(run):
     """Return the credential-free durable representation of an Agent run."""
     return {
@@ -593,6 +679,7 @@ def _agent_run_record(run):
         "request": _json_clone(run.get("request") or {}),
         "messages": _json_clone(run.get("messages") or []),
         "tools": _json_clone(run.get("tools") or []),
+        "toolBudgets": _json_clone(run.get("tool_budgets") or []),
         "rounds": _json_clone(run.get("rounds") or []),
         "pendingToolCalls": _json_clone(run.get("pending_tool_calls") or []),
         "pendingInput": _json_clone(run.get("pending_input")),
@@ -695,6 +782,15 @@ def _agent_snapshot(run, cursor=0):
             "round": len(run.get("rounds") or []),
             "maxRounds": run["max_rounds"],
             "allowedTools": tools,
+            "availableTools": [
+                str((definition.get("function") or {}).get("name") or "")
+                for definition in _agent_model_tools(run)
+            ],
+            "toolBudgets": _json_clone(run.get("tool_budgets") or []),
+            "toolBudgetUsage": {
+                str(budget.get("name") or ""): _agent_tool_budget_usage(run, budget)
+                for budget in run.get("tool_budgets") or []
+            },
             "activeRuntimeRunId": run.get("active_runtime_id", ""),
             "pendingToolCalls": _json_clone(run.get("pending_tool_calls") or []),
             "pendingInput": _json_clone(run.get("pending_input")),
@@ -852,6 +948,10 @@ def _agent_run_from_record(record):
         "request": request_options,
         "messages": list(record.get("messages") or []),
         "tools": list(record.get("tools") or []),
+        "tool_budgets": _normalize_agent_tool_budgets(
+            record.get("toolBudgets") or [],
+            list(record.get("tools") or []),
+        ),
         "rounds": list(record.get("rounds") or []),
         "pending_tool_calls": list(record.get("pendingToolCalls") or []),
         "pending_input": _json_clone(record.get("pendingInput")) if isinstance(record.get("pendingInput"), dict) else None,
@@ -972,7 +1072,28 @@ def _agent_tool_message_content(result):
                 + f"\n...[truncated {len(content) - _AGENT_TOOL_MESSAGE_LIMIT} characters]"
             )
             value["truncatedForModel"] = True
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    serialized = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    if len(serialized) <= _AGENT_TOOL_MESSAGE_LIMIT:
+        return serialized
+
+    compact = {
+        "truncatedForModel": True,
+        "originalCharacters": len(serialized),
+        "hint": "Tool result exceeded the model context limit. Use the preview, narrow the query, or synthesize from existing evidence.",
+    }
+    if isinstance(value, dict):
+        for key in ("ok", "action", "path", "count", "error"):
+            field = value.get(key)
+            if isinstance(field, (str, int, float, bool)) or field is None:
+                compact[key] = field
+    preview_limit = max(0, _AGENT_TOOL_MESSAGE_LIMIT - 800)
+    compact["preview"] = serialized[:preview_limit]
+    compact_serialized = json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
+    if len(compact_serialized) > _AGENT_TOOL_MESSAGE_LIMIT:
+        overflow = len(compact_serialized) - _AGENT_TOOL_MESSAGE_LIMIT
+        compact["preview"] = compact["preview"][:max(0, len(compact["preview"]) - overflow)]
+        compact_serialized = json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
+    return compact_serialized
 
 
 def _agent_tool_vision_marker(result, call_id):
@@ -2148,6 +2269,9 @@ def _execute_agent_pending_tools(run):
                 spec = SERVER_TOOL_REGISTRY.get(name) or {}
                 if name not in allowed_names:
                     raise ValueError(f"tool is not allowed for this Agent run: {name}")
+                budget_error = _agent_tool_budget_error(run, name)
+                if budget_error:
+                    raise ValueError(budget_error)
                 if spec.get("effect") == "interaction":
                     if len(run.get("pending_tool_calls") or []) != 1:
                         raise ValueError("request_user_input must be the only tool call in its model turn")
@@ -2377,10 +2501,12 @@ def _agent_run_worker(run):
             round_number = len(run["rounds"]) + 1
             payload = dict(run["request"])
             payload["messages"] = _agent_model_messages(run)
-            if run["tools"]:
-                payload["tools"] = _json_clone(run["tools"])
+            model_tools = _agent_model_tools(run)
+            if model_tools:
+                payload["tools"] = _json_clone(model_tools)
                 payload["tool_choice"] = payload.get("tool_choice") or "auto"
             else:
+                payload.pop("tools", None)
                 payload.pop("tool_choice", None)
 
             model_run = _create_model_runtime_run(
@@ -2475,6 +2601,7 @@ def _create_agent_run(
     agent_depth=0,
     start_worker=True,
     client_request_id="",
+    tool_budgets=None,
 ):
     if not isinstance(payload, dict):
         raise ValueError("payload must be an object")
@@ -2492,6 +2619,7 @@ def _create_agent_run(
     if not str(request_options.get("model") or "").strip():
         raise ValueError("payload.model is required")
     tools = _agent_selected_tools(payload, allowed_tools, permission_profile)
+    normalized_tool_budgets = _normalize_agent_tool_budgets(tool_budgets, tools)
     try:
         rounds_limit = int(max_rounds or _AGENT_RUN_DEFAULT_MAX_ROUNDS)
     except (TypeError, ValueError):
@@ -2523,6 +2651,7 @@ def _create_agent_run(
         "request": request_options,
         "messages": _json_clone(messages),
         "tools": tools,
+        "tool_budgets": normalized_tool_budgets,
         "rounds": [],
         "pending_tool_calls": [],
         "pending_input": None,
@@ -2558,6 +2687,7 @@ def _create_agent_run(
             ],
             "maxRounds": rounds_limit,
             "permissionProfile": permission_profile,
+            "toolBudgets": _json_clone(normalized_tool_budgets),
         })
         if start_worker:
             _start_agent_worker(run)
@@ -3584,20 +3714,34 @@ def read_skill(name, brief=False):
 
 
 def _list_skill_resources(skill_dir):
-    """List resource files in a skill directory (scripts/, references/, assets/)."""
-    resources = {"scripts": [], "references": [], "assets": []}
-    for folder in ("scripts", "references", "assets"):
-        sub = skill_dir / folder
-        if not sub.is_dir():
+    """List non-hidden files packaged alongside a skill."""
+    resources = {}
+    root_files = []
+    for entry in sorted(skill_dir.iterdir(), key=lambda item: item.name.lower()):
+        if entry.name.startswith(".") or entry.name == "__pycache__":
             continue
-        for f in sorted(sub.rglob("*")):
-            if f.is_file():
-                resources[folder].append(str(f.relative_to(skill_dir)).replace("\\", "/"))
-    return {k: v for k, v in resources.items() if v}  # omit empty folders
+        if entry.is_file():
+            if entry.name != "SKILL.md":
+                root_files.append(entry.name)
+            continue
+        if not entry.is_dir():
+            continue
+        packaged = []
+        for file_path in sorted(entry.rglob("*")):
+            relative = file_path.relative_to(skill_dir)
+            if any(part.startswith(".") or part == "__pycache__" for part in relative.parts):
+                continue
+            if file_path.is_file():
+                packaged.append(str(relative).replace("\\", "/"))
+        if packaged:
+            resources[entry.name] = packaged
+    if root_files:
+        resources["files"] = root_files
+    return resources
 
 
 def read_skill_file(name, rel_path):
-    """Read a resource file within a skill directory (sandboxed)."""
+    """Read a non-hidden packaged resource within a skill directory."""
     safe_name = str(name or "").strip()
     if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", safe_name):
         raise ValueError("invalid skill name")
@@ -3606,16 +3750,22 @@ def read_skill_file(name, rel_path):
         raise ValueError("skill not found")
     normalized_path = str(rel_path or "").replace("\\", "/").strip("/")
     parts = [part for part in normalized_path.split("/") if part]
-    if not parts or parts[0] not in {"scripts", "references", "assets"}:
-        raise ValueError("skill resources must be inside scripts, references, or assets")
-    resource_root = (skill_dir / parts[0]).resolve()
-    safe_path = (resource_root / Path(*parts[1:])).resolve()
+    if (
+        not parts
+        or normalized_path == "SKILL.md"
+        or any(part in {".", "..", "__pycache__"} or part.startswith(".") for part in parts)
+    ):
+        raise ValueError("invalid skill resource path")
+    skill_root = skill_dir.resolve()
+    safe_path = (skill_root / Path(*parts)).resolve()
     try:
-        safe_path.relative_to(resource_root)
+        safe_path.relative_to(skill_root)
     except ValueError:
         raise ValueError("path traversal rejected")
     if not safe_path.is_file():
         raise ValueError("file not found")
+    if safe_path.stat().st_size > MAX_TOOL_READ_BYTES:
+        raise ValueError("skill resource is too large")
     return safe_path.read_text(encoding="utf-8-sig")
 
 
@@ -4240,6 +4390,44 @@ def read_text_limited(path, limit_bytes):
     return text, len(data), truncated
 
 
+def _matches_glob_path(name, relative_path, pattern):
+    """Match shell globs with `**` representing zero or more path segments."""
+    import fnmatch as _fnmatch
+
+    normalized_pattern = str(pattern or "").replace("\\", "/").strip("/")
+    normalized_relative = str(relative_path or "").replace("\\", "/").strip("/")
+    if not normalized_pattern:
+        return False
+    if "/" not in normalized_pattern:
+        return _fnmatch.fnmatch(name, normalized_pattern)
+
+    path_parts = tuple(part for part in normalized_relative.split("/") if part)
+    pattern_parts = tuple(part for part in normalized_pattern.split("/") if part)
+    memo = {}
+
+    def match_at(path_index, pattern_index):
+        key = (path_index, pattern_index)
+        if key in memo:
+            return memo[key]
+        if pattern_index >= len(pattern_parts):
+            result = path_index >= len(path_parts)
+        elif pattern_parts[pattern_index] == "**":
+            result = match_at(path_index, pattern_index + 1) or (
+                path_index < len(path_parts)
+                and match_at(path_index + 1, pattern_index)
+            )
+        else:
+            result = (
+                path_index < len(path_parts)
+                and _fnmatch.fnmatch(path_parts[path_index], pattern_parts[pattern_index])
+                and match_at(path_index + 1, pattern_index + 1)
+            )
+        memo[key] = result
+        return result
+
+    return match_at(0, 0)
+
+
 def _resolve_search_candidates(root, start, glob_pattern):
     """Resolve file candidates for read-only search tools."""
     if start.is_file():
@@ -4247,21 +4435,18 @@ def _resolve_search_candidates(root, start, glob_pattern):
 
     candidates = []
     if glob_pattern:
-        import fnmatch as _fnmatch
         try:
             for dirpath, dirnames, filenames in os.walk(str(start)):
                 dirnames[:] = [item for item in dirnames if item not in SKIP_DIRS]
                 dirpath_p = Path(dirpath)
                 for name in filenames + dirnames:
                     full = dirpath_p / name
-                    if _fnmatch.fnmatch(full.name, glob_pattern):
+                    try:
+                        relative_path = full.relative_to(start)
+                    except ValueError:
+                        continue
+                    if _matches_glob_path(full.name, relative_path, glob_pattern):
                         candidates.append(full)
-                    elif "**" in glob_pattern:
-                        try:
-                            if _fnmatch.fnmatch(str(full.relative_to(start)), glob_pattern):
-                                candidates.append(full)
-                        except ValueError:
-                            pass
                 if len(candidates) >= 5000:
                     break
         except Exception:
@@ -4508,7 +4693,7 @@ def execute_search_files_tool(body):
         if matched_name or matches:
             results.append({"path": rel, "nameMatch": matched_name, "matches": matches})
 
-    return {
+    response = {
         "ok": True,
         "action": "search_files",
         "query": query,
@@ -4517,6 +4702,13 @@ def execute_search_files_tool(body):
         "truncated": len(results) >= MAX_SEARCH_RESULTS,
         "results": results,
     }
+    regex_markers = ("|", r"\(", r"\)", r"\[", r"\]", ".*", "^", "$")
+    if not use_regex and not results and any(marker in query for marker in regex_markers):
+        response["hint"] = (
+            "Query looks like regular-expression syntax but regex=false; "
+            "set regex=true to enable operators such as | or escaped groups."
+        )
+    return response
 
 
 def execute_glob_files_tool(body):
@@ -4529,8 +4721,6 @@ def execute_glob_files_tool(body):
     if not start.exists():
         raise ValueError("搜索路径不存在")
 
-    import fnmatch as _fnmatch
-
     def collect(search_root, relative_root):
         collected = []
         for dirpath, dirnames, filenames in os.walk(str(search_root)):
@@ -4542,7 +4732,7 @@ def execute_glob_files_tool(body):
                     relative_pattern = str(full.relative_to(relative_root))
                 except ValueError:
                     continue
-                if not _fnmatch.fnmatch(full.name, pattern) and not _fnmatch.fnmatch(relative_pattern, pattern):
+                if not _matches_glob_path(full.name, relative_pattern, pattern):
                     continue
                 rel = to_project_relative(root, full)
                 if full.is_dir():
@@ -4923,11 +5113,11 @@ _SERVER_TOOL_DEFINITIONS = {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Substring or regular expression."},
+                    "query": {"type": "string", "description": "Literal substring unless regex=true; operators such as | are literal otherwise."},
                     "path": {"type": "string", "description": "Optional project-relative search directory."},
                     "regex": {"type": "boolean", "description": "Enable regular-expression matching."},
                     "type": {"type": "string", "description": "Comma or space separated file extensions."},
-                    "glob": {"type": "string", "description": "Optional file-name glob filter."},
+                    "glob": {"type": "string", "description": "Optional path glob; ** matches zero or more directory levels."},
                     "contextAround": {"type": "integer", "description": "Context lines before and after each match."},
                 },
                 "required": ["query"],
@@ -4943,7 +5133,7 @@ _SERVER_TOOL_DEFINITIONS = {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "pattern": {"type": "string", "description": "Glob pattern such as **/*.py or *.js."},
+                    "pattern": {"type": "string", "description": "Glob pattern such as **/*.py or *.js; ** matches zero or more directory levels."},
                     "path": {"type": "string", "description": "Optional project-relative starting directory."},
                 },
                 "required": ["pattern"],
@@ -4970,7 +5160,7 @@ _SERVER_TOOL_DEFINITIONS = {
         "type": "function",
         "function": {
             "name": "use_skill",
-            "description": "Load an installed Skill by name and return its specialized instructions and declared tools.",
+            "description": "Load an installed Skill by name. Call this tool alone and wait for its instructions before choosing or calling any other tool.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -4985,7 +5175,7 @@ _SERVER_TOOL_DEFINITIONS = {
         "type": "function",
         "function": {
             "name": "read_skill_resource",
-            "description": "Read a file packaged under an installed Skill's scripts, references, or assets directory.",
+            "description": "Read a non-hidden resource file packaged with an installed Skill.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -6078,6 +6268,7 @@ class CodeHandler(BaseHTTPRequestHandler):
                     body.get("maxRounds"),
                     body.get("permissionProfile") or "read",
                     client_request_id=body.get("clientRequestId") or "",
+                    tool_budgets=body.get("toolBudgets"),
                 )
                 self.send_json({
                     "agentRunId": run["id"],
@@ -6372,6 +6563,7 @@ class CodeHandler(BaseHTTPRequestHandler):
         session = read_json(path, {})
         session["messages"] = read_jsonl(messages_path(session_id))
         session["_filePath"] = str(path.resolve())
+        session["_messageFilePath"] = str(messages_path(session_id).resolve())
         self.send_json(session)
 
     def create_session(self):
@@ -6397,6 +6589,7 @@ class CodeHandler(BaseHTTPRequestHandler):
         write_jsonl(messages_path(session_id), messages)
         _write_session_index_entry(session_id, meta["title"], meta["updatedAt"], len(messages), parent_id, body.get("_branchDepth", 0))
         meta["_filePath"] = str(session_path(session_id).resolve())
+        meta["_messageFilePath"] = str(messages_path(session_id).resolve())
         meta["messages"] = messages
         self.send_json(meta, 201)
 
@@ -6427,6 +6620,7 @@ class CodeHandler(BaseHTTPRequestHandler):
             write_json(path, session)
             _write_session_index_entry(session_id, session["title"], session["updatedAt"], session.get("messageCount", 0), session.get("_parentId"), session.get("_branchDepth", 0))
         session["_filePath"] = str(path.resolve())
+        session["_messageFilePath"] = str(messages_path(session_id).resolve())
         session["messages"] = read_jsonl(messages_path(session_id))
         self.send_json(session)
 
@@ -6533,6 +6727,7 @@ class CodeHandler(BaseHTTPRequestHandler):
         _write_session_index_entry(child_id, child_title, child_meta["updatedAt"], parent_msg_count, parent_id, child_depth)
         _write_session_index_entry(parent_id, parent.get("title", ""), now_iso(), parent.get("messageCount", 0), parent.get("_parentId"), parent.get("_branchDepth", 0))
         child_meta["_filePath"] = str(session_path(child_id).resolve())
+        child_meta["_messageFilePath"] = str(messages_path(child_id).resolve())
         # Include messages in response for frontend
         child_meta["messages"] = read_jsonl(child_jpath)
         self.send_json(child_meta, 201)

@@ -122,6 +122,7 @@ eval(source);
     clientRequestId: "background-123",
     payload: {{model: "test-model", messages: [{{role: "user", content: "hi"}}]}},
     keys: [],
+    toolBudgets: [{{name: "reading", tools: ["read_file"], limit: 4}}],
   }});
   process.stdout.write(JSON.stringify(captured));
 }})().catch((error) => {{ console.error(error); process.exit(1); }});
@@ -136,10 +137,12 @@ eval(source);
         data = json.loads(completed.stdout)
         self.assertEqual(data["url"], "/api/agent/runs")
         self.assertEqual(data["body"]["clientRequestId"], "background-123")
+        self.assertEqual(data["body"]["toolBudgets"][0]["limit"], 4)
 
     def test_server_agent_questionnaire_uses_durable_submit_and_reload_path(self):
         self.assertIn('name: "request_user_input"', APP_SOURCE)
-        self.assertIn("const serverTools = getNativeTools(ctx.toolPreset, profileAllowedToolNames)", APP_SOURCE)
+        self.assertIn("const skillAllowedToolNames = applySkillTaskPolicy(", APP_SOURCE)
+        self.assertIn("const serverTools = getNativeTools(ctx.toolPreset, skillAllowedToolNames)", APP_SOURCE)
         self.assertIn('if (snapshot.status === "waiting_user_input")', APP_SOURCE)
         self.assertIn("await requestServerAgentInput(ctx, snapshot.pendingInput)", APP_SOURCE)
         self.assertIn("window.AgentRuntime.submitAgentInput(request.agentRunId", APP_SOURCE)
@@ -172,6 +175,7 @@ eval(source);
         for expected in (
             "const profileAllowedToolNames = getAllowedToolNamesForProfile(",
             "allowedTools: serverToolNames",
+            "toolBudgets: skillToolBudgets",
             'toolPreset === "full" && ["accept", "bypass"].includes(permissionProfile)',
             '["propose_edit", "apply_edit", "write_file", "delete_file"]',
             'const authorizationAction = String(pendingAuthorization.action || "propose_edit")',
@@ -544,7 +548,7 @@ const feature = createFilesFeature({
         script = """
 global.window = {Code: {features: {}}};
 require("./src/features/skills-memory.js");
-const {createSkillsMemoryFeature, rankMatchedSkills} = window.Code.features.skillsMemory;
+const {applySkillTaskPolicy, createSkillsMemoryFeature, getSkillToolBudgets, rankMatchedSkills} = window.Code.features.skillsMemory;
 const skills = [
   {name: "python-tests", description: "Python testing", keywords: ["python+pytest"]},
   {name: "review", description: "Review changes", keywords: []},
@@ -558,6 +562,32 @@ const descriptionOnly = rankMatchedSkills(
   new Set(),
   "Explain Python decorators",
 );
+const skillTaskPolicy = applySkillTaskPolicy(
+  new Set(["read_file", "task"]),
+  [{name: "brainstorming", keywords: ["brainstorm"], tools: ["read_file"]}],
+  new Set(),
+  "brainstorm options",
+  "brainstorming",
+);
+const explicitDelegationPolicy = applySkillTaskPolicy(
+  new Set(["read_file", "task"]),
+  [{name: "brainstorming", keywords: ["brainstorm"], tools: ["read_file"]}],
+  new Set(),
+  "brainstorm with parallel subagents",
+  "brainstorming",
+);
+const brainstormingBudgets = getSkillToolBudgets(
+  [{name: "brainstorming", keywords: ["brainstorm"], tools: ["read_file"]}],
+  new Set(),
+  "brainstorm options",
+  "brainstorming",
+);
+const deepAuditBudgets = getSkillToolBudgets(
+  [{name: "brainstorming", keywords: ["brainstorm"], tools: ["read_file"]}],
+  new Set(),
+  "run a deep audit",
+  "brainstorming",
+);
 const calls = [];
 const state = {skills: [], disabledSkills: new Set()};
 const feature = createSkillsMemoryFeature({
@@ -565,7 +595,7 @@ const feature = createSkillsMemoryFeature({
   elements: {},
   apiJson: async (url) => {
     calls.push(url);
-    if (url === "/api/skills?brief=1") return {data: [{name: "demo", body: null}]};
+    if (url === "/api/skills?brief=1") return {data: [{name: "demo", body: null, keywords: ["demo"], tools: ["read_file"]}]};
     if (url === "/api/skills/demo") return {body: "Demo instructions", path: "skills/demo", resources: {}};
     if (url === "/api/memory-context") return {found: true, count: 2, content: "memory"};
     throw new Error(`unexpected request: ${url}`);
@@ -576,11 +606,17 @@ const feature = createSkillsMemoryFeature({
 (async () => {
   const loadedSkills = await feature.loadSkills();
   const loadedSkill = await feature.ensureSkillBody(loadedSkills[0]);
+  const matchedPrompt = await feature.getMatchedSkillPrompts("run the demo workflow");
   const memory = await feature.loadMemoryContext();
   process.stdout.write(JSON.stringify({
     ranked: ranked.map((skill) => skill.name),
     descriptionOnly: descriptionOnly.map((skill) => skill.name),
+    skillTaskPolicy: [...skillTaskPolicy],
+    explicitDelegationPolicy: [...explicitDelegationPolicy],
+    brainstormingBudgets,
+    deepAuditBudgets,
     loadedSkill,
+    matchedPrompt,
     memory,
     calls,
   }));
@@ -591,12 +627,24 @@ const feature = createSkillsMemoryFeature({
             cwd=ROOT,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=True,
         )
         data = json.loads(completed.stdout)
         self.assertEqual(data["ranked"], ["python-tests"])
         self.assertEqual(data["descriptionOnly"], [])
+        self.assertEqual(data["skillTaskPolicy"], ["read_file"])
+        self.assertEqual(data["explicitDelegationPolicy"], ["read_file", "task"])
+        self.assertEqual(data["brainstormingBudgets"][0]["limit"], 3)
+        self.assertEqual(data["brainstormingBudgets"][1]["limit"], 4)
+        self.assertIn("不得加入未实测的耗时", data["brainstormingBudgets"][0]["exhaustedMessage"])
+        self.assertEqual(data["deepAuditBudgets"], [])
         self.assertEqual(data["loadedSkill"]["body"], "Demo instructions")
+        self.assertIn("[Skill: demo]", data["matchedPrompt"])
+        self.assertIn("Preferred tools: read_file", data["matchedPrompt"])
+        self.assertIn("does not expand the current mode's permissions", data["matchedPrompt"])
+        self.assertIn("Do not call task unless it is listed", data["matchedPrompt"])
+        self.assertIn("正文已加载，不要再次调用 use_skill", APP_SOURCE)
         self.assertEqual(data["memory"], {"found": True, "count": 2, "content": "memory"})
         self.assertEqual(
             data["calls"],
@@ -1120,7 +1168,7 @@ const feature = createPanelsFeature({
     id: "session-1",
     createdAt: "2026-07-19T10:11:12Z",
     updatedAt: "2026-07-19T12:13:14Z",
-    _sessionFilePath: "C:/data/session-1.json",
+    _sessionMessageFilePath: "C:/data/session-1.jsonl",
   }),
   getSessionLastUsage: () => ({prompt_tokens: 600}),
   getContextMessages: (items) => items,
@@ -1183,7 +1231,7 @@ process.stdout.write(JSON.stringify({
   branchRenders,
   toolRenders,
   fallback,
-  absolutePath: resolveSessionFilePath({id: "s1"}, {sessionId: "s1", absolutePath: "D:/sessions/s1.json"}),
+  absolutePath: resolveSessionFilePath({id: "s1"}, {sessionId: "s1", absolutePath: "D:/sessions/s1.jsonl"}),
   fallbackPath: resolveSessionFilePath({id: "s2"}),
   registeredDocumentClick: Boolean(documentListeners.click),
 }));
@@ -1211,7 +1259,7 @@ process.stdout.write(JSON.stringify({
             "statContext": "60%",
             "sessionCreated": "2026-07-19 10:11",
             "sessionUpdated": "2026-07-19 12:13",
-            "sessionFile": "C:/data/session-1.json",
+            "sessionFile": "C:/data/session-1.jsonl",
             "sessionFileTitle": "ID: session-1",
             "msgTotal": 4,
             "msgTools": 2,
@@ -1228,8 +1276,8 @@ process.stdout.write(JSON.stringify({
         self.assertEqual(data["branchRenders"], 1)
         self.assertEqual(data["toolRenders"], 1)
         self.assertEqual(data["fallback"]["contextTokens"], 14)
-        self.assertEqual(data["absolutePath"], "D:/sessions/s1.json")
-        self.assertEqual(data["fallbackPath"], "code/data/sessions/s2.json")
+        self.assertEqual(data["absolutePath"], "D:/sessions/s1.jsonl")
+        self.assertEqual(data["fallbackPath"], "code/data/sessions/s2.jsonl")
         self.assertTrue(data["registeredDocumentClick"])
 
     def test_preview_feature_exports_parsing_urls_and_width_rules(self):
@@ -1298,7 +1346,7 @@ process.stdout.write(JSON.stringify({
         self.assertIn("const previewFeature = createPreviewFeature", APP_SOURCE)
         self.assertIn("const { createFilesFeature, shortPath } = window.Code.features.files", APP_SOURCE)
         self.assertIn("const filesFeature = createFilesFeature", APP_SOURCE)
-        self.assertIn("const { createSkillsMemoryFeature } = window.Code.features.skillsMemory", APP_SOURCE)
+        self.assertIn("getSkillToolBudgets,", APP_SOURCE)
         self.assertIn("const skillsMemoryFeature = createSkillsMemoryFeature", APP_SOURCE)
         self.assertIn("const { createSettingsFeature } = window.Code.features.settings", APP_SOURCE)
         self.assertIn("const settingsFeature = createSettingsFeature", APP_SOURCE)

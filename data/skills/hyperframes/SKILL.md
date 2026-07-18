@@ -12,7 +12,7 @@ HTML is the source of truth for video. A composition is an HTML file with `data-
 ## Code compatibility
 
 - This package includes the HyperFrames composition guidance, references, templates, and helper scripts needed for authoring HTML video compositions.
-- `hyperframes-cli` and `hyperframes-media` are companion skills, not bundled dependencies. Before using `init`, `lint`, `inspect`, `preview`, `render`, `tts`, `transcribe`, or `remove-background`, first verify that the corresponding command or package is available in the current project.
+- HyperFrames CLI and media commands are not bundled dependencies. Before using `init`, `lint`, `inspect`, `preview`, `render`, `tts`, `transcribe`, or `remove-background`, first verify that the corresponding command or package is available in the current project.
 - If a companion command is unavailable, continue with the included authoring workflow where possible and clearly state which preview, render, or media-processing step could not be executed. Never claim that an unavailable command ran successfully.
 
 ## Approach
@@ -449,10 +449,10 @@ If no `design.md` exists (house-style-only path), verify:
 
 ### Animation Map
 
-After authoring animations, run the animation map to verify choreography:
+After authoring animations, load the packaged `scripts/animation-map.mjs` resource and run it to verify choreography. If the Skill resource has no directly executable filesystem path, write an unchanged temporary copy inside the project, run it, then remove the copy after verification:
 
 ```bash
-node skills/hyperframes/scripts/animation-map.mjs <composition-dir> \
+node <animation-map-script> <composition-dir> \
   --out <composition-dir>/.hyperframes/anim-map
 ```
 
@@ -488,11 +488,11 @@ Skip on small edits (fixing a color, adjusting one duration). Run on new composi
 - **[house-style.md](house-style.md)** — Default motion, sizing, and color palettes when no design.md is specified.
 - **[patterns.md](patterns.md)** — PiP, title cards, slide show patterns.
 - **[data-in-motion.md](data-in-motion.md)** — Data, stats, and infographic patterns.
-- **[references/transcript-guide.md](references/transcript-guide.md)** — Caption-side transcript handling: input formats, mandatory quality check, cleaning JS, OpenAI/Groq API fallback, "if no transcript exists" flow. (For the `transcribe` CLI invocation, model selection rules, and the `.en` gotcha, see the `hyperframes-media` skill.)
+- **[references/transcript-guide.md](references/transcript-guide.md)** — Caption-side transcript handling: input formats, mandatory quality check, cleaning JS, API fallback, and the "if no transcript exists" flow. Verify any transcription command and model against the packages actually available in the current project.
 - **[references/dynamic-techniques.md](references/dynamic-techniques.md)** — Dynamic caption animation techniques (karaoke, clip-path, slam, scatter, elastic, 3D).
 
 - **[references/transitions.md](references/transitions.md)** — Scene transitions: crossfades, wipes, reveals, shader transitions. Energy/mood selection, CSS vs WebGL guidance. **Always read for multi-scene compositions** — scenes without transitions feel like jump cuts.
   - [transitions/catalog.md](references/transitions/catalog.md) — Hard rules, scene template, and routing to per-type implementation code.
   - Shader transitions are in `@hyperframes/shader-transitions` (`packages/shader-transitions/`) — read package source, not skill files.
 
-GSAP patterns and effects are in the `/gsap` skill.
+For GSAP patterns and effects, use the packaged motion, technique, CSS-pattern, and transition references above together with the version installed by the current project.

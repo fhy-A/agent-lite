@@ -1,141 +1,62 @@
 ---
 name: find-skills
-description: 搜索、比较和安装可复用的 Agent Skill。用于用户明确要求寻找 Skill、查询是否存在某种扩展能力，或希望从 skills.sh、GitHub 等来源扩充 Code 能力时。
+description: 搜索、比较和审查可复用的 Agent Skill。用于用户明确要求寻找 Skill、查询是否存在某种扩展能力，或希望从 skills.sh、GitHub 等来源扩充 Code 能力时。下载与安装是两个独立步骤。
 keywords: 找+skill, 查找+skill, 搜索+skill, 推荐+skill, 安装+skill, 扩充+skill, 有没有+skill, skill市场, 技能市场, skills.sh, find+skill, search+skill, install+skill, agent skills, 技能扩展, 能力扩展
-tools: web_fetch, run_command, read_file
+tools: web_fetch, run_command, list_files, read_file, glob_files
 ---
 
-# Find Skills
+# 查找与审查 Skills
 
-This skill helps you discover and install skills from the open agent skills ecosystem.
+## 边界
 
-## When to Use This Skill
+- 用户只是询问一个专业问题时，先用当前能力回答，不自动把任务变成 Skill 搜索。
+- 搜索和阅读候选 Skill 是只读操作；安装会改变本地能力，只在用户明确要求安装后进行。
+- 不将“下载成功”表述为“Code 已可用”。只有 Code 的 `/api/skills` 能列出该 Skill，才算安装完成。
+- 本 Skill 没有专用安装 API。当前项目不是 Code 源码或无法安全定位 Code 的 `data/skills/` 时，只给出经过审查的候选与手动安装指引，不猜路径。
 
-Use this skill when the user:
+## 搜索流程
 
-- Asks "how do I do X" where X might be a common task with an existing skill
-- Says "find a skill for X" or "is there a skill for X"
-- Asks "can you do X" where X is a specialized capability
-- Expresses interest in extending agent capabilities
-- Wants to search for tools, templates, or workflows
-- Mentions they wish they had help with a specific domain (design, testing, deployment, etc.)
+1. 确认领域、具体任务、目标平台与必需工具。
+2. 优先用公开页面或仓库搜索；如果环境已有 Skills CLI，可使用 `npx skills find <query>` 做只读查询。
+3. 选择 1–3 个最接近的候选，不用长列表转移选择成本。
+4. 对每个候选阅读 `SKILL.md` 和资源结构，不只根据名称或仓库热度推荐。
+5. 追溯候选的原始来源；内容来自知名项目的镜像或二次打包时，优先推荐可验证的上游版本。
 
-## What is the Skills CLI?
+## 候选审查
 
-The Skills CLI (`npx skills`) is the package manager for the open agent skills ecosystem. Skills are modular packages that extend agent capabilities with specialized knowledge, workflows, and tools.
+每个候选至少检查：
 
-**Key commands:**
+- 触发描述与用户任务是否匹配，是否会因宽泛关键词频繁误触发。
+- 声明工具是否存在于 Code，是否引用特定 Agent 平台的不可用语法。
+- 是否要求网络、密钥、全局安装、破坏性命令或对外写入。
+- `scripts/`、`references/`、`assets/` 和其他打包资源是否完整，链接是否存在。
+- 许可证、来源、最后维护情况和与当前项目的兼容风险。
 
-- `npx skills find [query]` - Search for skills interactively or by keyword
-- `npx skills add <package>` - Install a skill from GitHub or other sources
-- `npx skills check` - Check for skill updates
-- `npx skills update` - Update all installed skills
+为每个候选标注证据状态：
 
-**Browse skills at:** https://skills.sh/
+- **已发现**：只确认仓库或目录存在，尚未读完关键内容。
+- **已审查**：已检查 `SKILL.md`、相关脚本、资源链接和许可证，但尚未放入 Code 验证。
+- **已验证兼容**：已在隔离目录通过 Code 验证器，并确认工具名和资源读取可用。
 
-## How to Help Users Find Skills
+证据不足时明确列出未检查项。候选尚未达到“已验证兼容”时，不表述为“可直接放入 Code”或“完全兼容”。
 
-### Step 1: Understand What They Need
+## 输出格式
 
-When a user asks for help with something, identify:
+对每个候选提供：
 
-1. The domain (e.g., React, testing, design, deployment)
-2. The specific task (e.g., writing tests, creating animations, reviewing PRs)
-3. Whether this is a common enough task that a skill likely exists
+- Skill 名称、来源链接和解决的具体任务。
+- 与用户场景的匹配点。
+- 需要的工具/依赖与已知风险。
+- 推荐顺序和不选其他候选的理由。
+- 当前证据状态、尚未验证的部分与结论置信度。
+- 如果用户明确要安装，给出适用于当前环境的精确步骤和验证方法。
 
-### Step 2: Search for Skills
+## 安装时
 
-Run the find command with a relevant query:
+1. 先下载到可检查的临时/用户指定目录，不直接全局安装未审查包。
+2. 审查 `SKILL.md`、脚本、工具名、外部命令和资源链接。不在安装过程中执行包内未经审查的脚本。
+3. 如需适配 Code，先修正元数据、工具名和平台专用指令，再放入精确的 Code Skill 目录。
+4. 运行打包/结构验证，并确认 `/api/skills` 返回名称、描述、工具和资源。
+5. 用一个正向触发题和一个误触发反例验证后，才报告安装完成。
 
-```bash
-npx skills find [query]
-```
-
-For example:
-
-- User asks "how do I make my React app faster?" → `npx skills find react performance`
-- User asks "can you help me with PR reviews?" → `npx skills find pr review`
-- User asks "I need to create a changelog" → `npx skills find changelog`
-
-The command will return results like:
-
-```
-Install with npx skills add <owner/repo@skill>
-
-vercel-labs/agent-skills@vercel-react-best-practices
-└ https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices
-```
-
-### Step 3: Present Options to the User
-
-When you find relevant skills, present them to the user with:
-
-1. The skill name and what it does
-2. The install command they can run
-3. A link to learn more at skills.sh
-
-Example response:
-
-```
-I found a skill that might help! The "vercel-react-best-practices" skill provides
-React and Next.js performance optimization guidelines from Vercel Engineering.
-
-To install it:
-npx skills add vercel-labs/agent-skills@vercel-react-best-practices
-
-Learn more: https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices
-```
-
-### Step 4: Offer to Install
-
-If the user wants to proceed, you can install the skill for them:
-
-```bash
-npx skills add <owner/repo@skill> -g -y
-```
-
-The `-g` flag installs globally (user-level) and `-y` skips confirmation prompts.
-
-For Code, a successful `npx skills add` is only the download step. Locate the installed Skill directory, copy the complete directory into `data/skills/<skill-name>/`, and verify that `GET /api/skills` returns it. Do not report the Skill as available in Code until that verification succeeds. Once loaded, Code automatically exposes `/<skill-name>` as its slash command.
-
-## Common Skill Categories
-
-When searching, consider these common categories:
-
-| Category        | Example Queries                          |
-| --------------- | ---------------------------------------- |
-| Web Development | react, nextjs, typescript, css, tailwind |
-| Testing         | testing, jest, playwright, e2e           |
-| DevOps          | deploy, docker, kubernetes, ci-cd        |
-| Documentation   | docs, readme, changelog, api-docs        |
-| Code Quality    | review, lint, refactor, best-practices   |
-| Design          | ui, ux, design-system, accessibility     |
-| Productivity    | workflow, automation, git                |
-
-## Tips for Effective Searches
-
-1. **Use specific keywords**: "react testing" is better than just "testing"
-2. **Try alternative terms**: If "deploy" doesn't work, try "deployment" or "ci-cd"
-3. **Check popular sources**: Many skills come from `vercel-labs/agent-skills` or `ComposioHQ/awesome-claude-skills`
-
-## When No Skills Are Found
-
-If no relevant skills exist:
-
-1. Acknowledge that no existing skill was found
-2. Offer to help with the task directly using your general capabilities
-3. Suggest the user could create their own skill with `npx skills init`
-
-Example:
-
-```
-I searched for skills related to "xyz" but didn't find any matches.
-I can still help you with this task directly! Would you like me to proceed?
-
-If this is something you do often, you could create your own skill:
-npx skills init my-xyz-skill
-```
-
-## What should be noted?
-
-When the user does not specify the installation location, prefer Code's `data/skills/` directory. Preserve all bundled `scripts/`, `references/`, and `assets/` instead of copying only `SKILL.md`.
+没有合适 Skill 时，直接说明未找到可靠候选，并提供“当前任务由通用能力完成”或“创建专用 Skill”两种后续路径。

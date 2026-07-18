@@ -1,86 +1,50 @@
 ---
 name: office-files
-description: 读取 Word、Excel、PPT、PDF 等办公文档，提取文本、表格、内容
+description: 只读提取 Word、Excel、PowerPoint 和 PDF 文件中的文本、表格、工作表与幻灯片内容。用于读取、提取、分析或总结已有 Office/PDF 文件；不用于创建或美化新文档。
 keywords: 读取+word, 读取+docx, 提取+word, 读取+excel, 读取+xlsx, 提取+excel, 读取+ppt, 读取+pptx, 提取+ppt, 读取+pdf, 提取+pdf, 分析+pdf, 总结+pdf
-tools: run_command, read_file, write_file
+tools: list_files, read_file, glob_files, run_command, write_file
 ---
 
-## Office 文件处理
+# Office / PDF 内容提取
 
-本项目已预装处理库：`python-docx`、`openpyxl`、`python-pptx`、`PyPDF2`、`pandas`、`zipfile`。
+默认只读，不替换源文件。只有用户明确要求导出提取结果时，才用 `write_file` 写入用户指定的文本/Markdown 路径。
 
-所有操作都用 `python -c "..."` 执行，输出纯文本到 stdout，不要在脚本里写文件。
+## 通用流程
 
----
+1. 确认文件路径、扩展名和大小；多个候选时先列出文件。
+2. 根据格式选择库，首次使用前通过短命令确认库可导入，不假设所有可选依赖都已安装。
+3. 先提取结构摘要（页数、Sheet 名、幻灯片数、表格数），再按需读取范围，避免一次输出整个大文件。
+4. 将空值与数字 `0` 区分开，保留工作表/页码/幻灯片索引以便追溯。
+5. 交付时说明读取范围、跳过的内容和提取限制。
 
-### Word (.docx) 读取
+## Word (`.docx`)
 
-**提取全部段落文本：**
-```bash
-python -c "from docx import Document; doc=Document(r'文件路径'); [print(p.text) for p in doc.paragraphs if p.text.strip()]"
+使用 `python-docx`：
+
+```powershell
+python -c "from docx import Document; p=r'FILE.docx'; d=Document(p); print('paragraphs',len(d.paragraphs),'tables',len(d.tables)); [print(x.text) for x in d.paragraphs if x.text.strip()]"
 ```
 
-**提取所有表格：**
-```bash
-python -c "from docx import Document; doc=Document(r'文件路径'); [print('\t'.join(c.text for c in row.cells)) for t in doc.tables for row in t.rows]"
-```
+需要表格时单独遍历 `d.tables`，为每张表和每行保留索引。页眉、页脚、文本框和修订内容可能不在普通段落列表中，不能声称已完整提取而未检查这些部位。
 
----
+## Excel (`.xlsx` / `.xlsm`)
 
-### Excel (.xlsx / .xls) 读取
+使用 `openpyxl.load_workbook(path, data_only=True, read_only=True)`，先列出 `sheetnames`，再读用户需要的 Sheet 和行列范围。如果需要公式本身，改用 `data_only=False`。
 
-**列出所有 Sheet 名：**
-```bash
-python -c "import openpyxl; wb=openpyxl.load_workbook(r'文件路径', data_only=True); [print(s) for s in wb.sheetnames]"
-```
+`.xls` 是旧二进制格式，`openpyxl` 不支持。可尝试 `pandas.read_excel` 与已安装引擎；引擎不存在时明确说明需要转为 `.xlsx`，不要偷换格式或写回原文件。
 
-**读取指定 Sheet（前 100 行）：**
-```bash
-python -c "import openpyxl; wb=openpyxl.load_workbook(r'文件路径', data_only=True); ws=wb['Sheet名']; [print('\t'.join(str(c.value or '') for c in row)) for row in list(ws.iter_rows())[:100]]"
-```
+## PowerPoint (`.pptx`)
 
-**用 pandas 读取（自动处理表头）：**
-```bash
-python -c "import pandas as pd; df=pd.read_excel(r'文件路径', sheet_name='Sheet名'); print(df.head(50).to_string())"
-```
+使用 `python-pptx`，按幻灯片索引输出文本形状和表格。对组合形状、图表、备注、SmartArt 和图片内文字要单独说明是否已检查；仅遍历 `shape.text` 不等于完整视觉内容。
 
----
+## PDF
 
-### PPT (.pptx) 读取
+文本型 PDF 可使用 `PyPDF2.PdfReader` 或当前可用的 PDF 库，先获取页数，再按用户指定页码提取。
 
-**提取所有幻灯片文本：**
-```bash
-python -c "from pptx import Presentation; prs=Presentation(r'文件路径'); [print(f'--- 第{i+1}页 ---\n'+'\n'.join(s.text for s in slide.shapes if s.has_text_frame)) for i,slide in enumerate(prs.slides)]"
-```
+如果页面只返回空文本或乱序字符，可能是扫描件、字体编码或复杂分栏；说明需要 OCR 或页面渲染，不编造内容。
 
----
+## 安全与输出
 
-### PDF 读取
-
-**PyPDF2（基础文本提取）：**
-```bash
-python -c "from PyPDF2 import PdfReader; r=PdfReader(r'文件路径'); [print(r.pages[i].extract_text()) for i in range(len(r.pages))]"
-```
-
-**PyPDF2（指定页码范围，如第 1-3 页）：**
-```bash
-python -c "from PyPDF2 import PdfReader; r=PdfReader(r'文件路径'); [print(r.pages[i].extract_text()) for i in range(3)]"
-```
-
----
-
-### 通用 ZIP 内查看（docx/xlsx/pptx 本质是 ZIP）
-
-**列出内部文件结构：**
-```bash
-python -c "from zipfile import ZipFile; z=ZipFile(r'文件路径'); [print(f'{i.filename} ({i.file_size} bytes)') for i in z.infolist()]"
-```
-
----
-
-### 注意事项
-
-1. 路径中的反斜杠必须用 `r'原始路径'`（raw string）包裹，避免转义问题
-2. 中文路径直接传入 r-string 即可，无需额外处理
-3. 文件较大时控制输出量，避免撑爆上下文
-4. 如需导出提取结果，用 `write_file` 工具写入项目目录，**不要**在 python 脚本里直接写文件（`open('...','w')` 会被拦）
+- 对不可信 Office 文件仅做内容解析，不执行宏、嵌入对象、外部链接或附带脚本。
+- 用户未要求时不导出全文，优先给结构化摘要和可追溯的定位。
+- 输出命令必须限制行数/页数，大文件分批读取，避免撑满上下文。

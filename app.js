@@ -18,7 +18,11 @@ const { createMessagesFeature } = window.Code.ui.messages;
 const { createTimelineFeature, syncSessionBranchMetadata } = window.Code.ui.timeline;
 const { createPanelsFeature } = window.Code.ui.panels;
 const { createSettingsFeature } = window.Code.features.settings;
-const { createSkillsMemoryFeature } = window.Code.features.skillsMemory;
+const {
+  applySkillTaskPolicy,
+  createSkillsMemoryFeature,
+  getSkillToolBudgets,
+} = window.Code.features.skillsMemory;
 const { createPreviewFeature } = window.Code.features.preview;
 const { createFilesFeature, shortPath } = window.Code.features.files;
 
@@ -855,6 +859,7 @@ const panelsFeature = createPanelsFeature({
     createdAt: state.sessionCreated,
     updatedAt: state.sessionUpdated,
     _sessionFilePath: state._sessionFilePath,
+    _sessionMessageFilePath: state._sessionMessageFilePath,
   }),
   getSessionLastUsage,
   getContextMessages: getModelContextMessages,
@@ -890,6 +895,7 @@ const skillsMemoryFeature = createSkillsMemoryFeature({
 });
 const {
   ensureSkillBody,
+  formatSkillInstructions,
   getMatchedSkillPrompts,
   loadMemoryContext,
   loadSkills,
@@ -1429,7 +1435,7 @@ const nativeTools = [
 
       name: "use_skill",
 
-      description: "加载一个已安装的 Skill 来获取专业指导。传入 name 参数指定 skill 名称（如 code-review、python-testing）。加载后你会收到该领域的详细工作规范。如果 skill 不存在，返回错误并列出所有可用 skill。",
+      description: "加载一个已安装的 Skill 来获取专业指导。必须单独调用并等待返回后，才能选择或调用其他工具；不要在同一轮并发调用 task。传入 name 参数指定 Skill 名称。",
 
       parameters: {
 
@@ -1459,7 +1465,7 @@ const nativeTools = [
 
       name: "read_skill_resource",
 
-      description: "读取已安装 Skill 目录内的打包资源文件（scripts/references/assets）。当 Skill 正文指引你查阅某个引用文件时，用这个工具按需加载。传入 skill 名称和文件相对路径（如 references/api.md、scripts/validate.py）。",
+      description: "读取已安装 Skill 目录内的非隐藏打包资源。当 Skill 正文指引你查阅某个资源时按需加载，支持根目录文件和自定义资源目录。",
 
       parameters: {
 
@@ -1623,6 +1629,11 @@ const nativeTools = [
 
 
 const SUBAGENT_DELEGATION_RULES = `## 子 Agent 委派规则
+
+Skill 优先级：
+- 调用 use_skill 时必须单独调用并等待返回，不能在同一轮并发启动 task 或其他工具
+- Skill 正文已由系统自动加载时，不要再次调用 use_skill
+- 已加载 Skill 的 Preferred tools 未列出 task 时，不要委派；只有用户明确要求子任务或并行 Agent 时例外
 
 以下情况优先调用 task：
 - 存在两个及以上互不依赖的工作流，可以并行完成
@@ -1925,7 +1936,7 @@ async function getSystemPrompt(options = {}) {
 
       if (skill && skill.body) {
 
-        parts.push(`=== 已激活 Skill: ${skill.name} ===\n${skill.body}`);
+        parts.push(`=== 已激活 Skill: ${skill.name}（正文已加载，不要再次调用 use_skill） ===\n${formatSkillInstructions(skill)}`);
 
       }
 
@@ -1937,7 +1948,7 @@ async function getSystemPrompt(options = {}) {
 
         if (skillPrompt) {
 
-          parts.push(`=== 匹配的 Skill（自动加载） ===\n${skillPrompt}`);
+          parts.push(`=== 匹配的 Skill（正文已加载，不要再次调用 use_skill） ===\n${skillPrompt}`);
 
         }
 
@@ -3893,6 +3904,7 @@ async function createSession(title = t("sessionTitleDefault")) {
   state.sessionCreated = session.createdAt || "";
   state.sessionUpdated = session.lastMessageTime || session.updatedAt || "";
   state._sessionFilePath = session._filePath || "";
+  state._sessionMessageFilePath = session._messageFilePath || "";
 
   state.messages = session.messages || [];
   setSessionMessages(session.id, state.messages);
@@ -3978,6 +3990,7 @@ async function loadSession(sessionId) {
   state.sessionCreated = session.createdAt || "";
   state.sessionUpdated = session.lastMessageTime || session.updatedAt || "";
   state._sessionFilePath = session._filePath || "";
+  state._sessionMessageFilePath = session._messageFilePath || "";
 
   // Load from active run (streaming) > cache > server
   const cached = state._sessionMsgs && state._sessionMsgs[session.id];
@@ -8441,7 +8454,21 @@ async function runServerAgentLoop(ctx) {
     ctx.permissionProfile || "read",
     ctx.toolPreset,
   );
-  const serverTools = getNativeTools(ctx.toolPreset, profileAllowedToolNames);
+  const latestUserMessage = [...ctx.messages].reverse().find((message) => message?.role === "user");
+  const skillAllowedToolNames = applySkillTaskPolicy(
+    profileAllowedToolNames,
+    state.skills || [],
+    state.disabledSkills || new Set(),
+    latestUserMessage?.content || "",
+    ctx.explicitSkill || "",
+  );
+  const skillToolBudgets = getSkillToolBudgets(
+    state.skills || [],
+    state.disabledSkills || new Set(),
+    latestUserMessage?.content || "",
+    ctx.explicitSkill || "",
+  );
+  const serverTools = getNativeTools(ctx.toolPreset, skillAllowedToolNames);
   const serverToolNames = serverTools.map((tool) => String(tool.function?.name || "")).filter(Boolean);
   ctx.allowedToolNames = new Set(serverToolNames);
   ctx.tools = serverTools;
@@ -8462,6 +8489,7 @@ async function runServerAgentLoop(ctx) {
       baseUrl,
       keys,
       allowedTools: serverToolNames,
+      toolBudgets: skillToolBudgets,
       maxRounds: MAX_TOOL_ROUNDS,
       permissionProfile: ctx.permissionProfile || "read",
       signal: ctx.run.abortController.signal,

@@ -17,6 +17,7 @@ DIFF_SOURCE = (ROOT / "src" / "ui" / "diff.js").read_text(encoding="utf-8")
 MARKDOWN_SOURCE = (ROOT / "src" / "ui" / "markdown.js").read_text(encoding="utf-8")
 MESSAGES_SOURCE = (ROOT / "src" / "ui" / "messages.js").read_text(encoding="utf-8")
 TIMELINE_SOURCE = (ROOT / "src" / "ui" / "timeline.js").read_text(encoding="utf-8")
+PANELS_SOURCE = (ROOT / "src" / "ui" / "panels.js").read_text(encoding="utf-8")
 PREVIEW_SOURCE = (ROOT / "src" / "features" / "preview.js").read_text(encoding="utf-8")
 FILES_SOURCE = (ROOT / "src" / "features" / "files.js").read_text(encoding="utf-8")
 SKILLS_MEMORY_SOURCE = (ROOT / "src" / "features" / "skills-memory.js").read_text(encoding="utf-8")
@@ -273,6 +274,7 @@ eval(source);
             "src/ui/markdown.js",
             "src/ui/timeline.js",
             "src/ui/messages.js",
+            "src/ui/panels.js",
             "src/features/settings.js",
             "src/features/preview.js",
             "src/features/files.js",
@@ -292,6 +294,7 @@ eval(source);
             "./src/ui/markdown.js",
             "./src/ui/timeline.js",
             "./src/ui/messages.js",
+            "./src/ui/panels.js",
             "./src/features/settings.js",
             "./src/features/skills-memory.js",
             "./src/features/preview.js",
@@ -1004,6 +1007,189 @@ process.stdout.write(JSON.stringify({
         self.assertEqual(data["scrolled"]["options"], {"behavior": "smooth", "block": "start"})
         self.assertEqual(data["clearedHtml"], "")
         self.assertFalse(data["visibleAfterClear"])
+
+    def test_panels_ui_owns_session_stats_fields_and_top_panel_interactions(self):
+        self.assertIn("Code.ui.panels = Object.freeze", PANELS_SOURCE)
+        for obsolete in (
+            "function closeTopPanels(",
+            "function sessionFilePath(",
+            "function calcStats(",
+            "function updateStatsPanel(",
+        ):
+            self.assertNotIn(obsolete, APP_SOURCE)
+        script = r"""
+global.window = {Code: {ui: {}}, setTimeout: (callback) => callback()};
+require("./src/ui/panels.js");
+const {calculateSessionStats, createPanelsFeature, resolveSessionFilePath} = window.Code.ui.panels;
+const makeElement = (id) => {
+  const classes = new Set();
+  const listeners = {};
+  const attrs = {};
+  return {
+    id,
+    textContent: "",
+    title: "",
+    classes,
+    listeners,
+    attrs,
+    classList: {
+      add: (...names) => names.forEach((name) => classes.add(name)),
+      remove: (...names) => names.forEach((name) => classes.delete(name)),
+      contains: (name) => classes.has(name),
+      toggle: (name, force) => {
+        const next = force === undefined ? !classes.has(name) : Boolean(force);
+        if (next) classes.add(name); else classes.delete(name);
+        return next;
+      },
+    },
+    addEventListener: (type, callback) => { listeners[type] = callback; },
+    setAttribute: (name, value) => { attrs[name] = String(value); },
+  };
+};
+const elementNames = [
+  "statsPanel", "toolLogPanel", "branchPanel", "usageStrip", "toolLogToggle",
+  "toggleBranches", "copySessionPath", "statInput", "statOutput", "statCache",
+  "statContext", "ctxRingFill", "sessionCreated", "sessionUpdated", "sessionFile",
+  "msgUser", "msgAssistant", "msgTools", "msgTotal", "tokenInput", "tokenOutput",
+  "tokenCache", "tokenTotal", "tokenContext",
+];
+const elements = Object.fromEntries(elementNames.map((name) => [name, makeElement(name)]));
+const documentListeners = {};
+const document = {addEventListener: (type, callback) => { documentListeners[type] = callback; }};
+let branchOpen = false;
+let branchRenders = 0;
+let toolRenders = 0;
+let systemPromptReads = 0;
+const messages = [
+  {role: "user", content: "one"},
+  {role: "assistant", content: "two"},
+  {role: "tool-call", content: "three"},
+  {role: "tool-result", content: "four", streaming: true},
+];
+const feature = createPanelsFeature({
+  elements,
+  t: (key) => key === "usageStripTitle" ? "ctx {current}/{limit}" : key,
+  formatCompact: (value) => `${value}c`,
+  formatNumber: (value) => `${value}n`,
+  estimateTokens: (value) => String(value).length,
+  getMessages: () => messages,
+  getStats: () => ({input: 120, output: 30, cache: 10}),
+  getSessionId: () => "session-1",
+  getSession: () => ({
+    id: "session-1",
+    createdAt: "2026-07-19T10:11:12Z",
+    updatedAt: "2026-07-19T12:13:14Z",
+    _sessionFilePath: "C:/data/session-1.json",
+  }),
+  getSessionLastUsage: () => ({prompt_tokens: 600}),
+  getContextMessages: (items) => items,
+  getContextLimit: () => 1000,
+  getSelectedModel: () => "model-1",
+  getMessageText: (msg) => msg.content,
+  getSystemPrompt: () => { systemPromptReads += 1; return "system"; },
+  getDocument: () => document,
+  copyText: async () => true,
+  onRenderBranchTree: () => { branchRenders += 1; },
+  onRenderToolLog: () => { toolRenders += 1; },
+  onBranchPanelOpenChanged: (open) => { branchOpen = open; },
+});
+feature.bind();
+feature.bind();
+const stats = feature.updateStatsPanel();
+const systemPromptReadsWithLastUsage = systemPromptReads;
+feature.toggleStatsPanel();
+const statsWasOpen = elements.statsPanel.classes.has("open") && elements.usageStrip.classes.has("active");
+feature.toggleToolLogPanel();
+const toolWasOpen = elements.toolLogPanel.classes.has("open") && !elements.statsPanel.classes.has("open");
+feature.toggleBranchPanel();
+const branchWasOpen = branchOpen && elements.branchPanel.classes.has("open") && !elements.toolLogPanel.classes.has("open");
+feature.dismissPanelsForTarget({closest: () => null});
+const allClosed = !elements.statsPanel.classes.has("open")
+  && !elements.toolLogPanel.classes.has("open")
+  && !elements.branchPanel.classes.has("open")
+  && !branchOpen;
+const fallback = calculateSessionStats({
+  messages,
+  stats: {input: 2, output: 1},
+  getContextMessages: (items) => items,
+  estimateTokens: (value) => String(value).length,
+  getMessageText: (msg) => msg.content,
+  getSystemPrompt: () => "sys",
+  model: "fallback",
+  getContextLimit: () => 100,
+});
+process.stdout.write(JSON.stringify({
+  stats,
+  fields: {
+    statInput: elements.statInput.textContent,
+    statContext: elements.statContext.textContent,
+    sessionCreated: elements.sessionCreated.textContent,
+    sessionUpdated: elements.sessionUpdated.textContent,
+    sessionFile: elements.sessionFile.textContent,
+    sessionFileTitle: elements.sessionFile.title,
+    msgTotal: elements.msgTotal.textContent,
+    msgTools: elements.msgTools.textContent,
+    tokenTotal: elements.tokenTotal.textContent,
+    tokenContext: elements.tokenContext.textContent,
+    usageTitle: elements.usageStrip.title,
+    ringStroke: elements.ctxRingFill.attrs.stroke,
+  },
+  systemPromptReadsWithLastUsage,
+  statsWasOpen,
+  toolWasOpen,
+  branchWasOpen,
+  allClosed,
+  branchRenders,
+  toolRenders,
+  fallback,
+  absolutePath: resolveSessionFilePath({id: "s1"}, {sessionId: "s1", absolutePath: "D:/sessions/s1.json"}),
+  fallbackPath: resolveSessionFilePath({id: "s2"}),
+  registeredDocumentClick: Boolean(documentListeners.click),
+}));
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertEqual(data["stats"]["counts"], {
+            "user": 1,
+            "assistant": 1,
+            "toolCalls": 1,
+            "toolResults": 1,
+            "total": 4,
+        })
+        self.assertEqual(data["stats"]["contextTokens"], 600)
+        self.assertEqual(data["stats"]["contextPct"], 60)
+        self.assertEqual(data["fields"], {
+            "statInput": "120c",
+            "statContext": "60%",
+            "sessionCreated": "2026-07-19 10:11",
+            "sessionUpdated": "2026-07-19 12:13",
+            "sessionFile": "C:/data/session-1.json",
+            "sessionFileTitle": "ID: session-1",
+            "msgTotal": 4,
+            "msgTools": 2,
+            "tokenTotal": "150n",
+            "tokenContext": "60%（600c / 1000c）",
+            "usageTitle": "ctx 600c/1000c",
+            "ringStroke": "var(--muted)",
+        })
+        self.assertEqual(data["systemPromptReadsWithLastUsage"], 0)
+        self.assertTrue(data["statsWasOpen"])
+        self.assertTrue(data["toolWasOpen"])
+        self.assertTrue(data["branchWasOpen"])
+        self.assertTrue(data["allClosed"])
+        self.assertEqual(data["branchRenders"], 1)
+        self.assertEqual(data["toolRenders"], 1)
+        self.assertEqual(data["fallback"]["contextTokens"], 14)
+        self.assertEqual(data["absolutePath"], "D:/sessions/s1.json")
+        self.assertEqual(data["fallbackPath"], "code/data/sessions/s2.json")
+        self.assertTrue(data["registeredDocumentClick"])
 
     def test_preview_feature_exports_parsing_urls_and_width_rules(self):
         self.assertIn("features.preview = Object.freeze", PREVIEW_SOURCE)

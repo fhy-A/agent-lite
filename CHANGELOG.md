@@ -14,6 +14,21 @@
 
 ---
 
+## 2026-07-19 01:21 · Codex
+
+### 抽离顶部面板与 Session Info，完成前端拆分阶段 3
+
+- **面板模块独立**：新增 `src/ui/panels.js`，集中承接顶部 Session Info、Tool Log、分支面板的互斥开关、外部点击关闭和分支面板开关状态同步；分支树与 Tool Log 内容投影仍由原业务所有者生成。
+- **会话统计收口**：消息角色计数、累计输入/输出/缓存 Token、最后一次 API 上下文用量、估算降级、模型上下文上限、环形进度和告警等级统一迁入面板模块，现有统计口径保持不变。
+- **Session Info 字段迁移**：创建/活跃时间、会话文件路径与 ID 提示、消息分项、Token 分项、上下文占比和路径复制反馈由模块统一刷新；切换会话时继续读取当前会话独立账本。
+- **旧实现退场**：`app.js` 删除原面板统计、路径、开关和外部关闭实现，通过显式 getter、渲染回调与状态回调装配新模块，净减少约 202 行；`index.html` 在应用入口前加载面板脚本。
+- **回归保护**：新增独立 Node 测试，覆盖真实 `prompt_tokens` 优先级、估算降级、流式消息排除、消息/工具计数、时间与路径格式、统计字段投影、环形告警、三个面板互斥、外部关闭、幂等事件绑定和旧实现禁入。
+- **验证结果**：`src/ui/panels.js` 与 `app.js` JavaScript 语法、`git diff --check`、模块定向回归 `34 passed`、稳定性/覆盖/子 Agent 前端回归 `94 passed, 4 subtests passed` 均通过；最终全量回归 `564 passed, 25 subtests passed`。人工确认 Session Info 数据、路径复制、三个顶部面板互斥与空白处关闭、会话切换后的统计刷新均正常。
+
+**涉及文件**：`src/ui/panels.js`、`app.js`、`index.html`、`tests/test_frontend_modules.py`、`docs/APP_JS_SPLIT_PLAN.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-19 00:40 · Codex
 
 ### 抽离时间线与消息流标记模块，并补齐分支继承和表单控件边界

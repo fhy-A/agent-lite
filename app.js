@@ -16,6 +16,7 @@ const {
 } = window.Code.ui.markdown;
 const { createMessagesFeature } = window.Code.ui.messages;
 const { createTimelineFeature, syncSessionBranchMetadata } = window.Code.ui.timeline;
+const { createPanelsFeature } = window.Code.ui.panels;
 const { createSettingsFeature } = window.Code.features.settings;
 const { createSkillsMemoryFeature } = window.Code.features.skillsMemory;
 const { createPreviewFeature } = window.Code.features.preview;
@@ -725,6 +726,7 @@ const els = {
   statCache: document.getElementById("statCache"),
 
   statContext: document.getElementById("statContext"),
+  ctxRingFill: document.getElementById("ctxRingFill"),
 
   sessionCreated: document.getElementById("sessionCreated"),
   sessionUpdated: document.getElementById("sessionUpdated"),
@@ -838,6 +840,42 @@ const {
   showIconCopyFeedback,
 } = messagesFeature;
 window.copyMessageText = copyMessageText;
+
+const panelsFeature = createPanelsFeature({
+  elements: els,
+  t,
+  formatCompact,
+  formatNumber,
+  estimateTokens,
+  getMessages: () => state.messages,
+  getStats: () => state.stats,
+  getSessionId: () => state.sessionId,
+  getSession: () => ({
+    id: state.sessionId,
+    createdAt: state.sessionCreated,
+    updatedAt: state.sessionUpdated,
+    _sessionFilePath: state._sessionFilePath,
+  }),
+  getSessionLastUsage,
+  getContextMessages: getModelContextMessages,
+  getContextLimit: getModelContextLimit,
+  getSelectedModel,
+  getMessageText: getMsgText,
+  getSystemPrompt,
+  copyText,
+  onRenderBranchTree: () => renderBranchTree(),
+  onRenderToolLog: () => renderToolLog(),
+  onBranchPanelOpenChanged: (open) => {
+    state.branchPanelOpen = open;
+  },
+});
+const {
+  calcStats,
+  closeTopPanels,
+  sessionFilePath,
+  updateStatsPanel,
+} = panelsFeature;
+panelsFeature.bind();
 
 const skillsMemoryFeature = createSkillsMemoryFeature({
   state,
@@ -2010,26 +2048,6 @@ function updateModePromptPreview() {
 
 
 
-function closeTopPanels() {
-
-  els.statsPanel.classList.remove("open");
-
-  els.toolLogPanel.classList.remove("open");
-
-  els.branchPanel.classList.remove("open");
-
-  els.usageStrip.classList.remove("active");
-
-  els.toolLogToggle.classList.remove("active");
-
-  els.toggleBranches.classList.remove("active");
-
-  state.branchPanelOpen = false;
-
-}
-
-
-
 function buildBranchTree(focusSessionId) {
   if (!focusSessionId || !state.sessions.length) return null;
   var sessions = state.sessions;
@@ -2137,163 +2155,6 @@ async function switchToBranch(sessionId) {
   await loadSession(sessionId);
   if (state.branchPanelOpen) renderBranchTree();
 }
-
-
-function sessionFilePath(session) {
-  // Prefer the absolute path from the server; fall back to relative
-  const id = state.sessionId || (session && session.id);
-  if (!id) return "-";
-  if (state._sessionFilePath && state._sessionFilePath.endsWith(id + ".json")) return state._sessionFilePath;
-  return `code/data/sessions/${id}.json`;
-}
-
-
-
-function calcStats(messages = state.messages, stats = state.stats, sessionId = state.sessionId, modelOverride = "") {
-
-  messages = Array.isArray(messages) ? messages.filter(Boolean) : [];
-
-  const counts = {
-
-    user: messages.filter((msg) => msg.role === "user").length,
-
-    assistant: messages.filter((msg) => msg.role === "assistant").length,
-
-    toolCalls: messages.filter((msg) => msg.role === "tool-call").length,
-
-    toolResults: messages.filter((msg) => msg.role === "tool-result").length,
-
-  };
-
-  counts.total = counts.user + counts.assistant + counts.toolCalls + counts.toolResults;
-
-
-
-  // Accumulated API stats (from usage callbacks)
-
-  const apiInput = stats.input;
-
-  const apiOutput = stats.output;
-
-  const apiCache = stats.cache || 0;
-
-
-
-  // Use the last API-reported prompt_tokens as context size when available,
-  // falling back to the old estimation heuristic.
-  const lastUsage = getSessionLastUsage(sessionId);
-  let contextTokens;
-  if (lastUsage?.prompt_tokens) {
-    contextTokens = lastUsage.prompt_tokens;
-  } else {
-    contextTokens = getModelContextMessages(messages)
-      .filter((msg) => !msg.streaming)
-      .reduce((sum, msg) => sum + estimateTokens(getMsgText(msg)), 0)
-      + estimateTokens(getSystemPrompt({briefSkills: true}));
-  }
-
-
-
-  const model = modelOverride || getSelectedModel() || "";
-  const ctxLimit = getModelContextLimit(model);
-
-  const contextPct = Math.min(100, (contextTokens / ctxLimit) * 100);
-
-
-
-  return { counts, input: apiInput, output: apiOutput, cache: apiCache, contextTokens, ctxLimit, contextPct };
-
-}
-
-
-
-function updateStatsPanel() {
-
-  const stats = calcStats();
-
-  els.statInput.textContent = formatCompact(stats.input);
-
-  els.statOutput.textContent = formatCompact(stats.output);
-
-  els.statCache.textContent = formatCompact(stats.cache);
-
-  els.statContext.textContent = `${stats.contextPct.toFixed(0)}%`;
-
-  els.usageStrip.title = t("usageStripTitle").replace("{current}", formatCompact(stats.contextTokens || 0)).replace("{limit}", formatCompact(stats.ctxLimit || 200000));
-
-  // Update ring chart
-
-  const ring = document.getElementById("ctxRingFill");
-
-  if (ring) {
-
-    const pct = Math.min(stats.contextPct, 100) / 100;
-
-    const circumference = 2 * Math.PI * 5; // r=5
-
-    ring.setAttribute("stroke-dasharray", `${pct * circumference} ${circumference}`);
-
-    ring.setAttribute("stroke", stats.contextPct >= 95 ? "var(--red)" : stats.contextPct >= 80 ? "var(--yellow)" : "var(--muted)");
-
-  }
-
-
-
-  // Context usage warning
-
-  const ctxPct = stats.contextPct;
-
-  els.usageStrip.classList.remove("warn", "danger");
-
-  els.statContext.classList.remove("warn", "danger");
-
-  if (ctxPct >= 80) {
-
-    els.usageStrip.classList.add("danger");
-
-    els.statContext.classList.add("danger");
-
-  } else if (ctxPct >= 60) {
-
-    els.usageStrip.classList.add("warn");
-
-    els.statContext.classList.add("warn");
-
-  }
-
-
-
-  els.sessionCreated.textContent = (state.sessionCreated || "").slice(0, 16).replace("T", " ") || "-";
-  els.sessionUpdated.textContent = (state.sessionUpdated || "").slice(0, 16).replace("T", " ") || "-";
-
-  els.sessionFile.textContent = sessionFilePath();
-
-  els.sessionFile.title = "ID: " + (state.sessionId || "-");
-
-  els.msgUser.textContent = stats.counts.user;
-
-  els.msgAssistant.textContent = stats.counts.assistant;
-
-  els.msgTools.textContent = (stats.counts.toolCalls || 0) + (stats.counts.toolResults || 0);
-
-  els.msgTotal.textContent = stats.counts.total;
-
-  els.tokenInput.textContent = formatNumber(stats.input);
-
-  els.tokenOutput.textContent = formatNumber(stats.output);
-
-  els.tokenCache.textContent = formatNumber(stats.cache);
-
-  els.tokenTotal.textContent = formatNumber((stats.input || 0) + (stats.output || 0));
-
-  const ctxLimit = stats.ctxLimit || 128000;
-
-  const ctxLabel = ctxLimit >= 1000000 ? "1M" : ctxLimit >= 200000 ? "200K" : "128K";
-
-  els.tokenContext.textContent = `${stats.contextPct.toFixed(0)}%（${formatCompact(stats.contextTokens || 0)} / ${formatCompact(stats.ctxLimit || 200000)}）`;
-
-}
-
 
 
 function splitThoughtContent(text = "") {
@@ -9311,12 +9172,6 @@ els.resetSystemPrompt.addEventListener("click", () => {
 
 });
 
-els.copySessionPath.addEventListener("click", async () => {
-  const ok = await copyText(sessionFilePath());
-  els.copySessionPath.textContent = ok ? t("copiedBtn") : t("failedBtn");
-  setTimeout(() => { els.copySessionPath.textContent = t("copyBtn"); }, 1200);
-});
-
 // Session ID now shown in File tooltip
 
 // Sidebar toggle: click to collapse (peek mode), click again to restore
@@ -9429,51 +9284,9 @@ window.addEventListener("resize", () => {
 
 });
 
-els.toggleBranches.addEventListener("click", () => {
-
-  const open = !els.branchPanel.classList.contains("open");
-
-  closeTopPanels();
-
-  els.branchPanel.classList.toggle("open", open);
-
-  els.toggleBranches.classList.toggle("active", open);
-
-  state.branchPanelOpen = open;
-
-  if (open) renderBranchTree();
-
-});
-
 els.createBranchBtn.addEventListener("click", () => {
 
   createBranch();
-
-});
-
-els.toolLogToggle.addEventListener("click", () => {
-
-  const open = !els.toolLogPanel.classList.contains("open");
-
-  closeTopPanels();
-
-  renderToolLog();
-
-  els.toolLogPanel.classList.toggle("open", open);
-
-  els.toolLogToggle.classList.toggle("active", open);
-
-});
-
-els.usageStrip.addEventListener("click", () => {
-
-  const open = !els.statsPanel.classList.contains("open");
-
-  closeTopPanels();
-
-  els.statsPanel.classList.toggle("open", open);
-
-  els.usageStrip.classList.toggle("active", open);
 
 });
 
@@ -9483,21 +9296,6 @@ document.addEventListener("click", (e) => {
 
     closeAllSessionMenus();
 
-  }
-
-  // Close top panels (Tools, Session Info) when clicking outside
-  if (!e.target.closest("#toolLogPanel") && !e.target.closest("#toolLogToggle")) {
-    els.toolLogPanel?.classList.remove("open");
-    els.toolLogToggle?.classList.remove("active");
-  }
-  if (!e.target.closest("#statsPanel") && !e.target.closest("#usageStrip")) {
-    els.statsPanel?.classList.remove("open");
-    els.usageStrip?.classList.remove("active");
-  }
-  if (!e.target.closest("#branchPanel") && !e.target.closest("#toggleBranches")) {
-    els.branchPanel?.classList.remove("open");
-    els.toggleBranches?.classList.remove("active");
-    state.branchPanelOpen = false;
   }
 
 });

@@ -69,6 +69,7 @@ _AGENT_PERMISSION_PROFILES = {"read", "plan", "accept", "bypass"}
 _AGENT_RUN_DEFAULT_MAX_ROUNDS = 12
 _AGENT_RUN_MAX_ROUNDS = 50
 _AGENT_TOOL_MESSAGE_LIMIT = 12000
+_AGENT_DELEGATION_MAX_CONCURRENCY = 3
 _AGENT_CREDENTIAL_FIELDS = {
     "apikey", "authorization", "accesstoken", "bearertoken", "token", "keys",
 }
@@ -1692,7 +1693,7 @@ def _agent_delegation_result(child, prompt):
     return result
 
 
-def _execute_agent_delegation(run, call, execution):
+def _agent_delegation_prompt(run, call):
     if call.get("parseError") or not isinstance(call.get("arguments"), dict):
         raise ValueError(call.get("parseError") or "tool arguments must be an object")
     if int(run.get("agent_depth") or 0) >= 1:
@@ -1702,6 +1703,11 @@ def _execute_agent_delegation(run, call, execution):
         raise ValueError("task.prompt is required")
     if len(prompt) > 20000:
         raise ValueError("task.prompt exceeds 20000 characters")
+    return prompt
+
+
+def _ensure_agent_delegation_child(run, call, execution):
+    prompt = _agent_delegation_prompt(run, call)
 
     child_run_id = str(execution.get("childAgentRunId") or "")
     child = _get_agent_run(child_run_id) if child_run_id else None
@@ -1746,6 +1752,27 @@ def _execute_agent_delegation(run, call, execution):
         _start_agent_worker(child)
     else:
         prompt = str(execution.get("prompt") or prompt)
+    return child, prompt
+
+
+def _complete_agent_delegation(run, execution, child, prompt):
+    if not execution.get("childUsageMerged"):
+        with run["condition"]:
+            _agent_usage_add(run["usage"], child.get("usage") or {})
+            execution["childUsageMerged"] = True
+            run["updated_at"] = now_iso()
+        _persist_agent_run(run)
+    result = _agent_delegation_result(child, prompt)
+    execution["status"] = "completed"
+    execution["result"] = _json_clone(result)
+    execution["error"] = "" if result.get("ok") else str(result.get("error") or "")
+    execution["completedAt"] = now_iso()
+    _persist_agent_run(run)
+    return result
+
+
+def _execute_agent_delegation(run, call, execution):
+    child, prompt = _ensure_agent_delegation_child(run, call, execution)
 
     while True:
         if run["cancel_event"].is_set():
@@ -1781,13 +1808,184 @@ def _execute_agent_delegation(run, call, execution):
         with child["condition"]:
             child["condition"].wait(timeout=0.1)
 
-    if not execution.get("childUsageMerged"):
-        with run["condition"]:
-            _agent_usage_add(run["usage"], child.get("usage") or {})
-            execution["childUsageMerged"] = True
-            run["updated_at"] = now_iso()
-        _persist_agent_run(run)
-    return _agent_delegation_result(child, prompt)
+    return _complete_agent_delegation(run, execution, child, prompt)
+
+
+def _new_agent_delegation_execution(run, call):
+    call_id = call["id"]
+    execution = run["tool_executions"].get(call_id)
+    if execution and execution.get("fingerprint") != call.get("fingerprint"):
+        raise ValueError(f"tool call id {call_id} was reused with different arguments")
+    if execution:
+        return execution
+    execution = {
+        "name": "task",
+        "arguments": (call.get("function") or {}).get("arguments", "{}"),
+        "fingerprint": call.get("fingerprint", ""),
+        "status": "queued_child",
+        "result": None,
+        "error": "",
+        "startedAt": now_iso(),
+        "completedAt": "",
+    }
+    run["tool_executions"][call_id] = execution
+    _append_agent_event(run, "tool_started", {
+        "toolCallId": call_id,
+        "name": "task",
+        "arguments": execution["arguments"],
+    })
+    return execution
+
+
+def _fail_agent_delegation_execution(run, execution, error_message):
+    result = {
+        "ok": False,
+        "action": "task",
+        "error": str(error_message or "Delegated child Agent failed")[:2000],
+    }
+    execution["status"] = "completed"
+    execution["result"] = result
+    execution["error"] = result["error"]
+    execution["completedAt"] = now_iso()
+    _persist_agent_run(run)
+    return result
+
+
+def _flush_agent_delegation_results(run, calls):
+    for call in calls:
+        call_id = call["id"]
+        execution = run["tool_executions"][call_id]
+        result = execution.get("result") or {}
+        if not _agent_has_current_tool_message(run, call_id):
+            run["messages"].append({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "name": "task",
+                "content": _agent_tool_message_content(result),
+            })
+        run["pending_tool_calls"] = [
+            pending
+            for pending in run["pending_tool_calls"]
+            if pending.get("id") != call_id
+        ]
+        _append_agent_event(run, "tool_completed", {
+            "toolCallId": call_id,
+            "name": "task",
+            "result": result,
+            "replayed": bool(execution.get("replayedFromCheckpoint")),
+        })
+
+
+def _execute_agent_delegation_batch(run, calls, allowed_names):
+    while True:
+        if run["cancel_event"].is_set():
+            _finish_agent_run(run, "cancelled")
+            return False
+
+        active_children = 0
+        waiting_authorizations = []
+        for call in calls:
+            call_id = call["id"]
+            execution = run["tool_executions"].get(call_id)
+            if execution and execution.get("fingerprint") != call.get("fingerprint"):
+                raise ValueError(f"tool call id {call_id} was reused with different arguments")
+            if execution and execution.get("status") == "completed":
+                continue
+            if not execution or not execution.get("childAgentRunId"):
+                continue
+            child = _get_agent_run(execution["childAgentRunId"])
+            if not child:
+                _fail_agent_delegation_execution(
+                    run, execution, "Delegated child Agent run no longer exists",
+                )
+                continue
+            with child["condition"]:
+                child_status = str(child.get("status") or "")
+                child_worker = child.get("worker")
+            if child_status in _AGENT_RUN_TERMINAL:
+                _complete_agent_delegation(
+                    run,
+                    execution,
+                    child,
+                    str(execution.get("prompt") or ""),
+                )
+                continue
+            if child_status == "waiting_authorization":
+                waiting_authorizations.append((call, execution, child))
+                continue
+            if child_status == "waiting_user_input":
+                _cancel_agent_run(child["id"])
+                _fail_agent_delegation_execution(
+                    run,
+                    execution,
+                    "Delegated child Agent requested unsupported interactive input",
+                )
+                continue
+            if child_status == "waiting_credentials":
+                keys = list(run.get("keys") or [])
+                if not keys:
+                    execution["status"] = "waiting_child"
+                    with run["condition"]:
+                        run["status"] = "waiting_credentials"
+                        run["resume_status"] = "tools"
+                        run["updated_at"] = now_iso()
+                    _append_agent_event(run, "waiting_credentials", {
+                        "resumeStatus": "tools",
+                        "reason": "child_requires_credentials",
+                    })
+                    return False
+                _resume_agent_run(child, keys, run.get("base_url") or "")
+                active_children += 1
+                continue
+            if child_status in _AGENT_RUN_ACTIVE:
+                if child_worker is None:
+                    _start_agent_worker(child)
+                active_children += 1
+
+        # Preserve model call order when more than one child needs approval.
+        # Already-running siblings may continue, but no new child is launched
+        # until the first pending authorization has been decided.
+        if waiting_authorizations:
+            call, execution, child = waiting_authorizations[0]
+            _agent_proxy_child_authorization(run, call, execution, child)
+            return False
+
+        for call in calls:
+            if active_children >= _AGENT_DELEGATION_MAX_CONCURRENCY:
+                break
+            execution = run["tool_executions"].get(call["id"])
+            if execution and (
+                execution.get("status") == "completed"
+                or execution.get("childAgentRunId")
+            ):
+                continue
+            execution = _new_agent_delegation_execution(run, call)
+            try:
+                if "task" not in allowed_names:
+                    raise ValueError("tool is not allowed for this Agent run: task")
+                _ensure_agent_delegation_child(run, call, execution)
+                active_children += 1
+            except Exception as exc:
+                _fail_agent_delegation_execution(run, execution, exc)
+
+        if all(
+            (run["tool_executions"].get(call["id"]) or {}).get("status") == "completed"
+            for call in calls
+        ):
+            _flush_agent_delegation_results(run, calls)
+            return True
+
+        if active_children:
+            time.sleep(0.02)
+            continue
+        # A malformed queued call should become an ordinary tool error rather
+        # than leaving the parent worker spinning forever.
+        for call in calls:
+            execution = _new_agent_delegation_execution(run, call)
+            if execution.get("status") != "completed":
+                _fail_agent_delegation_execution(
+                    run, execution, "Delegated child Agent could not be scheduled",
+                )
 
 
 def _execute_agent_pending_tools(run):
@@ -1803,6 +2001,16 @@ def _execute_agent_pending_tools(run):
         call = run["pending_tool_calls"][0]
         call_id = call["id"]
         name = str((call.get("function") or {}).get("name") or "")
+        if (SERVER_TOOL_REGISTRY.get(name) or {}).get("effect") == "delegation":
+            delegation_calls = []
+            for pending in run["pending_tool_calls"]:
+                pending_name = str((pending.get("function") or {}).get("name") or "")
+                if (SERVER_TOOL_REGISTRY.get(pending_name) or {}).get("effect") != "delegation":
+                    break
+                delegation_calls.append(pending)
+            if not _execute_agent_delegation_batch(run, delegation_calls, allowed_names):
+                return False
+            continue
         execution = run["tool_executions"].get(call_id)
         if execution and execution.get("fingerprint") != call.get("fingerprint"):
             raise ValueError(f"tool call id {call_id} was reused with different arguments")

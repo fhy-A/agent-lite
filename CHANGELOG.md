@@ -14,6 +14,20 @@
 
 ---
 
+## 2026-07-18 16:46 · Codex
+
+### 为同轮子任务建立有界并发调度和确定性结果顺序
+
+- **并发上限**：父 AgentRun 遇到同一模型轮次连续的多个 `task` 调用时，最多同时启动 3 个持久 Child AgentRun；第 4 个及后续调用保持排队，只有活动子任务进入终态后才占用释放的空位，避免无界线程和上游请求扩张。
+- **协议顺序**：子任务可以按实际完成时间落盘结果与用量，但发送给父模型的 `tool` 消息、`tool_completed` 事件和待调用移除顺序始终遵循原始工具调用顺序，防止并发完成顺序改变模型上下文。
+- **恢复与授权兼容**：批调度器复用既有 Child AgentRun ID、单次用量合并、取消传播和父级授权代理；多个子任务同时等待授权时按父工具调用顺序逐项展示，已在运行的兄弟任务可以继续，但暂停期间不启动新的排队子任务。
+- **迁移边界**：服务端 AgentRun 的工具与子任务能力已经覆盖完整；正式 `plan` / `accept` / `bypass` 仍未切换所有权。下一阶段进入前端单一所有权切换及刷新、会话切换、停止和授权恢复的人工端到端验证。
+- **验证结果**：新增 4 子任务压力用例，验证前三个并发、第四个排队、最大活动数始终为 3、四个结果和父工具消息顺序稳定、累计用量正确；AgentRun 定向回归 `37 passed, 13 subtests passed`，最终全量回归 `531 passed, 25 subtests passed`，Python 编译与 `git diff --check` 通过。
+
+**涉及文件**：`server.py`、`tests/test_agent_runtime.py`、`README.md`、`docs/SERVER_AGENT_LOOP_PLAN.md`、`data/memory/code-architecture.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 16:32 · Codex
 
 ### 将顺序子任务迁入持久 Child AgentRun，打通授权、取消与重启复用

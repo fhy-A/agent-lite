@@ -25,6 +25,12 @@ class _AgentUpstream(BaseHTTPRequestHandler):
     authorizations = []
     slow_started = threading.Event()
     release_slow = threading.Event()
+    parallel_lock = threading.Lock()
+    parallel_three_started = threading.Event()
+    release_parallel = threading.Event()
+    parallel_active = 0
+    parallel_max_active = 0
+    parallel_prompts_started = []
 
     def log_message(self, *_args):
         return
@@ -36,6 +42,25 @@ class _AgentUpstream(BaseHTTPRequestHandler):
         payload = json.loads(self.rfile.read(length) or b"{}")
         type(self).payloads.append(payload)
         messages = payload.get("messages") or []
+        parallel_child_prompt = next((
+            str(message.get("content") or "")
+            for message in messages
+            if message.get("role") == "user"
+            and str(message.get("content") or "").startswith("parallel child ")
+        ), "")
+        if parallel_child_prompt:
+            with type(self).parallel_lock:
+                type(self).parallel_active += 1
+                type(self).parallel_max_active = max(
+                    type(self).parallel_max_active,
+                    type(self).parallel_active,
+                )
+                type(self).parallel_prompts_started.append(parallel_child_prompt)
+                if type(self).parallel_active >= 3:
+                    type(self).parallel_three_started.set()
+            type(self).release_parallel.wait(timeout=5)
+            with type(self).parallel_lock:
+                type(self).parallel_active -= 1
         if any(
             message.get("role") == "user" and message.get("content") == "slow request"
             for message in messages
@@ -81,32 +106,42 @@ class _AgentUpstream(BaseHTTPRequestHandler):
             message.get("role") == "user" and message.get("content") == "delete project file"
             for message in messages
         )
-        delegation_prompts = {
+        delegation_prompt_map = {
             "delegate inspection": "inspect child file",
             "delegate write child": "write project file",
             "delegate slow child": "slow request",
         }
-        delegated_prompt = next((
+        delegated_prompts = [next((
             prompt
-            for message_text, prompt in delegation_prompts.items()
+            for message_text, prompt in delegation_prompt_map.items()
             if any(
                 message.get("role") == "user" and message.get("content") == message_text
                 for message in messages
             )
-        ), "")
+        ), "")]
+        if any(
+            message.get("role") == "user"
+            and message.get("content") == "delegate parallel children"
+            for message in messages
+        ):
+            delegated_prompts = [f"parallel child {index}" for index in range(1, 5)]
+        delegated_prompts = [prompt for prompt in delegated_prompts if prompt]
         should_call_tool = tool_result_count == 0 or (repeat_id and tool_result_count < 2)
-        if delegated_prompt and tool_result_count == 0:
+        if delegated_prompts and tool_result_count == 0:
             frames = [
                 {"choices": [{
-                    "delta": {"tool_calls": [{
-                        "index": 0,
-                        "id": "agent-task-1",
-                        "type": "function",
-                        "function": {
-                            "name": "task",
-                            "arguments": json.dumps({"prompt": delegated_prompt}),
-                        },
-                    }]},
+                    "delta": {"tool_calls": [
+                        {
+                            "index": index,
+                            "id": f"agent-task-{index + 1}",
+                            "type": "function",
+                            "function": {
+                                "name": "task",
+                                "arguments": json.dumps({"prompt": prompt}),
+                            },
+                        }
+                        for index, prompt in enumerate(delegated_prompts)
+                    ]},
                     "finish_reason": "tool_calls",
                 }]},
                 {"choices": [], "usage": {
@@ -115,7 +150,7 @@ class _AgentUpstream(BaseHTTPRequestHandler):
                     "total_tokens": 8,
                 }},
             ]
-        elif delegated_prompt:
+        elif delegated_prompts:
             frames = [
                 {"choices": [{
                     "delta": {"content": "delegation task complete"},
@@ -356,6 +391,18 @@ class _AgentUpstream(BaseHTTPRequestHandler):
                 {"choices": [{"delta": {"content": "questionnaire task complete"}, "finish_reason": "stop"}]},
                 {"choices": [], "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}},
             ]
+        elif parallel_child_prompt:
+            frames = [
+                {"choices": [{
+                    "delta": {"content": f"completed {parallel_child_prompt}"},
+                    "finish_reason": "stop",
+                }]},
+                {"choices": [], "usage": {
+                    "prompt_tokens": 3,
+                    "completion_tokens": 1,
+                    "total_tokens": 4,
+                }},
+            ]
         elif not should_call_tool:
             frames = [
                 {"choices": [{"delta": {"content": "read-only task complete"}, "finish_reason": "stop"}]},
@@ -443,9 +490,16 @@ class TestDurableAgentRuntime(unittest.TestCase):
         _AgentUpstream.authorizations = []
         _AgentUpstream.slow_started.clear()
         _AgentUpstream.release_slow.clear()
+        _AgentUpstream.parallel_three_started.clear()
+        _AgentUpstream.release_parallel.clear()
+        with _AgentUpstream.parallel_lock:
+            _AgentUpstream.parallel_active = 0
+            _AgentUpstream.parallel_max_active = 0
+            _AgentUpstream.parallel_prompts_started = []
 
     def tearDown(self):
         _AgentUpstream.release_slow.set()
+        _AgentUpstream.release_parallel.set()
         with server_mod._agent_run_lock:
             runs = list(server_mod._agent_runs.values())
         deadline = time.time() + 2
@@ -581,6 +635,69 @@ class TestDurableAgentRuntime(unittest.TestCase):
         child_record = server_mod._agent_run_path(child_id).read_text(encoding="utf-8")
         self.assertNotIn("delegation-secret-key", parent_record)
         self.assertNotIn("delegation-secret-key", child_record)
+
+    def test_same_turn_delegations_use_bounded_concurrency_and_ordered_results(self):
+        run = server_mod._create_agent_run(
+            "parallel-delegation-session",
+            {
+                "model": "test-model",
+                "messages": [{
+                    "role": "user",
+                    "content": "delegate parallel children",
+                }],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["task"]],
+            },
+            self.base_url,
+            ["parallel-delegation-key"],
+            allowed_tools=["task"],
+            permission_profile="plan",
+        )
+
+        self.assertTrue(_AgentUpstream.parallel_three_started.wait(timeout=3))
+        with _AgentUpstream.parallel_lock:
+            self.assertEqual(_AgentUpstream.parallel_max_active, 3)
+            self.assertEqual(
+                set(_AgentUpstream.parallel_prompts_started),
+                {"parallel child 1", "parallel child 2", "parallel child 3"},
+            )
+        started_executions = list(run.get("tool_executions", {}).values())
+        self.assertEqual(len(started_executions), 3)
+        self.assertTrue(all(item.get("childAgentRunId") for item in started_executions))
+
+        _AgentUpstream.release_parallel.set()
+        self._wait_terminal(run)
+        snapshot = server_mod._agent_snapshot(run, 0)
+        task_executions = [
+            item for item in snapshot["toolExecutions"] if item["name"] == "task"
+        ]
+        expected_call_ids = [f"agent-task-{index}" for index in range(1, 5)]
+        expected_results = [f"completed parallel child {index}" for index in range(1, 5)]
+
+        self.assertEqual(snapshot["status"], "completed")
+        self.assertEqual(snapshot["usage"]["total_tokens"], 34)
+        self.assertEqual(
+            [item["toolCallId"] for item in task_executions],
+            expected_call_ids,
+        )
+        self.assertEqual(
+            [item["result"]["result"] for item in task_executions],
+            expected_results,
+        )
+        self.assertEqual(
+            [
+                message["tool_call_id"]
+                for message in run["messages"]
+                if message.get("role") == "tool" and message.get("name") == "task"
+            ],
+            expected_call_ids,
+        )
+        with _AgentUpstream.parallel_lock:
+            self.assertEqual(_AgentUpstream.parallel_max_active, 3)
+            self.assertEqual(
+                set(_AgentUpstream.parallel_prompts_started),
+                {f"parallel child {index}" for index in range(1, 5)},
+            )
+        self.assertEqual(_AgentUpstream.calls, 6)
 
     def test_accept_delegation_proxies_child_file_authorization(self):
         target = self.project_dir / "generated.txt"

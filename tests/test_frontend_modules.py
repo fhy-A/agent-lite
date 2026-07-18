@@ -13,6 +13,7 @@ I18N_SOURCE = (ROOT / "src" / "core" / "i18n.js").read_text(encoding="utf-8")
 API_CLIENT_SOURCE = (ROOT / "src" / "services" / "api-client.js").read_text(encoding="utf-8")
 PREVIEW_SOURCE = (ROOT / "src" / "features" / "preview.js").read_text(encoding="utf-8")
 FILES_SOURCE = (ROOT / "src" / "features" / "files.js").read_text(encoding="utf-8")
+SKILLS_MEMORY_SOURCE = (ROOT / "src" / "features" / "skills-memory.js").read_text(encoding="utf-8")
 INDEX_SOURCE = (ROOT / "index.html").read_text(encoding="utf-8")
 BUILD_SOURCE = (ROOT / "build_exe.py").read_text(encoding="utf-8")
 STYLE_SOURCE = (ROOT / "styles.css").read_text(encoding="utf-8")
@@ -250,6 +251,7 @@ eval(source);
             "src/services/api-client.js",
             "src/features/preview.js",
             "src/features/files.js",
+            "src/features/skills-memory.js",
         ):
             self.assertTrue((ROOT / relative_path).is_file(), relative_path)
 
@@ -261,6 +263,7 @@ eval(source);
             "./src/core/i18n.js",
             "./src/services/notifications.js",
             "./src/services/api-client.js",
+            "./src/features/skills-memory.js",
             "./src/features/preview.js",
             "./src/features/files.js",
             "./agent-runtime.js",
@@ -469,6 +472,63 @@ const feature = createFilesFeature({
             {"name": "demo.txt", "contentBase64": "aGk="},
         )
 
+    def test_skills_memory_feature_ranks_and_loads_context_without_app_globals(self):
+        self.assertIn("features.skillsMemory = Object.freeze", SKILLS_MEMORY_SOURCE)
+        script = """
+global.window = {Code: {features: {}}};
+require("./src/features/skills-memory.js");
+const {createSkillsMemoryFeature, rankMatchedSkills} = window.Code.features.skillsMemory;
+const skills = [
+  {name: "python-tests", description: "Python testing", keywords: ["python+pytest"]},
+  {name: "review", description: "Review changes", keywords: []},
+  {name: "general", description: "python help", keywords: []},
+  {name: "writing-plans", description: "python pytest plan", keywords: ["python+pytest"]},
+  {name: "disabled", description: "python pytest", keywords: ["python+pytest"]},
+];
+const ranked = rankMatchedSkills(skills, new Set(["disabled"]), "Review this Python pytest project");
+const calls = [];
+const state = {skills: [], disabledSkills: new Set()};
+const feature = createSkillsMemoryFeature({
+  state,
+  elements: {},
+  apiJson: async (url) => {
+    calls.push(url);
+    if (url === "/api/skills?brief=1") return {data: [{name: "demo", body: null}]};
+    if (url === "/api/skills/demo") return {body: "Demo instructions", path: "skills/demo", resources: {}};
+    if (url === "/api/memory-context") return {found: true, count: 2, content: "memory"};
+    throw new Error(`unexpected request: ${url}`);
+  },
+  document: {getElementById: () => null},
+  storage: {setItem: () => {}},
+});
+(async () => {
+  const loadedSkills = await feature.loadSkills();
+  const loadedSkill = await feature.ensureSkillBody(loadedSkills[0]);
+  const memory = await feature.loadMemoryContext();
+  process.stdout.write(JSON.stringify({
+    ranked: ranked.map((skill) => skill.name),
+    loadedSkill,
+    memory,
+    calls,
+  }));
+})().catch((error) => { console.error(error); process.exit(1); });
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertEqual(data["ranked"], ["python-tests"])
+        self.assertEqual(data["loadedSkill"]["body"], "Demo instructions")
+        self.assertEqual(data["memory"], {"found": True, "count": 2, "content": "memory"})
+        self.assertEqual(
+            data["calls"],
+            ["/api/skills?brief=1", "/api/skills/demo", "/api/memory-context"],
+        )
+
     def test_preview_feature_exports_parsing_urls_and_width_rules(self):
         self.assertIn("features.preview = Object.freeze", PREVIEW_SOURCE)
         script = """
@@ -533,6 +593,8 @@ process.stdout.write(JSON.stringify({
         self.assertIn("const previewFeature = createPreviewFeature", APP_SOURCE)
         self.assertIn("const { createFilesFeature, shortPath } = window.Code.features.files", APP_SOURCE)
         self.assertIn("const filesFeature = createFilesFeature", APP_SOURCE)
+        self.assertIn("const { createSkillsMemoryFeature } = window.Code.features.skillsMemory", APP_SOURCE)
+        self.assertIn("const skillsMemoryFeature = createSkillsMemoryFeature", APP_SOURCE)
         self.assertIn(
             "const { showToast, notify: _notify } = window.Code.services.notifications",
             APP_SOURCE,
@@ -581,6 +643,32 @@ process.stdout.write(JSON.stringify({
             "function toggleCwdDropdown(",
             "function renderRecentFolders(",
             "function addRecentFolder(",
+            "async function loadSkills(",
+            "async function ensureSkillBody(",
+            "async function getMatchedSkillPrompts(",
+            "function showSkillsPanel(",
+            "function renderSkillsList(",
+            "async function showSkillDetail(",
+            "function openSkillEditor(",
+            "function closeSkillEditor(",
+            "async function saveSkillEdit(",
+            "function toggleSkill(",
+            "async function deleteSkillConfirm(",
+            "function showSlashSuggestions(",
+            "async function loadMemoryContext(",
+            "function updateMemoryContextIndicator(",
+            "async function showMemoryPanel(",
+            "function hideMemoryPanel(",
+            "async function renderMemoryList(",
+            "async function editMemory(",
+            "async function deleteMemory(",
+            "async function saveMemorySubmit(",
+            "function renderMemoryPanel(",
+            "function clearMemoryForm(",
+            "async function refreshSettingsMemoryList(",
+            "function renderSkillsInSettings(",
+            "function renderSettingsSkillsSidebar(",
+            "async function showSkillDetailInSettings(",
             "function showToast(",
             "function _notify(",
         ):

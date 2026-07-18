@@ -14,6 +14,20 @@
 
 ---
 
+## 2026-07-18 21:44 · Codex
+
+### 抽离 Skills 与 Memory 模块，完成前端拆分阶段 2 的第三项
+
+- **领域逻辑独立**：新增 `src/features/skills-memory.js`，集中承接 Skill 摘要与正文渐进加载、自动匹配、斜杠建议、启停与 CRUD，以及 Memory 上下文加载、状态提示和设置页管理。
+- **匹配规则固化**：Skill 自动匹配继续按“显式关键词 → Skill 名称 → 描述词”分层取最强命中，排除仅允许显式调用的规划类 Skill 与用户禁用项；命中后再懒加载正文，避免扩大初始请求。
+- **装配边界收口**：`app.js` 只负责注入共享状态、API、翻译、通知和界面刷新回调，并保留系统提示词组装与显式 `/skill` 执行入口；原 Skills/Memory 实现和重复事件绑定已删除。
+- **回归保护**：补充模块存在与加载顺序、公开导出、匹配优先级、显式 Skill 排除、禁用项排除、Skill 正文懒加载、Memory 上下文加载和旧定义禁入测试。
+- **验证结果**：`src/features/skills-memory.js` 与 `app.js` JavaScript 语法、`git diff --check` 通过；定向回归 `27 passed` 与 `98 passed, 10 subtests passed`，全量回归 `553 passed, 25 subtests passed`。人工确认 Skills 列表与详情、禁用状态持久化、斜杠建议、Memory 新建/编辑/删除和上下文提示均正常。
+
+**涉及文件**：`src/features/skills-memory.js`、`app.js`、`index.html`、`tests/test_frontend_modules.py`、`docs/APP_JS_SPLIT_PLAN.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 21:21 · Codex
 
 ### 抽离多格式预览模块，完成前端拆分阶段 2 的第二项

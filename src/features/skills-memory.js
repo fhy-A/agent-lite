@@ -1,0 +1,672 @@
+(function registerSkillsMemoryFeature(global) {
+  "use strict";
+
+  const Code = global.Code;
+  if (!Code?.features) throw new Error("Code namespace must load before skills-memory feature");
+
+  const EXPLICIT_ONLY_SKILLS = Object.freeze([
+    "dispatching-parallel-agents",
+    "subagent-driven-development",
+    "executing-plans",
+    "writing-plans",
+  ]);
+  const EXPLICIT_ONLY_SET = new Set(EXPLICIT_ONLY_SKILLS);
+
+  function rankMatchedSkills(skills = [], disabledSkills = new Set(), userMessage = "") {
+    if (!userMessage || skills.length === 0) return [];
+    const text = Array.isArray(userMessage)
+      ? (userMessage.find((content) => content.type === "text")?.text || "")
+      : String(userMessage || "");
+    const lower = text.toLowerCase();
+    const candidates = skills
+      .filter((skill) => !disabledSkills.has(skill.name) && !EXPLICIT_ONLY_SET.has(skill.name))
+      .map((skill) => {
+        const keywordScore = (skill.keywords || []).reduce((best, keyword) => {
+          const parts = String(keyword || "").toLowerCase().split("+").map((part) => part.trim()).filter(Boolean);
+          if (!parts.length || !parts.every((part) => lower.includes(part))) return best;
+          return Math.max(best, 300 + parts.reduce((total, part) => total + part.length, 0));
+        }, 0);
+        if (keywordScore) return { skill, score: keywordScore };
+
+        const name = (skill.name || "").toLowerCase();
+        if (name.length >= 2 && lower.includes(name)) return { skill, score: 200 + name.length };
+
+        const description = (skill.description || "").toLowerCase();
+        if (!description) return null;
+        const words = description.replace(/,/g, " ").split(/\s+/).filter((word) => word.length >= 2);
+        const matchedLength = words.reduce(
+          (best, word) => lower.includes(word) ? Math.max(best, word.length) : best,
+          0,
+        );
+        return matchedLength ? { skill, score: 100 + matchedLength } : null;
+      })
+      .filter(Boolean);
+    if (!candidates.length) return [];
+    const bestScore = Math.max(...candidates.map((item) => item.score));
+    return candidates
+      .filter((item) => item.score === bestScore)
+      .map((item) => item.skill)
+      .slice(0, 3);
+  }
+
+  function createSkillsMemoryFeature(options = {}) {
+    const state = options.state || {};
+    const els = options.elements || {};
+    const t = options.t || ((key) => key);
+    const escapeHtml = options.escapeHtml || ((value) => String(value ?? ""));
+    const apiJson = options.apiJson;
+    const showToast = options.showToast || (() => {});
+    const onPromptChanged = options.onPromptChanged || (() => {});
+    const onMemoryChanged = options.onMemoryChanged || (() => {});
+    const trashIcon = options.trashIcon || (() => "");
+    const documentRef = options.document || global.document;
+    const storage = options.storage || global.localStorage;
+
+    if (typeof apiJson !== "function") throw new Error("skills-memory feature requires apiJson");
+    if (!(state.disabledSkills instanceof Set)) state.disabledSkills = new Set(state.disabledSkills || []);
+
+    let editingSkillName = null;
+    let bound = false;
+
+    const byId = (id) => documentRef.getElementById(id);
+
+    async function loadSkills() {
+      try {
+        const data = await apiJson("/api/skills?brief=1");
+        state.skills = data.data || [];
+      } catch {
+        state.skills = [];
+      }
+      return state.skills;
+    }
+
+    async function ensureSkillBody(skill) {
+      if (!skill || skill.body != null) return skill;
+      try {
+        const full = await apiJson(`/api/skills/${encodeURIComponent(skill.name)}`);
+        skill.body = full.body || "";
+        skill.path = full.path || "";
+        skill.resources = full.resources || {};
+      } catch {
+        skill.body = "";
+        skill.path = "";
+        skill.resources = {};
+      }
+      return skill;
+    }
+
+    async function getMatchedSkillPrompts(userMessage) {
+      const matched = rankMatchedSkills(state.skills || [], state.disabledSkills, userMessage);
+      if (!matched.length) return "";
+      await Promise.all(matched.map(ensureSkillBody));
+      matched.sort((a, b) => (a.body || "").length - (b.body || "").length);
+      return matched.map((skill) => `[Skill: ${skill.name}]\n${skill.body}`).join("\n\n---\n\n");
+    }
+
+    function toggleSkill(name) {
+      if (state.disabledSkills.has(name)) state.disabledSkills.delete(name);
+      else state.disabledSkills.add(name);
+      storage?.setItem("code-disabled-skills", JSON.stringify([...state.disabledSkills]));
+    }
+
+    function showSkillsPanel() {
+      byId("skillsModal")?.classList.remove("hidden");
+      renderSkillsList();
+      const first = state.skills?.[0];
+      if (!first) {
+        showSkillDetail(null);
+        return;
+      }
+      const item = documentRef.querySelector(`.skill-list-item[data-skill-name="${escapeHtml(first.name)}"]`);
+      if (item) {
+        item.classList.add("active");
+        showSkillDetail(first);
+      } else {
+        showSkillDetail(null);
+      }
+    }
+
+    function sortedSkills() {
+      const skills = state.skills || [];
+      const active = skills.filter((skill) => !state.disabledSkills.has(skill.name));
+      const disabled = skills.filter((skill) => state.disabledSkills.has(skill.name));
+      return [...active, ...disabled];
+    }
+
+    function renderSkillsList() {
+      const list = byId("skillsList");
+      if (!list) return;
+      const sorted = sortedSkills();
+      list.innerHTML = sorted.length ? sorted.map((skill) => {
+        const enabled = !state.disabledSkills.has(skill.name);
+        const explicitOnly = EXPLICIT_ONLY_SET.has(skill.name);
+        return `<div class="skill-list-item" data-skill-name="${escapeHtml(skill.name)}">
+          <span class="dot ${enabled ? "on" : "off"}"></span>
+          <span>${escapeHtml(skill.name)}</span>
+          ${explicitOnly ? `<span class="skill-explicit-badge" title="${escapeHtml(t("explicitSkillTitle", { name: skill.name }))}">/</span>` : ""}
+        </div>`;
+      }).join("") : `<div class="muted-line" style="padding:12px; font-size:12px;">${t("noSkills")}</div>`;
+      list.querySelectorAll(".skill-list-item").forEach((item) => {
+        item.addEventListener("click", () => {
+          list.querySelectorAll(".skill-list-item").forEach((element) => element.classList.remove("active"));
+          item.classList.add("active");
+          showSkillDetail(state.skills.find((skill) => skill.name === item.dataset.skillName));
+        });
+      });
+    }
+
+    function editIcon() {
+      return '<svg class="icon" viewBox="0 0 1097 1024" width="14" height="14"><path d="M925.72 1024H161.13C72 1024 0 952.32 0 863.57V160.43C0 71.68 72 0 161.16 0h613.67c20.58 0 34.3 13.65 34.3 34.13s-13.72 34.14-34.3 34.14H161.16a91.99 91.99 0 00-92.55 92.16v699.73c0 54.61 41.13 95.57 92.55 95.57h764.59c51.44 0 92.57-40.96 92.57-92.16V337.92c0-20.48 13.7-34.13 34.28-34.13s34.28 13.65 34.28 34.13v525.65c3.41 88.75-72 160.43-161.16 160.43zM456 658.77c-10.29 0-17.14-3.41-24-10.24-13.72-13.65-13.72-34.13 0-47.78L1038.85 23.89a33.26 33.26 0 0148.03 0c13.7 13.66 13.7 34.14 0 47.79L479.96 648.53c-6.83 6.83-13.7 10.24-24 10.24z" fill="currentColor"/></svg>';
+    }
+
+    async function showSkillDetail(skill) {
+      const panel = byId("skillsDetail");
+      if (!panel) return;
+      if (!skill) {
+        panel.innerHTML = `<div class="skills-detail-empty">${t("selectSkillHint")}</div>`;
+        return;
+      }
+      await ensureSkillBody(skill);
+      const enabled = !state.disabledSkills.has(skill.name);
+      panel.innerHTML = `<div class="skill-detail-head">
+        <div class="skill-detail-name">${escapeHtml(skill.name)}</div>
+        <div class="skill-detail-head-actions">
+          <label class="toggle-switch" title="${enabled ? t("enabledStatus") : t("disabledStatus")}">
+            <input type="checkbox" ${enabled ? "checked" : ""} id="skillToggleBtn" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+          <button class="skill-edit-icon" id="skillEditBtn" title="${t("edit")}">${editIcon()}</button>
+        </div>
+      </div>
+      <div class="skill-detail-section"><div class="skill-detail-label">${t("skillDesc")}</div><div class="skill-detail-value">${escapeHtml(skill.description || "-")}</div></div>
+      <div class="skill-detail-section"><div class="skill-detail-label">${t("skillKeywords")}</div><div class="skill-detail-value">${escapeHtml((skill.keywords || []).join(", ") || "-")}</div></div>
+      <div class="skill-detail-section"><div class="skill-detail-label">${t("skillTools")}</div><div class="skill-detail-value">${escapeHtml((skill.tools || []).join(", ") || "-")}</div></div>
+      <div class="skill-detail-section"><div class="skill-detail-label">${t("skillPathLabel")}</div><div class="skill-detail-value">${escapeHtml(skill.path || `data/skills/${skill.dir || skill.name}/SKILL.md`)}</div></div>
+      <div class="skill-detail-actions"><button class="skill-delete-icon" id="skillDeleteBtn" title="${t("deleteSkill")}">${t("delete")}</button></div>`;
+      byId("skillToggleBtn").addEventListener("change", () => {
+        toggleSkill(skill.name);
+        showSkillDetail(state.skills.find((item) => item.name === skill.name));
+        renderSkillsList();
+      });
+      byId("skillEditBtn").addEventListener("click", () => openSkillEditor(skill));
+      byId("skillDeleteBtn").addEventListener("click", () => deleteSkillConfirm(skill.name, "skillDeleteBtn"));
+    }
+
+    function openSkillEditor(skill) {
+      editingSkillName = skill ? skill.name : null;
+      byId("skillEditorTitle").textContent = skill ? `${t("editing")} ${skill.name}` : t("newSkill");
+      byId("skillEditName").value = skill ? skill.name : "";
+      byId("skillEditDesc").value = skill ? (skill.description || "") : "";
+      byId("skillEditKeywords").value = skill ? (skill.keywords || []).join(", ") : "";
+      byId("skillEditTools").value = skill ? (skill.tools || []).join(", ") : "";
+      byId("skillEditBody").value = skill ? (skill.body || "") : "";
+      byId("skillEditorModal").classList.remove("hidden");
+    }
+
+    function closeSkillEditor() {
+      byId("skillEditorModal")?.classList.add("hidden");
+      editingSkillName = null;
+    }
+
+    async function saveSkillEdit() {
+      const name = byId("skillEditName").value.trim();
+      const description = byId("skillEditDesc").value.trim();
+      const keywords = byId("skillEditKeywords").value.trim();
+      const tools = byId("skillEditTools").value.trim();
+      const body = byId("skillEditBody").value.trim();
+      if (!name || !body) {
+        showToast(t("fillRequired"), "error");
+        return;
+      }
+      const conflict = state.skills.find((skill) => skill.name === name && skill.name !== editingSkillName);
+      if (conflict) {
+        showToast(t("nameConflict", { name }), "error");
+        return;
+      }
+      try {
+        if (editingSkillName && editingSkillName !== name) {
+          await apiJson(`/api/skills?name=${encodeURIComponent(editingSkillName)}`, { method: "DELETE" });
+        }
+        await apiJson("/api/skills", {
+          method: "POST",
+          body: JSON.stringify({ name, description, keywords, tools, body }),
+        });
+        await loadSkills();
+        closeSkillEditor();
+        renderSkillsList();
+        renderSettingsSkillsSidebar();
+        const updated = state.skills.find((skill) => skill.name === name);
+        if (updated) {
+          showSkillDetail(updated);
+          showSkillDetailInSettings(updated);
+        } else {
+          showSkillDetail(null);
+        }
+      } catch (error) {
+        showToast(`${t("saveFailed")}：${error.message}`, "error");
+      }
+    }
+
+    async function deleteSkillConfirm(name, buttonId = "skillDeleteBtn") {
+      const button = byId(buttonId);
+      if (!button) return;
+      button.closest(".skills-detail")?.querySelector(".key-delete-confirm")?.remove();
+      const confirm = documentRef.createElement("div");
+      confirm.className = "key-delete-confirm";
+      confirm.innerHTML = `<span>${t("deleteConfirmMsg").replace("{name}", escapeHtml(name))}</span>
+        <button class="key-confirm-yes" type="button">${t("confirmDelete")}</button>
+        <button class="key-confirm-no" type="button">${t("cancel")}</button>`;
+      button.closest(".skill-detail-actions")?.after(confirm);
+      confirm.querySelector(".key-confirm-yes").addEventListener("click", async () => {
+        confirm.remove();
+        try {
+          await apiJson(`/api/skills?name=${encodeURIComponent(name)}`, { method: "DELETE" });
+          await loadSkills();
+          renderSkillsList();
+          renderSettingsSkillsSidebar();
+          const remaining = state.skills.find((skill) => skill.name === name);
+          if (remaining) {
+            showSkillDetail(remaining);
+            showSkillDetailInSettings(remaining);
+          } else {
+            showSkillDetail(null);
+          }
+        } catch (error) {
+          showToast(`${t("deleteFailed")}：${error.message}`, "error");
+        }
+      });
+      confirm.querySelector(".key-confirm-no").addEventListener("click", () => confirm.remove());
+    }
+
+    function showSlashSuggestions() {
+      const existing = byId("slashSuggest");
+      const value = els.prompt.value;
+      if (!value.match(/^\/[\w-]*$/)) {
+        existing?.remove();
+        return;
+      }
+      const partial = value.slice(1).toLowerCase();
+      const matches = (state.skills || [])
+        .filter((skill) => !state.disabledSkills.has(skill.name))
+        .filter((skill) => skill.name.startsWith(partial));
+      if (!matches.length) {
+        existing?.remove();
+        return;
+      }
+      if (!existing) {
+        const dropdown = documentRef.createElement("div");
+        dropdown.id = "slashSuggest";
+        dropdown.className = "slash-suggest";
+        els.chatForm.insertBefore(dropdown, els.prompt);
+      }
+      const dropdown = byId("slashSuggest");
+      if (els.chatPane.classList.contains("empty-chat")) {
+        const rect = els.prompt.getBoundingClientRect();
+        dropdown.style.position = "fixed";
+        dropdown.style.bottom = `${global.innerHeight - rect.top + 4}px`;
+        dropdown.style.left = `${rect.left}px`;
+        dropdown.style.right = `${global.innerWidth - rect.right}px`;
+      } else {
+        dropdown.style.position = "";
+        dropdown.style.bottom = "";
+        dropdown.style.left = "";
+        dropdown.style.right = "";
+      }
+      dropdown.innerHTML = matches.map((skill) => `<div class="slash-item" data-skill="${escapeHtml(skill.name)}">
+        <span class="slash-name">/${escapeHtml(skill.name)}</span>
+        <span class="slash-desc">${escapeHtml((skill.description || "").slice(0, 40))}</span>
+      </div>`).join("");
+      dropdown.querySelectorAll(".slash-item").forEach((item) => {
+        item.addEventListener("click", () => {
+          els.prompt.value = `/${item.dataset.skill} `;
+          dropdown.remove();
+          els.prompt.focus();
+          onPromptChanged();
+        });
+      });
+    }
+
+    async function loadMemoryContext() {
+      try {
+        state.memoryContext = await apiJson("/api/memory-context");
+      } catch {
+        state.memoryContext = { found: false, content: null };
+      }
+      updateMemoryContextIndicator();
+      return state.memoryContext;
+    }
+
+    function updateMemoryContextIndicator() {
+      const panel = byId("memoryContextInfo");
+      if (!panel) return;
+      const count = state.memoryContext?.count || 0;
+      if (state.memoryContext?.found && count > 0) {
+        panel.innerHTML = `<span class="ctx-badge ctx-memory">🧠 ${t("longTermMemory")}</span><span class="ctx-hint">${t("memoryContextCount", { count })}</span>`;
+      } else {
+        panel.innerHTML = `<span class="ctx-badge muted">${t("noMemoryContext")}</span><span class="ctx-hint">${t("memoryContextHint")}</span>`;
+      }
+      panel.style.display = "flex";
+    }
+
+    async function showMemoryPanel() {
+      els.memoryModal.classList.remove("hidden");
+      els.memoryName.value = "";
+      els.memoryDesc.value = "";
+      els.memoryBody.value = "";
+      await renderMemoryList();
+    }
+
+    function hideMemoryPanel() {
+      els.memoryModal.classList.add("hidden");
+    }
+
+    async function renderMemoryList() {
+      try {
+        const data = await apiJson("/api/memory");
+        const memories = data.data || [];
+        if (!memories.length) {
+          els.memoryList.innerHTML = `<div class="muted-line" style="padding:12px;">${t("noMemory")}</div>`;
+          return;
+        }
+        els.memoryList.innerHTML = memories.map((memory) => `<div class="memory-item">
+          <span class="memory-item-name">${escapeHtml(memory.name)}</span>
+          <button class="memory-item-btn" data-memory-edit="${escapeHtml(memory.name)}">${t("edit")}</button>
+          <button class="memory-item-btn danger" data-memory-delete="${escapeHtml(memory.name)}">${t("delete")}</button>
+          ${memory.description ? `<span class="memory-item-desc">${escapeHtml(memory.description)}</span>` : ""}
+        </div>`).join("");
+        els.memoryList.querySelectorAll("[data-memory-edit]").forEach((button) => {
+          button.addEventListener("click", () => editMemory(button.dataset.memoryEdit));
+        });
+        els.memoryList.querySelectorAll("[data-memory-delete]").forEach((button) => {
+          button.addEventListener("click", () => {
+            documentRef.querySelector(".key-delete-confirm")?.remove();
+            const name = button.dataset.memoryDelete;
+            const confirm = documentRef.createElement("div");
+            confirm.className = "key-delete-confirm";
+            confirm.innerHTML = `<span>${t("deleteMemoryMsg").replace("{name}", escapeHtml(name))}</span>
+              <button class="key-confirm-yes" type="button">${t("confirmDelete")}</button>
+              <button class="key-confirm-no" type="button">${t("cancel")}</button>`;
+            button.closest(".memory-item")?.after(confirm);
+            confirm.querySelector(".key-confirm-yes").addEventListener("click", () => {
+              confirm.remove();
+              deleteMemory(name);
+            });
+            confirm.querySelector(".key-confirm-no").addEventListener("click", () => confirm.remove());
+          });
+        });
+      } catch (error) {
+        els.memoryList.innerHTML = `<div class="muted-line" style="padding:12px;">${t("loadFailed")}：${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    async function editMemory(name) {
+      try {
+        const memory = await apiJson(`/api/memory?file=${encodeURIComponent(name)}`);
+        els.memoryName.value = memory.name || "";
+        els.memoryDesc.value = (memory.meta || {}).description || "";
+        els.memoryBody.value = memory.body || "";
+      } catch (error) {
+        showToast(`${t("readMemoryFailed")}：${error.message}`, "error");
+      }
+    }
+
+    async function deleteMemory(name) {
+      try {
+        await apiJson(`/api/memory?file=${encodeURIComponent(name)}`, { method: "DELETE" });
+        await renderMemoryList();
+        await loadMemoryContext();
+        onMemoryChanged();
+      } catch (error) {
+        showToast(`${t("deleteFailed")}：${error.message}`, "error");
+      }
+    }
+
+    async function saveMemorySubmit() {
+      const name = els.memoryName.value.trim();
+      const description = els.memoryDesc.value.trim();
+      const body = els.memoryBody.value.trim();
+      if (!name) {
+        showToast(t("enterMemoryName"), "warning");
+        return;
+      }
+      if (!body) {
+        showToast(t("enterMemoryBody"), "warning");
+        return;
+      }
+      try {
+        await apiJson("/api/memory", {
+          method: "POST",
+          body: JSON.stringify({ name, meta: { description }, body }),
+        });
+        els.memoryName.value = "";
+        els.memoryDesc.value = "";
+        els.memoryBody.value = "";
+        await renderMemoryList();
+        await loadMemoryContext();
+        onMemoryChanged();
+      } catch (error) {
+        showToast(`${t("saveFailed")}：${error.message}`, "error");
+      }
+    }
+
+    function renderMemoryPanel(container) {
+      state._editingMemory = null;
+      container.innerHTML = `<h3 style="margin:0 0 14px">${t("memory")}</h3><div id="settingsMemoryList" class="memory-list" style="max-height:300px; overflow:auto"></div>
+        <div id="settingsMemoryForm" class="memory-form">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;height:24px">
+            <span id="memFormLabel" style="font-weight:700;font-size:13px;color:var(--text)">${t("newMemory")}</span>
+            <button id="memCancelBtn" class="mini-btn" type="button" style="visibility:hidden">${t("cancel")}</button>
+          </div>
+          <input id="settingsMemName" placeholder="${t("memNamePlaceholder")}" autocomplete="off" />
+          <input id="settingsMemDesc" placeholder="${t("memDescPlaceholder")}" autocomplete="off" />
+          <textarea id="settingsMemBody" rows="5" placeholder="${t("memBodyPlaceholder")}" spellcheck="false"></textarea>
+          <div class="memory-form-actions"><button id="settingsSaveMem" class="mini-btn" type="button">${t("save")}</button></div>
+        </div>`;
+      global.setTimeout(() => refreshSettingsMemoryList(), 100);
+      byId("settingsSaveMem").addEventListener("click", async () => {
+        const name = byId("settingsMemName").value.trim();
+        const description = byId("settingsMemDesc").value.trim();
+        const body = byId("settingsMemBody").value.trim();
+        if (!name || !body || !/^[a-zA-Z0-9_-]+$/.test(name)) {
+          showToast(t("fillRequired"), "error");
+          return;
+        }
+        if (state._editingMemory && state._editingMemory !== name) {
+          try {
+            await apiJson(`/api/memory?file=${encodeURIComponent(state._editingMemory)}`, { method: "DELETE" });
+          } catch (_) { /* continue by creating the requested name */ }
+        }
+        await apiJson("/api/memory", {
+          method: "POST",
+          body: JSON.stringify({ name, meta: { description }, body }),
+        });
+        clearMemoryForm();
+        refreshSettingsMemoryList();
+        loadMemoryContext();
+      });
+      byId("memCancelBtn").addEventListener("click", clearMemoryForm);
+    }
+
+    function clearMemoryForm() {
+      state._editingMemory = null;
+      byId("settingsMemName").value = "";
+      byId("settingsMemDesc").value = "";
+      byId("settingsMemBody").value = "";
+      byId("memFormLabel").textContent = t("newMemory");
+      byId("memCancelBtn").style.visibility = "hidden";
+      byId("settingsMemName").disabled = false;
+    }
+
+    async function refreshSettingsMemoryList() {
+      const list = byId("settingsMemoryList");
+      if (!list) return;
+      try {
+        const data = await apiJson("/api/memory");
+        const memories = data.data || [];
+        list.innerHTML = memories.length ? memories.map((memory) => `<div class="memory-item ${state._editingMemory === memory.name ? "editing" : ""}" data-name="${escapeHtml(memory.name)}">
+          <span class="memory-item-name">${escapeHtml(memory.name)}</span>
+          ${memory.description ? `<span class="memory-item-desc">${escapeHtml(memory.description)}</span>` : "<span></span>"}
+          <div class="memory-item-actions">
+            <button class="memory-item-btn" data-edit="${escapeHtml(memory.name)}" title="${t("edit")}">${editIcon()}</button>
+            <button class="memory-item-btn danger" data-del="${escapeHtml(memory.name)}" title="${t("delete")}">${trashIcon()}</button>
+          </div>
+        </div>`).join("") : `<div class="muted-line" style="padding:12px">${t("noMemory")}</div>`;
+        list.querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", async () => {
+          const memory = await apiJson(`/api/memory?file=${encodeURIComponent(button.dataset.edit)}`);
+          state._editingMemory = memory.name;
+          byId("settingsMemName").value = memory.name || "";
+          byId("settingsMemName").disabled = true;
+          byId("settingsMemDesc").value = (memory.meta || {}).description || "";
+          byId("settingsMemBody").value = memory.body || "";
+          byId("memFormLabel").textContent = t("editingMemory", { name: memory.name });
+          byId("memCancelBtn").style.visibility = "";
+          list.querySelectorAll(".memory-item").forEach((element) => {
+            element.classList.toggle("editing", element.dataset.name === memory.name);
+          });
+        }));
+        list.querySelectorAll("[data-del]").forEach((button) => button.addEventListener("click", () => {
+          const item = button.closest(".memory-item");
+          const name = button.dataset.del;
+          documentRef.querySelector(".key-delete-confirm")?.remove();
+          const confirm = documentRef.createElement("div");
+          confirm.className = "key-delete-confirm";
+          confirm.innerHTML = `<span>${t("deleteConfirmMsg").replace("{name}", escapeHtml(name))}</span>
+            <button class="key-confirm-yes" type="button">${t("confirmDelete")}</button>
+            <button class="key-confirm-no" type="button">${t("cancel")}</button>`;
+          item.after(confirm);
+          confirm.querySelector(".key-confirm-yes").addEventListener("click", async () => {
+            confirm.remove();
+            await apiJson(`/api/memory?file=${encodeURIComponent(name)}`, { method: "DELETE" });
+            if (state._editingMemory === name) clearMemoryForm();
+            refreshSettingsMemoryList();
+            loadMemoryContext();
+          });
+          confirm.querySelector(".key-confirm-no").addEventListener("click", () => confirm.remove());
+        }));
+      } catch (_) { /* keep the current settings panel stable */ }
+    }
+
+    function renderSkillsInSettings(container) {
+      container.innerHTML = `<h3 style="margin:0 0 10px">${t("skills")}</h3>
+        <div class="skills-layout-inner">
+          <div class="skills-sidebar-inner">
+            <button id="settingsSkillAddBtn" style="display:flex;align-items:center;gap:4px;width:100%;padding:5px 12px;border:0;border-left:3px solid transparent;border-radius:0;background:transparent;color:var(--accent);font-size:13px;font-weight:600;cursor:pointer;flex-shrink:0" data-i18n="newSkill">+ 新建 Skill</button>
+            <div id="settingsSkillsSidebar" class="skill-list-scroll" style="padding:4px 0"></div>
+          </div>
+          <div class="skills-detail-inner" id="settingsSkillsDetail"></div>
+        </div>`;
+      renderSettingsSkillsSidebar();
+      byId("settingsSkillAddBtn").addEventListener("click", () => openSkillEditor(null));
+    }
+
+    function renderSettingsSkillsSidebar() {
+      const sidebar = byId("settingsSkillsSidebar");
+      if (!sidebar) return;
+      const sorted = sortedSkills();
+      sidebar.innerHTML = sorted.length ? sorted.map((skill) => {
+        const enabled = !state.disabledSkills.has(skill.name);
+        return `<div class="skill-list-item" data-skill-name="${escapeHtml(skill.name)}">
+          <span class="dot ${enabled ? "on" : "off"}"></span><span>${escapeHtml(skill.name)}</span>
+        </div>`;
+      }).join("") : `<div class="muted-line" style="padding:12px;font-size:12px">${t("noSkills")}</div>`;
+      sidebar.querySelectorAll(".skill-list-item").forEach((item) => {
+        item.addEventListener("click", () => {
+          sidebar.querySelectorAll(".skill-list-item").forEach((element) => element.classList.remove("active"));
+          item.classList.add("active");
+          showSkillDetailInSettings(state.skills.find((skill) => skill.name === item.dataset.skillName));
+        });
+      });
+      if (sorted.length) {
+        sidebar.querySelector(".skill-list-item")?.classList.add("active");
+        showSkillDetailInSettings(sorted[0]);
+      }
+    }
+
+    async function showSkillDetailInSettings(skill) {
+      const panel = byId("settingsSkillsDetail");
+      if (!panel) return;
+      if (!skill) {
+        const hasSkills = (state.skills || []).length > 0;
+        panel.innerHTML = hasSkills
+          ? `<div class="skills-detail-empty">${t("selectSkillHint")}</div>`
+          : `<div class="skills-detail-empty"><strong>${t("newSkill")}</strong>
+            <span style="margin-top:6px">${t("skillEmptyHint")}</span>
+            <button class="mini-btn primary-btn" style="margin-top:12px" id="settingsEmptyCreateBtn" data-i18n="newSkill">+ 新建 Skill</button>
+            <span style="margin-top:4px;font-size:11px" data-i18n="skillCreateHint">将在 data/skills/ 下创建 SKILL.md 文件</span></div>`;
+        if (!hasSkills) byId("settingsEmptyCreateBtn").addEventListener("click", () => openSkillEditor(null));
+        return;
+      }
+      await ensureSkillBody(skill);
+      const enabled = !state.disabledSkills.has(skill.name);
+      panel.innerHTML = `<div class="skill-detail-head">
+        <div class="skill-detail-name">${escapeHtml(skill.name)}</div>
+        <div class="skill-detail-head-actions">
+          <label class="toggle-switch" title="${enabled ? t("enabledStatus") : t("disabledStatus")}">
+            <input type="checkbox" ${enabled ? "checked" : ""} id="settingsSkillToggle" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+          <button class="skill-edit-icon" id="settingsSkillEdit" title="${t("edit")}">${editIcon()}</button>
+        </div>
+      </div>
+      ${EXPLICIT_ONLY_SET.has(skill.name) ? `<div class="skill-detail-note">${t("skillExplicitHint").replace("{name}", escapeHtml(skill.name))}</div>` : ""}
+      <div class="skill-detail-section"><div class="skill-detail-label">${t("skillDesc")}</div><div class="skill-detail-value">${escapeHtml(skill.description || "-")}</div></div>
+      <div class="skill-detail-section"><div class="skill-detail-label">${t("skillKeywords")}</div><div class="skill-detail-value">${escapeHtml((skill.keywords || []).join(", ") || "-")}</div></div>
+      <div class="skill-detail-section"><div class="skill-detail-label">${t("skillTools")}</div><div class="skill-detail-value">${escapeHtml((skill.tools || []).join(", ") || "-")}</div></div>
+      <div class="skill-detail-section"><div class="skill-detail-label">${t("skillPathLabel")}</div><div class="skill-detail-value">${escapeHtml(skill.path || `data/skills/${skill.dir || skill.name}/SKILL.md`)}</div></div>
+      <div class="skill-detail-actions"><button class="skill-delete-icon" id="settingsSkillDelete" title="${t("deleteSkill")}">${t("delete")}</button></div>`;
+      byId("settingsSkillToggle").addEventListener("change", () => {
+        toggleSkill(skill.name);
+        showSkillDetailInSettings(state.skills.find((item) => item.name === skill.name));
+        renderSettingsSkillsSidebar();
+      });
+      byId("settingsSkillEdit").addEventListener("click", () => openSkillEditor(skill));
+      byId("settingsSkillDelete").addEventListener("click", () => deleteSkillConfirm(skill.name, "settingsSkillDelete"));
+    }
+
+    function bind() {
+      if (bound) return;
+      bound = true;
+      byId("closeSkills")?.addEventListener("click", () => byId("skillsModal").classList.add("hidden"));
+      byId("skillsModal")?.addEventListener("click", (event) => {
+        if (event.target === event.currentTarget) event.currentTarget.classList.add("hidden");
+      });
+      byId("skillAddBtn")?.addEventListener("click", () => openSkillEditor(null));
+      byId("closeSkillEditor")?.addEventListener("click", closeSkillEditor);
+      byId("cancelSkillEdit")?.addEventListener("click", closeSkillEditor);
+      byId("saveSkillEdit")?.addEventListener("click", saveSkillEdit);
+      byId("skillEditorModal")?.addEventListener("click", (event) => {
+        if (event.target === event.currentTarget) closeSkillEditor();
+      });
+      els.closeMemory?.addEventListener("click", hideMemoryPanel);
+      els.cancelMemory?.addEventListener("click", hideMemoryPanel);
+      els.memoryModal?.addEventListener("click", (event) => {
+        if (event.target === els.memoryModal) hideMemoryPanel();
+      });
+      els.memoryForm?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        saveMemorySubmit();
+      });
+    }
+
+    return Object.freeze({
+      bind,
+      ensureSkillBody,
+      getMatchedSkillPrompts,
+      loadMemoryContext,
+      loadSkills,
+      openSkillEditor,
+      renderMemoryPanel,
+      renderSkillsInSettings,
+      showMemoryPanel,
+      showSkillsPanel,
+      showSlashSuggestions,
+      updateMemoryContextIndicator,
+    });
+  }
+
+  Code.features.skillsMemory = Object.freeze({
+    EXPLICIT_ONLY_SKILLS,
+    createSkillsMemoryFeature,
+    rankMatchedSkills,
+  });
+})(window);

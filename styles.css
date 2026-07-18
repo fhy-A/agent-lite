@@ -1864,6 +1864,30 @@ input:focus, select:focus, textarea:focus {
 .msg.assistant { position: relative; }
 .msg.assistant::after { content: ""; position: absolute; top: 100%; left: 0; right: 0; height: 30px; pointer-events: none; }
 .msg.assistant:hover .msg-footer-hover { opacity: 1; }
+.background-reply-reference {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: min(520px, 100%);
+  margin: -2px 0 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.5;
+  cursor: pointer;
+  text-align: left;
+}
+.background-reply-reference:hover { color: var(--accent); }
+.background-reply-arrow { flex: 0 0 auto; font-size: 14px; }
+.background-reply-label { flex: 0 0 auto; font-weight: 600; }
+.background-reply-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg.user.background-reply-highlight .bubble {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent);
+  transition: box-shadow .2s ease;
+}
 .msg-time { font-size: 11px; color: var(--muted); }
 .msg-copy-btn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; flex: 0 0 26px; transition: color .15s, background .15s, border-color .15s, opacity .15s; }
 .msg-copy-btn svg { display: block; width: 14px; height: 14px; }

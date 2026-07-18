@@ -30,6 +30,8 @@ class TestFrontendCoreModules(unittest.TestCase):
             "await onEvent?.(event, snapshot)",
         ):
             self.assertIn(expected, RUNTIME_SOURCE)
+        self.assertIn('clientRequestId = ""', RUNTIME_SOURCE)
+        self.assertIn("clientRequestId,", RUNTIME_SOURCE)
 
     def test_agent_runtime_watcher_projects_events_sequentially_and_resumes_cursor(self):
         script = f"""
@@ -77,6 +79,40 @@ const order = [];
         )
         self.assertEqual(data["cursor"], 3)
         self.assertEqual(data["status"], "completed")
+
+    def test_agent_runtime_sends_background_idempotency_key(self):
+        script = f"""
+global.window = {{}};
+const source = {json.dumps(RUNTIME_SOURCE)};
+let captured = null;
+global.fetch = async (url, options) => {{
+  captured = {{url: String(url), body: JSON.parse(options.body)}};
+  return new Response(JSON.stringify({{agentRunId: "agent-1", status: "model"}}), {{
+    status: 201,
+    headers: {{"Content-Type": "application/json"}},
+  }});
+}};
+eval(source);
+(async () => {{
+  await window.AgentRuntime.createAgentRun({{
+    sessionId: "session-1",
+    clientRequestId: "background-123",
+    payload: {{model: "test-model", messages: [{{role: "user", content: "hi"}}]}},
+    keys: [],
+  }});
+  process.stdout.write(JSON.stringify(captured));
+}})().catch((error) => {{ console.error(error); process.exit(1); }});
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertEqual(data["url"], "/api/agent/runs")
+        self.assertEqual(data["body"]["clientRequestId"], "background-123")
 
     def test_server_agent_questionnaire_uses_durable_submit_and_reload_path(self):
         self.assertIn('name: "request_user_input"', APP_SOURCE)

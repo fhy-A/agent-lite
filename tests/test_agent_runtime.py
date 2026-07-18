@@ -529,6 +529,53 @@ class TestDurableAgentRuntime(unittest.TestCase):
             time.sleep(0.01)
         self.assertIsNone(run.get("worker"))
 
+    def test_client_request_id_reuses_same_agent_run_after_memory_reset(self):
+        payload = {
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "durable background task"}],
+        }
+        first = server_mod._create_agent_run(
+            "background-session",
+            payload,
+            self.base_url,
+            ["secret-key"],
+            start_worker=False,
+            client_request_id="background-123",
+        )
+        first_id = first["id"]
+        self.assertEqual(first["client_request_id"], "background-123")
+        self.assertTrue(server_mod._agent_run_path(first_id).is_file())
+
+        with server_mod._agent_run_lock:
+            server_mod._agent_runs.clear()
+        replay = server_mod._create_agent_run(
+            "background-session",
+            payload,
+            self.base_url,
+            ["replacement-key"],
+            start_worker=False,
+            client_request_id="background-123",
+        )
+        self.assertEqual(replay["id"], first_id)
+        self.assertEqual(replay["client_request_id"], "background-123")
+        self.assertEqual(len(list(server_mod._agent_runs_dir().glob("*.json"))), 1)
+        self.assertNotIn("secret-key", json.dumps(server_mod._agent_run_record(replay)))
+        self.assertNotIn("replacement-key", json.dumps(server_mod._agent_run_record(replay)))
+
+    def test_client_request_id_rejects_unsafe_values(self):
+        with self.assertRaisesRegex(ValueError, "clientRequestId"):
+            server_mod._create_agent_run(
+                "background-session",
+                {
+                    "model": "test-model",
+                    "messages": [{"role": "user", "content": "invalid id"}],
+                },
+                self.base_url,
+                [],
+                start_worker=False,
+                client_request_id="../not-safe",
+            )
+
     def test_agent_continues_without_browser_polling_and_executes_read_only_loop(self):
         run = server_mod._create_agent_run(
             "session-agent",

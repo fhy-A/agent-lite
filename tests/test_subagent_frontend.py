@@ -82,7 +82,7 @@ class TestSubAgentFrontend(unittest.TestCase):
 
     def test_parallel_subagent_usage_uses_private_ledgers(self):
         self.assertIn('if (!ctx?.isSubAgent) setSessionStats(sessionId, stats);', self.source)
-        self.assertIn('mergeBackgroundUsage(sessionId, usage);', self.source)
+        self.assertIn('mergeBackgroundUsage(job.sessionId, sub.usage);', self.source)
         self.assertNotIn('mergeBackgroundUsage(sessionId, subCtx.stats);', self.source)
 
     def test_delegated_usage_merges_once_into_parent_task(self):
@@ -96,6 +96,48 @@ class TestSubAgentFrontend(unittest.TestCase):
         self.assertIn('_usage: sub.usage', self.source)
         self.assertIn('_usageScope: "task"', self.source)
 
+    def test_background_elapsed_time_survives_refresh(self):
+        self.assertIn("startedAt: Number(job.startedAt || 0)", self.source)
+        self.assertIn("startedAt: Number(checkpoint.startedAt || 0)", self.source)
+        self.assertIn('if (status === "running" && !Number(job.startedAt || 0))', self.source)
+        self.assertIn("const submittedAt = Number(job?.queuedAt || job?.startedAt || finishedAt)", self.source)
+        self.assertGreaterEqual(
+            self.source.count("_responseTime: backgroundJobElapsed(job)"),
+            2,
+        )
+
+    def test_visible_timing_starts_when_each_message_is_submitted(self):
+        self.assertIn("ctx.taskStartedAt = submittedAt", self.source)
+        self.assertIn("run.taskStartTime = submittedAt", self.source)
+        self.assertGreaterEqual(
+            self.source.count("_time: new Date(submittedAt).toISOString()"),
+            2,
+        )
+        self.assertIn("queuedAt: submittedAt", self.source)
+        self.assertIn("new Date(Number(ctx.taskStartedAt || Date.now())).toISOString()", self.source)
+
+    def test_main_timing_never_attaches_to_background_result(self):
+        self.assertIn(
+            'message?.role === "assistant" && !isDetachedFromMainContext(message)',
+            self.source,
+        )
+
+    def test_background_result_keeps_parent_task_ordering_key(self):
+        self.assertIn("parentTaskStartedAt: Number(job.parentTaskStartedAt || 0)", self.source)
+        self.assertIn("backgroundDispatch: { id, status: \"pending\", agentRunId: \"\", parentTaskStartedAt }", self.source)
+
+    def test_background_answer_uses_clickable_reply_reference_without_prompt_prefix(self):
+        self.assertIn("function renderBackgroundReplyReference(msg)", self.source)
+        self.assertIn("data-background-reply-id=", self.source)
+        self.assertIn("data-background-message-id=", self.source)
+        self.assertIn('target.scrollIntoView({ behavior: "smooth", block: "center" })', self.source)
+        self.assertNotIn('`**后台处理**：${job.userText.slice(0, 80)}', self.source)
+
+    def test_main_and_background_results_follow_completion_order(self):
+        self.assertIn("function placeMainResultByCompletionOrder(messages, mainMessage, taskStartedAt)", self.source)
+        self.assertIn('message.meta?.kind === "background-subagent"', self.source)
+        self.assertIn("messages.splice(lastCompletedBackground, 0, mainMessage)", self.source)
+
     def test_background_dispatch_uses_bounded_scheduler(self):
         self.assertIn('globalLimit: 3', self.source)
         self.assertIn('perSessionLimit: 2', self.source)
@@ -103,10 +145,40 @@ class TestSubAgentFrontend(unittest.TestCase):
         self.assertIn('backgroundActiveForSession(candidate.sessionId) < dispatcher.perSessionLimit', self.source)
 
     def test_background_dispatch_has_visible_lifecycle_and_timeout(self):
-        self.assertIn('backgroundDispatch: { id, status: "pending" }', self.source)
+        self.assertIn('backgroundDispatch: { id, status: "pending", agentRunId: "", parentTaskStartedAt }', self.source)
         self.assertIn('updateBackgroundJob(job, "running")', self.source)
         self.assertIn('const BACKGROUND_JOB_TIMEOUT_MS = 10 * 60 * 1000;', self.source)
         self.assertIn('后台处理中', self.source)
+
+    def test_background_dispatch_uses_durable_server_agent(self):
+        background_start = self.source.index("async function runBackgroundSubAgentJob(job)")
+        background_end = self.source.index("function pumpBackgroundDispatcher()", background_start)
+        background = self.source[background_start:background_end]
+        self.assertIn("window.AgentRuntime.createAgentRun", background)
+        self.assertIn("clientRequestId: job.clientRequestId || job.id", background)
+        self.assertIn("window.AgentRuntime.watchAgentRun", background)
+        self.assertIn("window.AgentRuntime.resumeAgentRun", background)
+        self.assertNotIn("runAgentLoop(", background)
+
+    def test_background_run_checkpoint_survives_main_completion_and_reload(self):
+        self.assertIn("function getBackgroundRunCheckpoints(sessionId)", self.source)
+        self.assertIn("backgroundRuns: previous.backgroundRuns.map", self.source)
+        self.assertIn("runState: clearedRunState", self.source)
+        self.assertIn("async function resumePersistedBackgroundRuns()", self.source)
+        self.assertIn("restoreBackgroundJobsForSession(summary)", self.source)
+        self.assertIn("{ persistMessages: true }", self.source)
+
+    def test_background_server_agent_cannot_delegate_or_open_questionnaire(self):
+        self.assertIn('allowedToolNames.delete("task")', self.source)
+        self.assertIn('allowedToolNames.delete("request_user_input")', self.source)
+        self.assertIn('if (snapshot.status === "waiting_user_input")', self.source)
+        self.assertIn('throw new Error("后台任务不能发起交互问卷")', self.source)
+
+    def test_background_authorization_does_not_replace_main_run_checkpoint(self):
+        self.assertIn("detachedBackground: Boolean(ctx.isDetachedBackground)", self.source)
+        self.assertIn("if (item.detachedBackground)", self.source)
+        self.assertIn("Failed to persist background authorization result", self.source)
+        self.assertIn("projection.meta.detachedFromMain = true", self.source)
 
     def test_background_messages_are_detached_from_main_model_context(self):
         self.assertIn('function isDetachedFromMainContext(msg)', self.source)

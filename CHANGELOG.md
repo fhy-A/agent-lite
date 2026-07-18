@@ -14,6 +14,22 @@
 
 ---
 
+## 2026-07-18 19:09 · Codex
+
+### 将同会话后台消息迁入持久 AgentRun，完成旧浏览器循环入口退役
+
+- **后台任务服务端化**：主任务输出期间再次发送的消息不再调用浏览器 Agent 循环，而是创建独立服务端 AgentRun；后台任务继承当次模型、权限、工具预设、思考参数、图片输入和截止时间，但移除 `task` 与 `request_user_input`，不会再次委派或打开独立问卷。
+- **幂等创建与恢复**：前端为每条后台消息保存稳定 `clientRequestId`，服务端据此生成确定性 AgentRun ID，并在内存和持久记录中双重查重。即使创建响应丢失、页面刷新或服务重启，也会重新附着原任务而不是发起第二次上游请求；会话 `backgroundRuns` 检查点保存恢复所需信息，终态消息落盘后才清除。
+- **主后台状态隔离**：主任务与后台任务分别持有运行状态、授权投影、截止时间、结果和用量；后台授权不会替换主任务检查点，后台完成或失败只合并一次消息与用量，切换会话、新建会话和刷新不会打断任一执行链。
+- **端到端独立计时**：主任务和每条后台消息都从用户发送时刻计时，到各自结果落入会话时结束，后台排队、模型、工具与刷新重连均计入用户感知耗时。起点随主检查点或后台检查点持久化，刷新恢复时先写回 `taskStartTime` 再启动流式状态；成功与失败结果均保存独立 `_responseTime`，解决先完成任务显示 `0s`、主任务刷新后重新起算的问题。
+- **完成顺序与回复关联**：用户消息继续按发送顺序显示，主任务和后台结果按实际完成顺序排列。后台正文不再强制拼接“后台处理 + 完整提示词”，改为基于稳定任务 ID 的单行“回复”引用；点击引用会滚动并高亮对应用户消息，相同提示词、刷新恢复和完成顺序变化都不会串联。
+- **人工端到端验证**：自动模式下多次执行主任务与后台逐秒输出，覆盖不刷新和运行中刷新。最终验证后台先完成显示 `7s` 并先呈现，主任务后完成显示 `15s` 并随后呈现；两条结果各出现一次、用量独立、主任务未被打断，后台回复引用与正文简化显示正确。
+- **自动化验证**：Python 编译、JavaScript 语法检查和 `git diff --check` 通过；AgentRun 定向回归 `108 passed, 13 subtests passed`，扩展回归 `191 passed, 19 subtests passed`，最终前端/计时定向回归 `95 passed`，全量回归 `553 passed, 25 subtests passed`。
+
+**涉及文件**：`server.py`、`agent-runtime.js`、`app.js`、`styles.css`、`tests/test_agent_runtime.py`、`tests/test_concurrency.py`、`tests/test_frontend_modules.py`、`tests/test_p0_stability.py`、`tests/test_subagent_frontend.py`、`README.md`、`docs/SERVER_AGENT_LOOP_PLAN.md`、`data/memory/code-architecture.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 17:55 · Codex
 
 ### 退役持久旧浏览器检查点恢复，封闭主任务的浏览器回退入口

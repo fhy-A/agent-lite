@@ -429,7 +429,7 @@ class TestDispatcherLimits(unittest.TestCase):
 
     def test_parallel_usage_ledger_isolation(self):
         self.assertIn('if (!ctx?.isSubAgent) setSessionStats(sessionId, stats);', self.source)
-        self.assertIn('mergeBackgroundUsage(sessionId, usage);', self.source)
+        self.assertIn('mergeBackgroundUsage(job.sessionId, sub.usage);', self.source)
         # Must NOT merge directly into parent context
         self.assertNotIn('mergeBackgroundUsage(sessionId, subCtx.stats);', self.source)
 
@@ -438,7 +438,7 @@ class TestDispatcherLimits(unittest.TestCase):
         self.assertEqual(count, 2, f"mergeDelegatedUsage should appear exactly twice, found {count}")
 
     def test_background_job_lifecycle(self):
-        self.assertIn('backgroundDispatch: { id, status: "pending" }', self.source)
+        self.assertIn('backgroundDispatch: { id, status: "pending", agentRunId: "", parentTaskStartedAt }', self.source)
         self.assertIn('updateBackgroundJob(job, "running")', self.source)
         self.assertIn('const BACKGROUND_JOB_TIMEOUT_MS = 10 * 60 * 1000;', self.source)
 

@@ -424,6 +424,22 @@ def _safe_agent_run_id(run_id):
     return value
 
 
+def _agent_client_request_id(value):
+    request_id = str(value or "").strip()
+    if not request_id:
+        return ""
+    if len(request_id) > 200 or not re.fullmatch(r"[A-Za-z0-9_.:-]+", request_id):
+        raise ValueError("clientRequestId contains unsupported characters")
+    return request_id
+
+
+def _agent_run_id_for_client_request(session_id, client_request_id):
+    digest = hashlib.sha256(
+        f"agent-client-request\0{str(session_id or '')}\0{client_request_id}".encode("utf-8")
+    ).hexdigest()
+    return digest[:32]
+
+
 def _agent_run_path(run_id):
     return _agent_runs_dir() / f"{_safe_agent_run_id(run_id)}.json"
 
@@ -565,6 +581,7 @@ def _agent_run_record(run):
         "version": 1,
         "id": run["id"],
         "sessionId": run["session_id"],
+        "clientRequestId": run.get("client_request_id", ""),
         "parentAgentRunId": run.get("parent_agent_run_id", ""),
         "parentToolCallId": run.get("parent_tool_call_id", ""),
         "agentDepth": int(run.get("agent_depth") or 0),
@@ -667,6 +684,7 @@ def _agent_snapshot(run, cursor=0):
         return {
             "agentRunId": run["id"],
             "sessionId": run["session_id"],
+            "clientRequestId": run.get("client_request_id", ""),
             "parentAgentRunId": run.get("parent_agent_run_id", ""),
             "parentToolCallId": run.get("parent_tool_call_id", ""),
             "agentDepth": int(run.get("agent_depth") or 0),
@@ -822,6 +840,7 @@ def _agent_run_from_record(record):
     return {
         "id": run_id,
         "session_id": str(record.get("sessionId") or ""),
+        "client_request_id": _agent_client_request_id(record.get("clientRequestId") or ""),
         "parent_agent_run_id": str(record.get("parentAgentRunId") or ""),
         "parent_tool_call_id": str(record.get("parentToolCallId") or ""),
         "agent_depth": max(0, int(record.get("agentDepth") or 0)),
@@ -2389,6 +2408,7 @@ def _create_agent_run(
     parent_tool_call_id="",
     agent_depth=0,
     start_worker=True,
+    client_request_id="",
 ):
     if not isinstance(payload, dict):
         raise ValueError("payload must be an object")
@@ -2411,11 +2431,21 @@ def _create_agent_run(
     except (TypeError, ValueError):
         raise ValueError("maxRounds must be an integer")
     rounds_limit = max(1, min(rounds_limit, _AGENT_RUN_MAX_ROUNDS))
-    run_id = uuid.uuid4().hex
+    client_request_id = _agent_client_request_id(client_request_id)
+    run_id = (
+        _agent_run_id_for_client_request(session_id, client_request_id)
+        if client_request_id
+        else uuid.uuid4().hex
+    )
+    if client_request_id:
+        existing = _get_agent_run(run_id)
+        if existing:
+            return existing
     timestamp = now_iso()
     run = {
         "id": run_id,
         "session_id": str(session_id or ""),
+        "client_request_id": client_request_id,
         "parent_agent_run_id": str(parent_run_id or ""),
         "parent_tool_call_id": str(parent_tool_call_id or ""),
         "agent_depth": max(0, int(agent_depth or 0)),
@@ -2449,6 +2479,9 @@ def _create_agent_run(
         "worker": None,
     }
     with _agent_run_lock:
+        existing = _agent_runs.get(run_id)
+        if existing:
+            return existing
         _agent_runs[run_id] = run
     try:
         _append_agent_event(run, "created", {
@@ -5986,10 +6019,12 @@ class CodeHandler(BaseHTTPRequestHandler):
                     body.get("allowedTools"),
                     body.get("maxRounds"),
                     body.get("permissionProfile") or "read",
+                    client_request_id=body.get("clientRequestId") or "",
                 )
                 self.send_json({
                     "agentRunId": run["id"],
                     "status": run["status"],
+                    "clientRequestId": run.get("client_request_id", ""),
                 }, 201)
                 return
             if route.startswith("/api/agent/runs/") and route.endswith("/resume"):

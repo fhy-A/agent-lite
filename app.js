@@ -189,13 +189,38 @@ function setSessionRunState(sessionId, runState) {
   if (local) local.runState = normalized;
 }
 
+function getBackgroundRunCheckpoints(sessionId) {
+  const checkpoints = getSessionRunState(sessionId)?.backgroundRuns;
+  return Array.isArray(checkpoints) ? checkpoints.filter((item) => item?.id) : [];
+}
+
+function setBackgroundRunCheckpoint(sessionId, checkpoint) {
+  if (!sessionId || !checkpoint?.id) return;
+  const previous = getSessionRunState(sessionId);
+  const backgroundRuns = getBackgroundRunCheckpoints(sessionId)
+    .filter((item) => item.id !== checkpoint.id);
+  backgroundRuns.push({ ...checkpoint });
+  setSessionRunState(sessionId, { ...previous, backgroundRuns });
+}
+
+function removeBackgroundRunCheckpoint(sessionId, jobId) {
+  if (!sessionId || !jobId) return;
+  const previous = getSessionRunState(sessionId);
+  const backgroundRuns = getBackgroundRunCheckpoints(sessionId)
+    .filter((item) => item.id !== jobId);
+  const nextState = { ...previous };
+  if (backgroundRuns.length) nextState.backgroundRuns = backgroundRuns;
+  else delete nextState.backgroundRuns;
+  setSessionRunState(sessionId, nextState);
+}
+
 function makeRunCheckpoint(ctx, status = "running", phase = "model", extra = {}) {
   const previous = getSessionRunState(ctx.sessionId);
   return {
     version: 1,
     status,
     phase,
-    startedAt: previous.startedAt || new Date().toISOString(),
+    startedAt: previous.startedAt || new Date(Number(ctx.taskStartedAt || Date.now())).toISOString(),
     updatedAt: new Date().toISOString(),
     model: ctx.model || "",
     temperature: Number(ctx.temperature ?? 0.2),
@@ -209,6 +234,9 @@ function makeRunCheckpoint(ctx, status = "running", phase = "model", extra = {})
     executionOwner: String(extra.executionOwner ?? ctx.executionOwner ?? previous.executionOwner ?? "browser"),
     agentRunId: String(extra.agentRunId ?? ctx.agentRunId ?? previous.agentRunId ?? ""),
     agentEventCursor: Number(extra.agentEventCursor ?? ctx.agentEventCursor ?? previous.agentEventCursor ?? 0),
+    ...(Array.isArray(previous.backgroundRuns) && previous.backgroundRuns.length
+      ? { backgroundRuns: previous.backgroundRuns.map((item) => ({ ...item })) }
+      : {}),
     ...extra,
   };
 }
@@ -223,7 +251,11 @@ async function persistRunCheckpoint(ctx, status = "running", phase = "model", ex
 
 async function clearRunCheckpoint(ctx) {
   if (!ctx?.sessionId || ctx.isSubAgent) return;
-  setSessionRunState(ctx.sessionId, {});
+  const backgroundRuns = getBackgroundRunCheckpoints(ctx.sessionId);
+  const clearedRunState = backgroundRuns.length
+    ? { backgroundRuns: backgroundRuns.map((item) => ({ ...item })) }
+    : {};
+  setSessionRunState(ctx.sessionId, clearedRunState);
   const local = state.sessions.find((session) => session.id === ctx.sessionId);
   const sessionTitle = ctx.sessionId === state.sessionId
     ? els.sessionTitle.value.trim()
@@ -247,7 +279,7 @@ async function clearRunCheckpoint(ctx) {
         messages: serialized,
         stats: { ...(ctx.stats || getSessionStats(ctx.sessionId) || {}) },
         lastUsage: getSessionLastUsage(ctx.sessionId),
-        runState: {},
+        runState: clearedRunState,
       }),
     }).catch(() => {});
   }
@@ -2138,7 +2170,7 @@ const I18N = {
     noBranches: "暂无分支，点击上方按钮基于当前消息创建", createSessionFirst: "请先创建会话",
     stopBeforeBranch: "请先停止当前输出再创建分支", branchFailed: "创建分支失败", branchCreated: "分支已创建", branchedFromHere: "已从「{title}」创建分支", branchTitleTemplate: "分支 - {title}", compactMarker: "上下文已压缩", compactMarkerMessages: "{count} 条消息", compactMarkerSaved: "预计节省 ~{tokens} tokens", compactMarkerWithDetails: "上下文已压缩 · {details}", collapseDiff: "收起 Diff", expandDiff: "展开全部 {count} 行",
     editingMemory: "编辑中：{name}", accountUserId: "User ID", extractMemory: "提取 Memory",
-    yesterday: "昨天", backgroundPending: "等待后台处理", backgroundRunning: "后台处理中",
+    yesterday: "昨天", backgroundPending: "等待后台处理", backgroundRunning: "后台处理中", backgroundReply: "回复",
     toolPresetDefault: "默认", toolPresetOff: "关闭", toolPresetFull: "完整",
     roundLimitTitle: "工具调用轮次已达到上限", roundLimitDesc: "任务可能还没完成，可以让 Agent 继续处理后续步骤。", continueTask: "继续处理",
     loadFailed: "加载失败", imageReadFailed: "无法读取图片文件", binaryFile: "二进制文件",
@@ -2340,7 +2372,7 @@ const I18N = {
     createSessionFirst: "Create a session first", stopBeforeBranch: "Stop the current output before branching",
     branchFailed: "Branch creation failed", branchCreated: "Branch created", branchedFromHere: "Branched from \"{title}\"", branchTitleTemplate: "Branch - {title}", compactMarker: "Context compacted", compactMarkerMessages: "{count} messages", compactMarkerSaved: "about {tokens} tokens saved", compactMarkerWithDetails: "Context compacted · {details}", collapseDiff: "Collapse Diff", expandDiff: "Expand all {count} lines",
     editingMemory: "Editing: {name}", accountUserId: "User ID", extractMemory: "Extract Memory",
-    yesterday: "Yesterday", backgroundPending: "Waiting in background", backgroundRunning: "Processing in background",
+    yesterday: "Yesterday", backgroundPending: "Waiting in background", backgroundRunning: "Processing in background", backgroundReply: "Reply to",
     toolPresetDefault: "Default", toolPresetOff: "Off", toolPresetFull: "Full",
     roundLimitTitle: "Tool-call round limit reached", roundLimitDesc: "The task may be incomplete. Ask the Agent to continue with the remaining steps.", continueTask: "Continue",
     loadFailed: "Load failed", imageReadFailed: "Unable to read image", binaryFile: "Binary file",
@@ -4714,6 +4746,7 @@ function renderUserProjection(msg, index) {
   const images = msg._images || [];
   const timeStr = formatMsgTime(msg._time);
   const dispatchId = msg.meta?.backgroundDispatch?.id;
+  const dispatchAttr = dispatchId ? ` data-background-message-id="${escapeHtml(dispatchId)}"` : "";
   const dispatchJob = dispatchId ? getBackgroundJob(dispatchId) : null;
   const dispatchStatus = dispatchJob?.status === "pending"
     ? `<span class="background-dispatch-status pending"><span class="background-dispatch-dot"></span>${t("backgroundPending")}</span>`
@@ -4726,14 +4759,14 @@ function renderUserProjection(msg, index) {
     const src = img.path ? `/api/file?path=${encodeURIComponent(img.path)}&raw=1` : `data:${img.mime || "image/png"};base64,${img.base64}`;
     // Re-scroll after server-hosted image loads (scroll to actual bottom of chat)
     const onLoad = img.path ? ` onload="const el=document.querySelector('.messages');if(el)el.scrollTop=el.scrollHeight"` : "";
-    return `<article class="msg user msg-image" data-msg-index="${index}" data-img="${i}">
+    return `<article class="msg user msg-image" data-msg-index="${index}" data-img="${i}"${dispatchAttr}>
       <div class="bubble bubble-img">
         <img class="msg-img msg-img-clickable" src="${src}" alt="${escapeHtml(img.name || "image")}"${onLoad} onclick="showImageOverlay(this.src)" title="Click to enlarge">
       </div>
     </article>`;
   }).join("");
   if (!text && images.length === 0) return "";
-  const textArticle = text ? `<article class="msg user" data-msg-index="${index}"><div class="user-message-hover-area"><div class="bubble">${renderMarkdownLite(text)}</div><div class="msg-meta">${dispatchStatus}${timeStr} ${renderCopyBtn(text)}</div></div></article>` : "";
+  const textArticle = text ? `<article class="msg user" data-msg-index="${index}"${dispatchAttr}><div class="user-message-hover-area"><div class="bubble">${renderMarkdownLite(text)}</div><div class="msg-meta">${dispatchStatus}${timeStr} ${renderCopyBtn(text)}</div></div></article>` : "";
   return textArticle + imageArticles;
 }
 
@@ -4859,6 +4892,18 @@ function renderAssistantResponseInfo(msg) {
   return `<div class="response-info">${renderCompletedRunStatus(meta._model || msg._model || "", elapsed || "0s", usage)}</div>`;
 }
 
+function renderBackgroundReplyReference(msg) {
+  if (msg.meta?.kind !== "background-subagent" || !msg.meta?.jobId) return "";
+  const jobId = String(msg.meta.jobId);
+  const target = state.messages.find((message) => (
+    message?.role === "user" && String(message.meta?.backgroundDispatch?.id || "") === jobId
+  ));
+  const rawPreview = (getMsgText(target) || "").replace(/\s+/g, " ").trim();
+  if (!rawPreview) return "";
+  const preview = rawPreview.length > 56 ? `${rawPreview.slice(0, 56)}…` : rawPreview;
+  return `<button class="background-reply-reference" type="button" data-background-reply-id="${escapeHtml(jobId)}" title="${escapeHtml(rawPreview)}"><span class="background-reply-arrow" aria-hidden="true">↳</span><span class="background-reply-label">${t("backgroundReply")}</span><span class="background-reply-preview">${escapeHtml(preview)}</span></button>`;
+}
+
 function renderFinalAssistantProjection(msg, index) {
   const model = msg._model || msg.meta?._model || getSelectedModel() || "Agent";
   const content = (getMsgText(msg) || "").trim();
@@ -4876,11 +4921,13 @@ function renderFinalAssistantProjection(msg, index) {
   }
   if (!content || isToolPlanningPlaceholder(content)) return "";
   const responseInfo = renderAssistantResponseInfo(msg);
+  const replyReference = renderBackgroundReplyReference(msg);
   const copyBtn = content && !isToolPlanningPlaceholder(content) ? renderCopyBtn(content) : "";
   const timeStr = formatMsgTime(msg._time);
   return `
     <article class="msg assistant" data-msg-index="${index}">
       <div class="role">${escapeHtml(model)}</div>
+      ${replyReference}
       ${content && !isToolPlanningPlaceholder(content) ? renderAssistantContent(content) : ""}
       <div class="msg-footer">${responseInfo}<span class="msg-footer-hover">${copyBtn}${timeStr ? `<span class="msg-time">${timeStr}</span>` : ""}</span></div>
     </article>
@@ -5690,6 +5737,20 @@ function bindMessageActions() {
 
     btn.addEventListener("click", () => continueAgentRun());
 
+  });
+
+  document.querySelectorAll(".background-reply-reference").forEach((button) => {
+    button.addEventListener("click", () => {
+      const replyId = String(button.dataset.backgroundReplyId || "");
+      const target = Array.from(document.querySelectorAll("[data-background-message-id]")).find((element) => (
+        String(element.dataset.backgroundMessageId || "") === replyId
+      ));
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      target.classList.remove("background-reply-highlight");
+      requestAnimationFrame(() => target.classList.add("background-reply-highlight"));
+      setTimeout(() => target.classList.remove("background-reply-highlight"), 1400);
+    });
   });
 
 }
@@ -7785,7 +7846,9 @@ function finalizeRunTiming(sessionId) {
   if (!run) return false;
   const startedAt = run.taskStartTime || run.responseStartTime;
   const messages = getSessionMessages(sessionId);
-  const lastMsg = findLastAssistantMessage(messages);
+  const lastMsg = [...messages].reverse().find((message) => (
+    message?.role === "assistant" && !isDetachedFromMainContext(message)
+  )) || null;
   let changed = false;
 
   if (startedAt && lastMsg && !lastMsg.streaming) {
@@ -7794,6 +7857,7 @@ function finalizeRunTiming(sessionId) {
     lastMsg._responseTime = display;
     lastMsg._model = lastMsg._model || runModel;
     lastMsg.meta = { ...(lastMsg.meta || {}), _responseTime: display, _model: runModel };
+    placeMainResultByCompletionOrder(messages, lastMsg, startedAt);
     setSessionMessages(sessionId, messages);
     changed = true;
   }
@@ -7801,6 +7865,26 @@ function finalizeRunTiming(sessionId) {
   run.taskStartTime = null;
   run.responseStartTime = null;
   return changed;
+}
+
+function placeMainResultByCompletionOrder(messages, mainMessage, taskStartedAt) {
+  const orderingKey = Number(taskStartedAt || 0);
+  const mainIndex = messages.indexOf(mainMessage);
+  if (!orderingKey || mainIndex < 0) return false;
+  let lastCompletedBackground = -1;
+  messages.forEach((message, index) => {
+    if (
+      message?.role === "assistant"
+      && message.meta?.kind === "background-subagent"
+      && Number(message.meta?.parentTaskStartedAt || 0) === orderingKey
+    ) {
+      lastCompletedBackground = index;
+    }
+  });
+  if (lastCompletedBackground <= mainIndex) return false;
+  messages.splice(mainIndex, 1);
+  messages.splice(lastCompletedBackground, 0, mainMessage);
+  return true;
 }
 
 
@@ -8461,22 +8545,35 @@ async function finishServerAgentAuthorizationRequest(item, approved) {
   markServerAuthorizationProjection(item, result, approved);
   state.authorizationRequests = state.authorizationRequests.filter((entry) => entry !== item);
   const resolver = item.resolve;
-  const nextStatus = resolver ? "running" : "resuming";
-  const nextState = {
-    ...getSessionRunState(item.sessionId),
-    status: nextStatus,
-    phase: "tools",
-    authorizationRequest: null,
-    updatedAt: new Date().toISOString(),
-  };
-  setSessionRunState(item.sessionId, nextState);
-  await saveSessionState(
-    item.sessionId,
-    getSessionMessages(item.sessionId),
-    getSessionStats(item.sessionId),
-  ).catch((error) => {
-    console.error("Failed to persist server authorization result:", error);
-  });
+  let nextState = null;
+  if (item.detachedBackground) {
+    await saveSessionState(
+      item.sessionId,
+      getSessionMessages(item.sessionId),
+      getSessionStats(item.sessionId),
+      undefined,
+      { persistMessages: true },
+    ).catch((error) => {
+      console.error("Failed to persist background authorization result:", error);
+    });
+  } else {
+    const nextStatus = resolver ? "running" : "resuming";
+    nextState = {
+      ...getSessionRunState(item.sessionId),
+      status: nextStatus,
+      phase: "tools",
+      authorizationRequest: null,
+      updatedAt: new Date().toISOString(),
+    };
+    setSessionRunState(item.sessionId, nextState);
+    await saveSessionState(
+      item.sessionId,
+      getSessionMessages(item.sessionId),
+      getSessionStats(item.sessionId),
+    ).catch((error) => {
+      console.error("Failed to persist server authorization result:", error);
+    });
+  }
   if (item.sessionId === state.sessionId) {
     clearPermissionNotify();
     renderMessages();
@@ -8485,6 +8582,7 @@ async function finishServerAgentAuthorizationRequest(item, approved) {
     resolver(result);
     return result;
   }
+  if (item.detachedBackground) return result;
   const summary = state.sessions.find((session) => session.id === item.sessionId) || { id: item.sessionId };
   summary.runState = nextState;
   resumePersistedSessionRun(summary).catch((error) => {
@@ -8900,8 +8998,12 @@ async function resumePersistedSessionRun(summary) {
 
     const ctx = buildRecoveredRunContext(session, latestRunState);
     const recoveryCount = Number(latestRunState.recoveryCount || 0) + 1;
-    setStreaming(true, summary.id);
     const originalStartedAt = Date.parse(latestRunState.startedAt || 0);
+    if (Number.isFinite(originalStartedAt) && originalStartedAt > 0) {
+      ctx.taskStartedAt = originalStartedAt;
+      ctx.run.taskStartTime = originalStartedAt;
+    }
+    setStreaming(true, summary.id);
     if (Number.isFinite(originalStartedAt) && originalStartedAt > 0) {
       ctx.run.responseStartTime = originalStartedAt;
     }
@@ -10739,14 +10841,69 @@ function getBackgroundJob(jobId) {
   return state._backgroundDispatcher.jobs.find((job) => job.id === jobId) || null;
 }
 
+function findBackgroundUserMessage(job) {
+  return getSessionMessages(job.sessionId).find((message) => (
+    message?.role === "user" && message.meta?.backgroundDispatch?.id === job.id
+  )) || job.userMessage || null;
+}
+
+function backgroundJobCheckpoint(job) {
+  return {
+    id: job.id,
+    clientRequestId: job.clientRequestId || job.id,
+    status: job.status,
+    agentRunId: String(job.agentRunId || ""),
+    cursor: Number(job.cursor || 0),
+    userText: String(job.userText || ""),
+    taskPrompt: String(job.taskPrompt || job.userText || ""),
+    model: String(job.model || ""),
+    permissionProfile: String(job.permissionProfile || "read"),
+    toolPreset: String(job.toolPreset || "default"),
+    thinkingLevel: String(job.thinkingLevel || "auto"),
+    temperature: Number(job.temperature ?? 0.2),
+    maxTokens: Number(job.maxTokens || 0),
+    parentTaskStartedAt: Number(job.parentTaskStartedAt || 0),
+    queuedAt: Number(job.queuedAt || Date.now()),
+    startedAt: Number(job.startedAt || 0),
+    deadlineAt: Number(job.deadlineAt || (Date.now() + BACKGROUND_JOB_TIMEOUT_MS)),
+  };
+}
+
+function syncBackgroundJobCheckpoint(job) {
+  const userMessage = findBackgroundUserMessage(job);
+  if (userMessage?.meta?.backgroundDispatch) {
+    Object.assign(userMessage.meta.backgroundDispatch, {
+      id: job.id,
+      status: job.status,
+      detail: job.detail || "",
+      agentRunId: String(job.agentRunId || ""),
+      parentTaskStartedAt: Number(job.parentTaskStartedAt || 0),
+    });
+  }
+  if (["completed", "failed"].includes(job.status)) {
+    removeBackgroundRunCheckpoint(job.sessionId, job.id);
+  } else {
+    setBackgroundRunCheckpoint(job.sessionId, backgroundJobCheckpoint(job));
+  }
+}
+
+async function persistBackgroundJob(job) {
+  syncBackgroundJobCheckpoint(job);
+  await saveSessionState(
+    job.sessionId,
+    getSessionMessages(job.sessionId),
+    getSessionStats(job.sessionId),
+    undefined,
+    { persistMessages: true },
+  );
+}
+
 function updateBackgroundJob(job, status, detail = "") {
   job.status = status;
   job.detail = detail;
-  if (status === "running") job.startedAt = Date.now();
+  if (status === "running" && !Number(job.startedAt || 0)) job.startedAt = Date.now();
   if (status === "completed" || status === "failed") job.finishedAt = Date.now();
-  if (job.userMessage?.meta?.backgroundDispatch) {
-    Object.assign(job.userMessage.meta.backgroundDispatch, { status, detail });
-  }
+  syncBackgroundJobCheckpoint(job);
   renderSessionMessages(job.sessionId);
   renderSessions();
 }
@@ -10768,7 +10925,10 @@ function cancelSessionRun(run) {
 }
 
 function backgroundActiveForSession(sessionId) {
-  return state._backgroundDispatcher.jobs.filter((job) => job.sessionId === sessionId && job.status === "running").length;
+  return state._backgroundDispatcher.jobs.filter((job) => (
+    job.sessionId === sessionId
+    && ["running", "waiting-authorization", "waiting-credentials"].includes(job.status)
+  )).length;
 }
 
 function mergeBackgroundUsage(sessionId, childStats) {
@@ -10778,6 +10938,11 @@ function mergeBackgroundUsage(sessionId, childStats) {
     stats[key] = Number(stats[key] || 0) + Number(childStats[key] || 0);
   }
   setSessionStats(sessionId, stats);
+}
+
+function backgroundJobElapsed(job, finishedAt = Date.now()) {
+  const submittedAt = Number(job?.queuedAt || job?.startedAt || finishedAt);
+  return formatElapsedMs(Math.max(0, Number(finishedAt) - submittedAt));
 }
 
 function mergeDelegatedUsage(parentCtx, childUsage) {
@@ -10790,60 +10955,146 @@ function mergeDelegatedUsage(parentCtx, childUsage) {
   if (!parentCtx.isSubAgent) setSessionStats(parentCtx.sessionId, parentCtx.stats);
 }
 
-async function runBackgroundSubAgentJob(job) {
-  const { sessionId, userText, images, parentCtx } = job;
-  const currentTask = parentCtx._taskPrompt || "";
-  const prompt = currentTask
-    ? `[背景] 主 Agent 正在处理：${currentTask.slice(0, 150)}\n\n[新请求] ${userText}\n\n你是一个后台子 Agent，收到了一条用户在等待中发送的新消息。请独立处理这条新请求。如果与主任务相关，直接处理新请求；如果无关，也独立完成。不要修改或中断主 Agent 的运行。完成后只输出结果。`
-    : userText;
-
-  const imageRefs = await uploadImagesForStorage(images || []);
-  if (imageRefs.length) job.userMessage._images = imageRefs;
-
-  const subCtx = createSubContext(parentCtx, prompt);
-  subCtx.authorizationLabel = userText.slice(0, 24) || "后台任务";
+function createBackgroundServerContext(job) {
+  const parentCtx = job.parentCtx || {
+    sessionId: job.sessionId,
+    model: job.model,
+    temperature: job.temperature,
+    maxTokens: job.maxTokens,
+    permissionProfile: job.permissionProfile,
+    toolPreset: job.toolPreset,
+    thinkingLevel: job.thinkingLevel,
+    stats: getSessionStats(job.sessionId),
+    taskUsage: { input: 0, output: 0, cache: 0 },
+    depth: 0,
+  };
+  const subCtx = createSubContext(parentCtx, job.taskPrompt);
+  const sourceContent = findBackgroundUserMessage(job)?.content;
+  if (Array.isArray(sourceContent)) {
+    subCtx.messages[1].content = [
+      { type: "text", text: job.taskPrompt },
+      ...sourceContent.filter((part) => part?.type === "image_url"),
+    ];
+  }
+  subCtx.sessionId = job.sessionId;
+  subCtx.model = job.model;
+  subCtx.temperature = job.temperature;
+  subCtx.maxTokens = job.maxTokens;
+  subCtx.permissionProfile = job.permissionProfile;
+  subCtx.toolPreset = job.toolPreset;
+  subCtx.thinkingLevel = job.thinkingLevel;
+  subCtx.authorizationLabel = job.userText.slice(0, 24) || "后台任务";
+  subCtx.isDetachedBackground = true;
+  subCtx.backgroundJobId = job.id;
+  subCtx.parentTaskStartedAt = Number(job.parentTaskStartedAt || 0);
   subCtx.run = {
-    sessionId,
+    sessionId: job.sessionId,
     isStreaming: false,
     abortController: new AbortController(),
     messageQueue: [],
   };
-  job.abortController = subCtx.run.abortController;
-  if (images?.length) {
-    subCtx.messages[1].content = [
-      { type: "text", text: prompt },
-      ...images.map((img) => ({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.base64}` } })),
-    ];
+  return subCtx;
+}
+
+async function runBackgroundSubAgentJob(job) {
+  if (!window.AgentRuntime?.createAgentRun || !window.AgentRuntime?.watchAgentRun) {
+    throw new Error("Server Agent runtime is unavailable");
   }
+  const subCtx = createBackgroundServerContext(job);
+  job.abortController = subCtx.run.abortController;
+  const allowedToolNames = getAllowedToolNamesForProfile(job.permissionProfile, job.toolPreset);
+  allowedToolNames.delete("task");
+  allowedToolNames.delete("request_user_input");
+  const serverTools = getNativeTools(job.toolPreset, allowedToolNames);
+  const serverToolNames = serverTools.map((tool) => String(tool.function?.name || "")).filter(Boolean);
+  subCtx.allowedToolNames = allowedToolNames;
+  subCtx.tools = serverTools;
+  const prepared = await buildModelRequestPayload(subCtx, true, serverTools);
+  const baseUrl = els.baseUrl.value.trim() || "http://localhost:3000";
+  const keys = getFallbackKeys(job.model || getSelectedModel());
 
   let timedOut = false;
-  let runError = null;
+  let lastUsage = { input: 0, output: 0, cache: 0 };
+  const remainingMs = Math.max(0, Number(job.deadlineAt || 0) - Date.now());
   const timeoutId = setTimeout(() => {
     timedOut = true;
     subCtx.run.abortController.abort();
-  }, BACKGROUND_JOB_TIMEOUT_MS);
+    if (job.agentRunId) window.AgentRuntime.cancelAgentRun(job.agentRunId).catch(() => {});
+  }, remainingMs);
   try {
-    await runAgentLoop(subCtx);
-    if (timedOut) throw new Error("后台任务运行超时");
+    if (remainingMs <= 0) throw new DOMException("Aborted", "AbortError");
+    const created = await window.AgentRuntime.createAgentRun({
+      sessionId: job.sessionId,
+      clientRequestId: job.clientRequestId || job.id,
+      payload: prepared.payload,
+      baseUrl,
+      keys,
+      allowedTools: serverToolNames,
+      maxRounds: MAX_TOOL_ROUNDS,
+      permissionProfile: job.permissionProfile,
+      signal: subCtx.run.abortController.signal,
+    });
+    job.agentRunId = String(created.agentRunId || "");
+    if (!job.agentRunId) throw new Error("Server Agent did not return an agentRunId");
+    subCtx.agentRunId = job.agentRunId;
+    await persistBackgroundJob(job);
+
+    while (true) {
+      let snapshot = await window.AgentRuntime.getAgentRun(job.agentRunId, {
+        cursor: job.cursor || 0,
+        signal: subCtx.run.abortController.signal,
+      });
+      if (snapshot.status === "waiting_credentials") {
+        updateBackgroundJob(job, "waiting-credentials");
+        await persistBackgroundJob(job);
+        await window.AgentRuntime.resumeAgentRun(job.agentRunId, {
+          keys,
+          baseUrl,
+          signal: subCtx.run.abortController.signal,
+        });
+      }
+      snapshot = await window.AgentRuntime.watchAgentRun({
+        agentRunId: job.agentRunId,
+        cursor: job.cursor || 0,
+        signal: subCtx.run.abortController.signal,
+      });
+      job.cursor = Number(snapshot.nextCursor ?? job.cursor ?? 0);
+      lastUsage = cloneUsageStats(snapshot.usage || snapshot.result?.usage);
+      if (snapshot.status === "waiting_credentials") continue;
+      if (snapshot.status === "waiting_user_input") {
+        throw new Error("后台任务不能发起交互问卷");
+      }
+      if (snapshot.status === "waiting_authorization") {
+        updateBackgroundJob(job, "waiting-authorization");
+        await persistBackgroundJob(job);
+        subCtx.messages = getSessionMessages(job.sessionId);
+        await requestServerAgentAuthorization(subCtx, snapshot.pendingAuthorization);
+        updateBackgroundJob(job, "running");
+        await persistBackgroundJob(job);
+        continue;
+      }
+      if (snapshot.status === "completed") {
+        return {
+          ok: true,
+          result: String(snapshot.result?.content || "后台子 Agent 已完成，但没有返回文本结果"),
+          rounds: Number(snapshot.round || 0),
+          usage: lastUsage,
+        };
+      }
+      if (snapshot.status === "cancelled") throw new DOMException("Aborted", "AbortError");
+      throw new Error(snapshot.error || `Server Agent ${snapshot.status}`);
+    }
   } catch (error) {
-    runError = error;
+    return {
+      ok: false,
+      result: error?.name === "AbortError"
+        ? (timedOut ? "后台任务运行超时" : "后台任务已取消")
+        : (error.message || String(error)),
+      usage: lastUsage,
+    };
   } finally {
     clearTimeout(timeoutId);
   }
-
-  const usage = cloneUsageStats(subCtx.taskUsage);
-  mergeBackgroundUsage(sessionId, usage);
-  if (runError) {
-    return {
-      ok: false,
-      result: runError?.name === "AbortError" ? "后台任务已取消或超时" : (runError.message || String(runError)),
-      usage,
-    };
-  }
-  return {
-    ...(subCtx.subResult || { ok: false, result: "后台子 Agent 未返回结果" }),
-    usage,
-  };
 }
 
 function pumpBackgroundDispatcher() {
@@ -10857,46 +11108,66 @@ function pumpBackgroundDispatcher() {
 
     dispatcher.activeCount += 1;
     updateBackgroundJob(job, "running");
+    persistBackgroundJob(job).catch((error) => console.error("Failed to persist running background task:", error));
     runBackgroundSubAgentJob(job)
       .then(async (sub) => {
-        const content = sub.ok === false
-          ? `**后台处理失败**：${job.userText.slice(0, 80)}\n\n${sub.result}`
-          : `**后台处理**：${job.userText.slice(0, 80)}\n\n${sub.result}`;
-        const messages = appendSessionMessages(job.sessionId, {
-          role: "assistant",
-          content,
-          meta: {
-            kind: "background-subagent",
-            jobId: job.id,
-            error: sub.ok === false,
-            detachedFromMain: true,
-            _usage: sub.usage,
-            _usageScope: "task",
-          },
-          _model: job.parentCtx.model || getSelectedModel(),
-          _time: new Date().toISOString(),
-        });
+        const content = String(sub.result || (sub.ok === false ? "后台任务失败" : "后台任务已完成"));
+        const existingResult = getSessionMessages(job.sessionId).find((message) => (
+          message?.role === "assistant"
+          && message.meta?.kind === "background-subagent"
+          && message.meta?.jobId === job.id
+        ));
+        if (!existingResult) {
+          mergeBackgroundUsage(job.sessionId, sub.usage);
+          appendSessionMessages(job.sessionId, {
+            role: "assistant",
+            content,
+            meta: {
+              kind: "background-subagent",
+              jobId: job.id,
+              agentRunId: job.agentRunId,
+              error: sub.ok === false,
+              detachedFromMain: true,
+              parentTaskStartedAt: Number(job.parentTaskStartedAt || 0),
+              _usage: sub.usage,
+              _usageScope: "task",
+            },
+            _model: job.model || getSelectedModel(),
+            _time: new Date().toISOString(),
+            _responseTime: backgroundJobElapsed(job),
+          });
+        }
         updateBackgroundJob(job, sub.ok === false ? "failed" : "completed", sub.ok === false ? sub.result : "");
-        await saveSessionState(job.sessionId, messages, getSessionStats(job.sessionId))
+        await persistBackgroundJob(job)
           .catch((err) => console.error("Failed to save completed background task:", err));
         job.resolve({ ok: sub.ok !== false, result: sub.result });
       })
       .catch(async (err) => {
         const message = err?.name === "AbortError" ? "后台任务已取消或超时" : (err.message || String(err));
-        const messages = appendSessionMessages(job.sessionId, {
-          role: "assistant",
-          content: `**后台处理失败**：${job.userText.slice(0, 80)}\n\n${message}`,
-          meta: {
-            kind: "background-subagent",
-            jobId: job.id,
-            error: true,
-            detachedFromMain: true,
-          },
-          _model: job.parentCtx.model || getSelectedModel(),
-          _time: new Date().toISOString(),
-        });
+        const existingResult = getSessionMessages(job.sessionId).some((entry) => (
+          entry?.role === "assistant"
+          && entry.meta?.kind === "background-subagent"
+          && entry.meta?.jobId === job.id
+        ));
+        if (!existingResult) {
+          appendSessionMessages(job.sessionId, {
+            role: "assistant",
+            content: message,
+            meta: {
+              kind: "background-subagent",
+              jobId: job.id,
+              agentRunId: job.agentRunId,
+              error: true,
+              detachedFromMain: true,
+              parentTaskStartedAt: Number(job.parentTaskStartedAt || 0),
+            },
+            _model: job.model || getSelectedModel(),
+            _time: new Date().toISOString(),
+            _responseTime: backgroundJobElapsed(job),
+          });
+        }
         updateBackgroundJob(job, "failed", message);
-        await saveSessionState(job.sessionId, messages, getSessionStats(job.sessionId)).catch(() => {});
+        await persistBackgroundJob(job).catch(() => {});
         job.resolve({ ok: false, error: message });
       })
       .finally(() => {
@@ -10911,42 +11182,180 @@ function pumpBackgroundDispatcher() {
   }
 }
 
-function dispatchBackgroundSubAgent(sessionId, userText, images = []) {
+async function dispatchBackgroundSubAgent(sessionId, userText, images = []) {
   const run = ensureSessionRun(sessionId);
   const parentCtx = run?._activeCtx;
   if (!parentCtx) return Promise.reject(new Error("主 Agent 已结束，无法创建后台任务"));
 
+  const submittedAt = Date.now();
+  const parentTaskStartedAt = Number(parentCtx.taskStartedAt || run.taskStartTime || submittedAt);
   const id = `background-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const currentTask = parentCtx._taskPrompt || "";
+  const taskPrompt = currentTask
+    ? `[背景] 主 Agent 正在处理：${currentTask.slice(0, 150)}\n\n[新请求] ${userText}\n\n你是一个后台子 Agent，收到了一条用户在等待中发送的新消息。请独立处理这条新请求。如果与主任务相关，直接处理新请求；如果无关，也独立完成。不要修改或中断主 Agent 的运行。完成后只输出结果。`
+    : userText;
+  const imageRefs = await uploadImagesForStorage(images || []);
+  const messageContent = images.length
+    ? [
+        { type: "text", text: userText },
+        ...images.map((img) => ({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.base64}` } })),
+      ]
+    : userText;
   const userMessage = {
     role: "user",
-    content: userText,
-    _images: images.length ? images : undefined,
+    content: messageContent,
+    _images: imageRefs.length ? imageRefs : undefined,
     meta: {
-      backgroundDispatch: { id, status: "pending" },
+      backgroundDispatch: { id, status: "pending", agentRunId: "", parentTaskStartedAt },
       detachedFromMain: true,
     },
     _model: parentCtx.model || getSelectedModel(),
-    _time: new Date().toISOString(),
+    _time: new Date(submittedAt).toISOString(),
   };
   const messages = appendSessionMessages(sessionId, userMessage);
   let resolve;
   const completion = new Promise((done) => { resolve = done; });
-  state._backgroundDispatcher.jobs.push({
+  const job = {
     id,
+    clientRequestId: id,
     sessionId,
     userText,
-    images,
+    taskPrompt,
     parentCtx,
     userMessage,
+    model: parentCtx.model || getSelectedModel(),
+    permissionProfile: parentCtx.permissionProfile || "read",
+    toolPreset: parentCtx.toolPreset || "default",
+    thinkingLevel: parentCtx.thinkingLevel || getThinkingLevel(),
+    temperature: Number(parentCtx.temperature ?? els.temperature.value ?? 0.2),
+    maxTokens: Number(parentCtx.maxTokens || getEffectiveMaxTokens(parentCtx.model || getSelectedModel())),
+    parentTaskStartedAt,
     status: "pending",
-    queuedAt: Date.now(),
+    queuedAt: submittedAt,
+    deadlineAt: submittedAt + BACKGROUND_JOB_TIMEOUT_MS,
+    agentRunId: "",
+    cursor: 0,
     completion,
     resolve,
-  });
+  };
+  state._backgroundDispatcher.jobs.push(job);
+  syncBackgroundJobCheckpoint(job);
   renderSessionMessages(sessionId);
-  saveSessionState(sessionId, messages, getSessionStats(sessionId)).catch((err) => console.error("Failed to save queued background task:", err));
+  await saveSessionState(
+    sessionId,
+    messages,
+    getSessionStats(sessionId),
+    undefined,
+    { persistMessages: true },
+  );
   pumpBackgroundDispatcher();
   return completion;
+}
+
+async function restoreBackgroundJobsForSession(summary) {
+  const checkpoints = Array.isArray(summary?.runState?.backgroundRuns)
+    ? summary.runState.backgroundRuns.filter((item) => item?.id)
+    : [];
+  if (!summary?.id || !checkpoints.length) return;
+
+  let messages = state._sessionMsgs[summary.id];
+  let session = null;
+  if (!messages) {
+    session = await apiJson(`/api/sessions/${encodeURIComponent(summary.id)}`);
+    messages = state._sessionMsgs[summary.id] || session.messages || [];
+    if (!state._sessionMsgs[summary.id]) setSessionMessages(summary.id, messages);
+    if (!state._sessionStats[summary.id]) {
+      setSessionStats(summary.id, session.stats || { input: 0, output: 0, cache: 0, cost: 0 });
+    }
+  }
+
+  let checkpointChanged = false;
+  for (const checkpoint of checkpoints) {
+    if (getBackgroundJob(checkpoint.id)) continue;
+    const existingResult = messages.some((message) => (
+      message?.role === "assistant"
+      && message.meta?.kind === "background-subagent"
+      && message.meta?.jobId === checkpoint.id
+    ));
+    if (existingResult) {
+      removeBackgroundRunCheckpoint(summary.id, checkpoint.id);
+      checkpointChanged = true;
+      continue;
+    }
+    let userMessage = messages.find((message) => (
+      message?.role === "user" && message.meta?.backgroundDispatch?.id === checkpoint.id
+    ));
+    if (!userMessage) {
+      userMessage = {
+        role: "user",
+        content: String(checkpoint.userText || ""),
+        meta: {
+          backgroundDispatch: {
+            id: checkpoint.id,
+            status: checkpoint.status || "pending",
+            agentRunId: String(checkpoint.agentRunId || ""),
+            parentTaskStartedAt: Number(checkpoint.parentTaskStartedAt || 0),
+          },
+          detachedFromMain: true,
+        },
+        _model: String(checkpoint.model || ""),
+        _time: new Date(Number(checkpoint.queuedAt || Date.now())).toISOString(),
+      };
+      messages.push(userMessage);
+      setSessionMessages(summary.id, messages);
+      checkpointChanged = true;
+    }
+    let resolve;
+    const completion = new Promise((done) => { resolve = done; });
+    state._backgroundDispatcher.jobs.push({
+      ...checkpoint,
+      id: String(checkpoint.id),
+      clientRequestId: String(checkpoint.clientRequestId || checkpoint.id),
+      sessionId: summary.id,
+      userText: String(checkpoint.userText || getMsgText(userMessage) || ""),
+      taskPrompt: String(checkpoint.taskPrompt || checkpoint.userText || getMsgText(userMessage) || ""),
+      model: String(checkpoint.model || userMessage._model || getSelectedModel()),
+      permissionProfile: String(checkpoint.permissionProfile || "read"),
+      toolPreset: String(checkpoint.toolPreset || "default"),
+      thinkingLevel: String(checkpoint.thinkingLevel || "auto"),
+      temperature: Number(checkpoint.temperature ?? 0.2),
+      maxTokens: Number(checkpoint.maxTokens || 0),
+      parentTaskStartedAt: Number(checkpoint.parentTaskStartedAt || 0),
+      agentRunId: String(checkpoint.agentRunId || ""),
+      cursor: Number(checkpoint.cursor || 0),
+      queuedAt: Number(checkpoint.queuedAt || Date.now()),
+      startedAt: Number(checkpoint.startedAt || 0),
+      deadlineAt: Number(checkpoint.deadlineAt || (Date.now() + BACKGROUND_JOB_TIMEOUT_MS)),
+      parentCtx: null,
+      userMessage,
+      status: "pending",
+      completion,
+      resolve,
+      restored: true,
+    });
+  }
+  if (checkpointChanged) {
+    await saveSessionState(
+      summary.id,
+      getSessionMessages(summary.id),
+      getSessionStats(summary.id),
+      session?.title || summary.title,
+      { persistMessages: true },
+    );
+  }
+}
+
+async function resumePersistedBackgroundRuns() {
+  const summaries = state.sessions.filter((session) => (
+    Array.isArray(session?.runState?.backgroundRuns)
+    && session.runState.backgroundRuns.some((item) => item?.id)
+  ));
+  for (const summary of summaries) {
+    await restoreBackgroundJobsForSession(summary).catch((error) => {
+      console.error(`Failed to restore background tasks for ${summary.id}:`, error);
+    });
+  }
+  pumpBackgroundDispatcher();
 }
 
 async function executeToolWithDelegation(tool, parentCtx, options = {}) {
@@ -11281,7 +11690,9 @@ function projectAgentToolCompleted(ctx, event) {
       data: { toolCallId, name: data.name || "", arguments: "{}" },
     };
     projectAgentToolStarted(ctx, syntheticStart);
-    callMessage = ctx.messages[ctx.messages.length - 1];
+    callMessage = ctx.messages.find((message) => (
+      message?.role === "tool-call" && message?.meta?.toolCallId === toolCallId
+    ));
     callMessage.meta.agentEventType = "tool_completed_call";
   }
   const result = data.result || {};
@@ -11380,6 +11791,11 @@ function ensureServerAuthorizationProjection(ctx, pendingAuthorization) {
     rejected: Boolean(projection.meta?.rejected),
     serverManaged: true,
   };
+  if (ctx.isDetachedBackground) {
+    projection.meta.detachedFromMain = true;
+    projection.meta.backgroundJobId = String(ctx.backgroundJobId || "");
+    projection.meta.parentTaskStartedAt = Number(ctx.parentTaskStartedAt || 0);
+  }
   setSessionMessages(ctx.sessionId, ctx.messages);
   renderSessionMessages(ctx.sessionId);
   return editId;
@@ -11415,6 +11831,8 @@ async function requestServerAgentAuthorization(ctx, pendingAuthorization) {
       selected: true,
       status: "pending",
       serverAgent: true,
+      detachedBackground: Boolean(ctx.isDetachedBackground),
+      backgroundJobId: String(ctx.backgroundJobId || ""),
       agentRunId: ctx.agentRunId,
       authorizationId,
       proposalId: String(pendingAuthorization.proposalId || ""),
@@ -11435,6 +11853,8 @@ async function requestServerAgentAuthorization(ctx, pendingAuthorization) {
   request.stats = diff ? getDiffStats(normalizeDiffText(diff)) : null;
   request.status = "pending";
   request.serverAgent = true;
+  request.detachedBackground = Boolean(ctx.isDetachedBackground);
+  request.backgroundJobId = String(ctx.backgroundJobId || "");
   request._finishing = false;
 
   const waitForDecision = new Promise((resolve) => { request.resolve = resolve; });
@@ -11455,17 +11875,29 @@ async function requestServerAgentAuthorization(ctx, pendingAuthorization) {
     signal.addEventListener("abort", request.abortHandler, { once: true });
   }
 
-  const nextState = {
-    ...getSessionRunState(ctx.sessionId),
-    status: "waiting-authorization",
-    phase: "tools",
-    authorizationRequest: serializeAuthorizationRequest(request),
-    updatedAt: new Date().toISOString(),
-  };
-  setSessionRunState(ctx.sessionId, nextState);
-  await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats).catch((error) => {
-    console.error("Failed to persist server authorization request:", error);
-  });
+  if (ctx.isDetachedBackground) {
+    await saveSessionState(
+      ctx.sessionId,
+      ctx.messages,
+      getSessionStats(ctx.sessionId),
+      undefined,
+      { persistMessages: true },
+    ).catch((error) => {
+      console.error("Failed to persist background authorization request:", error);
+    });
+  } else {
+    const nextState = {
+      ...getSessionRunState(ctx.sessionId),
+      status: "waiting-authorization",
+      phase: "tools",
+      authorizationRequest: serializeAuthorizationRequest(request),
+      updatedAt: new Date().toISOString(),
+    };
+    setSessionRunState(ctx.sessionId, nextState);
+    await saveSessionState(ctx.sessionId, ctx.messages, ctx.stats).catch((error) => {
+      console.error("Failed to persist server authorization request:", error);
+    });
+  }
   state.authorizationPanelCollapsed = false;
   if (ctx.sessionId === state.sessionId) renderAuthorizationPanel();
   if (isUserAway()) notifyPermissionNeeded(
@@ -12530,6 +12962,8 @@ async function sendMessage(userText) {
 
   if (!model) throw new Error("Please refresh and select a model first.");
 
+  const submittedAt = Date.now();
+
   if (!state.sessionId) await createSession(userText.slice(0, 24) || "New session");
 
   const sessionId = state.sessionId;
@@ -12620,7 +13054,9 @@ async function sendMessage(userText) {
 
   }
 
-  ctx.messages.push({ role: "user", content: messageContent, _images: imageRefs.length > 0 ? imageRefs : undefined, _model: ctx.model || getSelectedModel(), _time: new Date().toISOString() });
+  run.taskStartTime = submittedAt;
+  ctx.taskStartedAt = submittedAt;
+  ctx.messages.push({ role: "user", content: messageContent, _images: imageRefs.length > 0 ? imageRefs : undefined, _model: ctx.model || getSelectedModel(), _time: new Date(submittedAt).toISOString() });
   setSessionMessages(sessionId, ctx.messages);
 
   state.attachedImages = [];
@@ -15642,6 +16078,9 @@ async function init() {
   // tasks can recover without forcing the user to remain on one conversation.
   resumePersistedRuns().catch((error) => {
     console.error("Failed to resume persisted runs:", error);
+  });
+  resumePersistedBackgroundRuns().catch((error) => {
+    console.error("Failed to resume persisted background runs:", error);
   });
 
   // Restore preview state

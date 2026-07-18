@@ -180,6 +180,14 @@ python -m py_compile server.py launcher.py build_exe.py
 python build_exe.py
 ```
 
+### 界面文案与 i18n
+
+- 只有按钮、标题、说明、占位符、状态提示和错误提示等产品固定文案需要翻译；用户消息、模型回答、代码、文件名、路径和命令输出保持原文。
+- 所有浏览器端翻译统一维护在 `src/core/i18n.js`。新增文案必须在对应 `LANG` 或 `I18N` 的 `zh`、`en` 区域使用同一个 key 成对添加，即使两种语言暂时使用相同文本也不能省略一侧；不要在业务文件中新建语言字典。
+- HTML 静态文案使用 `data-i18n`，悬浮标题使用 `data-i18n-title`；JavaScript 动态文案使用 `t("key")`，带变量时使用 `t("key", { name })`。
+- 修改界面文案后运行 `node --check src/core/i18n.js` 和 `python -m pytest tests/test_frontend_modules.py tests/test_p2_coverage.py -q`。词典任一语言缺少 key 时，回归测试必须失败。
+- 前端人工检查至少覆盖：切换到英文后立即生效、刷新后仍保持英文、切回中文后立即生效，以及设置页、动态面板或弹窗没有残留错误语言。
+
 构建产物位于 `dist/Code-v<version>.exe`。发布前应同时核对：
 
 - `VERSION`、`file_version_info.txt` 和 README 版本号一致；

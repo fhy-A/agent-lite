@@ -14,6 +14,21 @@
 
 ---
 
+## 2026-07-18 22:44 · Codex
+
+### 抽离 Markdown、代码块与 ANSI 渲染模块，进入前端拆分阶段 3
+
+- **渲染能力独立**：新增 `src/ui/markdown.js`，集中承接 Markdown 解析、JavaScript/Python/HTML/CSS/JSON 轻量语法高亮、语言别名解析、ANSI 转义渲染以及代码围栏路由。
+- **HTML 后处理收口**：本地路径点击、外部链接新标签页、本地图片 URL 转换和代码块复制所需标记统一由 Markdown 模块生成；用户消息与模型回复继续共用既有 Markdown 展示行为，原始消息的保存和模型输入不变。
+- **职责边界保持**：Diff 解析与卡片渲染仍由 `app.js` 持有并以依赖形式注入，消息列表、流式投影、滚动、会话状态及真实点击动作均未迁移，避免本阶段改变流式 DOM 生命周期。
+- **旧实现退场**：`app.js` 删除原语法规则、ANSI、Marked renderer 和 Markdown 后处理实现，净减少约 290 行；`index.html` 在功能模块和应用脚本前加载新的 UI 模块。
+- **回归保护**：补充模块存在与加载顺序、公开导出、代码高亮、语言别名、ANSI、代码/终端/Diff 围栏、本地图片、外部链接和本地路径后处理测试，并禁止旧定义重新进入 `app.js`。
+- **验证结果**：`src/ui/markdown.js` 与 `app.js` JavaScript 语法、`git diff --check` 通过；定向回归 `29 passed` 与 `74 passed, 6 subtests passed`，最终全量回归 `555 passed, 25 subtests passed`。人工确认用户消息和模型回复中的标题、列表、粗体、行内代码、JavaScript/JSON 高亮、行号、复制按钮、Diff 增删样式、本地路径与外部链接均正常。
+
+**涉及文件**：`src/ui/markdown.js`、`app.js`、`index.html`、`tests/test_frontend_modules.py`、`docs/APP_JS_SPLIT_PLAN.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 22:16 · Codex
 
 ### 抽离设置、更新与认证模块，完成前端拆分阶段 2

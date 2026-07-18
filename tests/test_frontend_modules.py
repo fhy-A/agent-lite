@@ -12,6 +12,7 @@ RUNTIME_SOURCE = (ROOT / "agent-runtime.js").read_text(encoding="utf-8")
 I18N_SOURCE = (ROOT / "src" / "core" / "i18n.js").read_text(encoding="utf-8")
 API_CLIENT_SOURCE = (ROOT / "src" / "services" / "api-client.js").read_text(encoding="utf-8")
 SETTINGS_SOURCE = (ROOT / "src" / "features" / "settings.js").read_text(encoding="utf-8")
+MARKDOWN_SOURCE = (ROOT / "src" / "ui" / "markdown.js").read_text(encoding="utf-8")
 PREVIEW_SOURCE = (ROOT / "src" / "features" / "preview.js").read_text(encoding="utf-8")
 FILES_SOURCE = (ROOT / "src" / "features" / "files.js").read_text(encoding="utf-8")
 SKILLS_MEMORY_SOURCE = (ROOT / "src" / "features" / "skills-memory.js").read_text(encoding="utf-8")
@@ -208,7 +209,7 @@ eval(source);
 
     def test_partial_think_blocks_never_leak_into_visible_content(self):
         parser_start = APP_SOURCE.index("function splitThoughtContent")
-        parser_end = APP_SOURCE.index("// ── Syntax highlighting", parser_start)
+        parser_end = APP_SOURCE.index("// ── Diff rendering", parser_start)
         parser_source = APP_SOURCE[parser_start:parser_end]
         cases = (
             "<thi",
@@ -250,6 +251,7 @@ eval(source);
             "src/core/i18n.js",
             "src/services/notifications.js",
             "src/services/api-client.js",
+            "src/ui/markdown.js",
             "src/features/settings.js",
             "src/features/preview.js",
             "src/features/files.js",
@@ -265,6 +267,7 @@ eval(source);
             "./src/core/i18n.js",
             "./src/services/notifications.js",
             "./src/services/api-client.js",
+            "./src/ui/markdown.js",
             "./src/features/settings.js",
             "./src/features/skills-memory.js",
             "./src/features/preview.js",
@@ -618,6 +621,67 @@ const feature = createSettingsFeature({
         self.assertEqual(data["replaced"], [[None, "", "/"]])
         self.assertEqual(data["toasts"], [["loggedInAs:Alice", "warning"]])
 
+    def test_markdown_ui_owns_highlighting_ansi_and_html_postprocessing(self):
+        self.assertIn("Code.ui.markdown = Object.freeze", MARKDOWN_SOURCE)
+        script = r"""
+global.window = {Code: {ui: {}}};
+class Renderer {}
+let configured = null;
+const marked = {
+  Renderer,
+  setOptions: (options) => { configured = options; },
+  parse: () => '<code>C:/work/a.py</code><a href="/docs">docs</a><img src="assets/demo.png" alt="local"><img src="https://example.test/demo.png" alt="remote">',
+};
+require("./src/ui/markdown.js");
+const {createMarkdownFeature, resolveSyntaxPatterns} = window.Code.ui.markdown;
+const feature = createMarkdownFeature({
+  marked,
+  random: () => 0.5,
+  escapeHtml: (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;"),
+  renderDiff: (text) => `<diff>${text}</diff>`,
+});
+process.stdout.write(JSON.stringify({
+  javascript: feature.highlightSyntax('const value = "<x>"; // note', "javascript"),
+  json: feature.highlightSyntax('{"name":"demo","ok":true,"count":2}', "json"),
+  ansi: feature.renderAnsi('\u001b[1;31m<error>\u001b[0m'),
+  code: feature.renderer.code({text: "const value = 1;", lang: "js"}),
+  terminal: feature.renderer.code({text: '\u001b[32mok\u001b[0m', lang: "terminal"}),
+  diff: feature.renderer.code({text: "+line", lang: "diff"}),
+  rendered: feature.renderMarkdownLite("ignored"),
+  aliasResolved: Array.isArray(resolveSyntaxPatterns("ts")),
+  breaks: configured.breaks,
+  gfm: configured.gfm,
+}));
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertIn('<span class="syn-kw">const</span>', data["javascript"])
+        self.assertIn('&lt;x&gt;', data["javascript"])
+        self.assertNotIn('-kw&quot;&gt;', data["javascript"])
+        self.assertIn('<span class="syn-key">&quot;name&quot;</span>', data["json"])
+        self.assertIn('<span class="syn-kw">true</span>', data["json"])
+        self.assertEqual(
+            data["ansi"],
+            '<span class="ansi-1"><span class="ansi-31">&lt;error&gt;</span></span>',
+        )
+        self.assertIn('class="copy-code"', data["code"])
+        self.assertIn('class="line-no">1</span>', data["code"])
+        self.assertIn('class="ansi-block"', data["terminal"])
+        self.assertEqual(data["diff"], "<diff>+line</diff>")
+        self.assertIn('class="clickable-path"', data["rendered"])
+        self.assertIn('target="_blank" rel="noopener"', data["rendered"])
+        self.assertIn('/api/file?path=assets%2Fdemo.png&raw=1', data["rendered"])
+        self.assertIn('src="https://example.test/demo.png"', data["rendered"])
+        self.assertTrue(data["aliasResolved"])
+        self.assertTrue(data["breaks"])
+        self.assertTrue(data["gfm"])
+
     def test_preview_feature_exports_parsing_urls_and_width_rules(self):
         self.assertIn("features.preview = Object.freeze", PREVIEW_SOURCE)
         script = """
@@ -686,6 +750,8 @@ process.stdout.write(JSON.stringify({
         self.assertIn("const skillsMemoryFeature = createSkillsMemoryFeature", APP_SOURCE)
         self.assertIn("const { createSettingsFeature } = window.Code.features.settings", APP_SOURCE)
         self.assertIn("const settingsFeature = createSettingsFeature", APP_SOURCE)
+        self.assertIn("createMarkdownFeature,", APP_SOURCE)
+        self.assertIn("const markdownFeature = createMarkdownFeature", APP_SOURCE)
         self.assertIn(
             "const { showToast, notify: _notify } = window.Code.services.notifications",
             APP_SOURCE,
@@ -792,6 +858,12 @@ process.stdout.write(JSON.stringify({
             "async function checkCodeCallback(",
             "async function syncKeysFromPlatform(",
             "function showKeySyncModal(",
+            "const SYNTAX_PATTERNS =",
+            "function _resolveSyntaxPatterns(",
+            "function highlightSyntax(",
+            "function renderAnsi(",
+            "function renderMarkdownLite(",
+            "function setupMarked(",
             "function showToast(",
             "function _notify(",
         ):

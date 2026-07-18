@@ -9,6 +9,10 @@ const {
 const { createI18nRuntime } = window.Code.core.i18n;
 const { showToast, notify: _notify } = window.Code.services.notifications;
 const { apiJson } = window.Code.services.apiClient;
+const {
+  createMarkdownFeature,
+  resolveSyntaxPatterns: _resolveSyntaxPatterns,
+} = window.Code.ui.markdown;
 const { createSettingsFeature } = window.Code.features.settings;
 const { createSkillsMemoryFeature } = window.Code.features.skillsMemory;
 const { createPreviewFeature } = window.Code.features.preview;
@@ -751,6 +755,16 @@ const els = {
   userInputPanel: document.getElementById("userInputPanel"),
 
 };
+
+const markdownFeature = createMarkdownFeature({
+  escapeHtml,
+  renderDiff,
+  marked,
+});
+const {
+  highlightSyntax,
+  renderMarkdownLite,
+} = markdownFeature;
 
 const skillsMemoryFeature = createSkillsMemoryFeature({
   state,
@@ -2239,164 +2253,6 @@ function splitThoughtContent(text = "") {
 
 
 
-// ── Syntax highlighting (lightweight) ──
-
-
-
-const SYNTAX_PATTERNS = {
-
-  // JSON is tokenized separately so generated markup is never highlighted again.
-  json: [],
-
-  javascript: [
-
-    [/\b(function|const|let|var|return|if|else|for|while|async|await|class|import|export|from|default|try|catch|throw|new|this|typeof|instanceof|of|in|null|undefined|true|false)\b/g, "syn-kw"],
-
-    [/(["'`])(?:\\.|(?!\1).)*?\1/g, "syn-str"],
-
-    [/(\/\/.*$)/gm, "syn-com"],
-
-    [/(\/\*[\s\S]*?\*\/)/g, "syn-com"],
-
-    [/\b(\d+\.?\d*)\b/g, "syn-num"],
-
-    [/(=>|\b(?:===?|!==?|[+\-*/%])\b)/g, "syn-op"],
-
-  ],
-
-  js: "javascript", jsx: "javascript", ts: "javascript", typescript: "javascript",
-
-  python: [
-
-    [/\b(def|class|return|if|elif|else|for|while|import|from|as|try|except|raise|with|and|or|not|in|is|None|True|False|pass|break|continue|yield|async|await|lambda|global|nonlocal)\b/g, "syn-kw"],
-
-    [/(["'])(?:\\.|(?!\1).)*?\1/g, "syn-str"],
-
-    [/(#.*$)/gm, "syn-com"],
-
-    [/(\"\"\"[\s\S]*?\"\"\")|('''[\s\S]*?''')/g, "syn-com"],
-
-    [/\b(\d+\.?\d*)\b/g, "syn-num"],
-
-    [/@\w+/g, "syn-op"],
-
-  ],
-
-  py: "python",
-
-  html: [
-
-    [/(<\/?)(\w+)/g, "syn-kw"],
-
-    [/("(?:[^"\\]|\\.)*")/g, "syn-str"],
-
-    [/(<!--[\s\S]*?-->)/g, "syn-com"],
-
-    [/(\w+)=/g, "syn-fn"],
-
-  ],
-
-  css: [
-
-    [/([.#]?[a-zA-Z_-]+)(?=\s*\{)/g, "syn-fn"],
-
-    [/(:(?:[^;{]+))/g, "syn-str"],
-
-    [/(\/\*[\s\S]*?\*\/)/g, "syn-com"],
-
-    [/\b(\d+\.?\d*(?:px|em|rem|%|vh|vw|s)?)\b/g, "syn-num"],
-
-    [/\b(important|bold|normal|italic|none|block|inline|flex|grid|hidden|visible|auto|inherit|initial)\b/g, "syn-kw"],
-
-  ],
-
-};
-
-
-
-function _resolveSyntaxPatterns(lang) {
-
-  if (!lang) return null;
-
-  let patterns = SYNTAX_PATTERNS[lang];
-
-  if (!patterns) return null;
-
-  if (typeof patterns === "string") return _resolveSyntaxPatterns(patterns);
-
-  if (!Array.isArray(patterns)) return null;
-
-  return patterns;
-
-}
-
-
-
-function highlightSyntax(code, lang) {
-
-  if (lang === "json") {
-    const source = String(code ?? "");
-    const tokenPattern = /"(?:\\.|[^"\\])*"|-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b|\b(?:true|false|null)\b/g;
-    let result = "";
-    let cursor = 0;
-
-    for (const match of source.matchAll(tokenPattern)) {
-      const index = match.index ?? 0;
-      const token = match[0];
-      result += escapeHtml(source.slice(cursor, index));
-
-      let cls = "syn-num";
-      if (token.startsWith('"')) {
-        const remainder = source.slice(index + token.length);
-        cls = /^\s*:/.test(remainder) ? "syn-key" : "syn-str";
-      } else if (/^(?:true|false|null)$/.test(token)) {
-        cls = "syn-kw";
-      }
-
-      result += `<span class="${cls}">${escapeHtml(token)}</span>`;
-      cursor = index + token.length;
-    }
-
-    return result + escapeHtml(source.slice(cursor));
-  }
-
-  const source = String(code ?? "");
-  const patterns = _resolveSyntaxPatterns(lang);
-
-  if (!patterns) return escapeHtml(source);
-
-  // Match against the original source, then escape each accepted token once.
-  // Replacing against already generated <span> markup corrupts class names and
-  // makes fragments such as `-kw">` appear as if they were source code.
-  const tokens = [];
-  patterns.forEach(([regex, cls], priority) => {
-    const flags = regex.flags.includes("g") ? regex.flags : `${regex.flags}g`;
-    const matcher = new RegExp(regex.source, flags);
-    for (const match of source.matchAll(matcher)) {
-      const text = match[0];
-      if (!text) continue;
-      const start = match.index ?? 0;
-      tokens.push({ start, end: start + text.length, text, cls, priority });
-    }
-  });
-
-  tokens.sort((a, b) => a.start - b.start || b.end - a.end || a.priority - b.priority);
-
-  let cursor = 0;
-  let result = "";
-  for (const token of tokens) {
-    if (token.start < cursor) continue;
-    result += escapeHtml(source.slice(cursor, token.start));
-    result += `<span class="${token.cls}">${escapeHtml(token.text)}</span>`;
-    cursor = token.end;
-  }
-
-  return result + escapeHtml(source.slice(cursor));
-
-}
-
-
-
 // ── Diff rendering ──
 
 
@@ -2483,152 +2339,6 @@ function renderDiff(text) {
 
   const isLong = lines.length > 40;
   return `<div class="code-block diff-block${isLong ? " is-collapsed" : ""}"><div class="diff-lines">${html}</div>${isLong ? `<button class="diff-expand-btn" type="button" aria-expanded="false">展开全部 ${lines.length} 行</button>` : ""}</div>`;
-
-}
-
-
-
-// ── ANSI rendering ──
-
-
-
-function renderAnsi(text) {
-
-  let result = escapeHtml(text);
-
-  let stack = [];
-
-  // Parse ANSI escape sequences: \x1b[...m or \033[...m
-
-  result = result.replace(/\x1b\[(\d+(?:;\d+)*)m/g, (_, codes) => {
-
-    const parts = codes.split(";").map(Number);
-
-    let html = "";
-
-    // Close previous spans
-
-    while (stack.length) html += "</span>";
-
-    stack = [];
-
-    for (const code of parts) {
-
-      if (code === 0) {
-
-        stack = [];
-
-        continue;
-
-      }
-
-      const cls = `ansi-${code}`;
-
-      if (code >= 30 && code <= 37) stack.push(cls);
-
-      else if (code === 1 || code === 3 || code === 4) stack.push(`ansi-${code}`);
-
-    }
-
-    for (const cls of stack) html += `<span class="${cls}">`;
-
-    return html;
-
-  });
-
-  while (stack.length) { result += "</span>"; stack.pop(); }
-
-  return result;
-
-}
-
-
-
-// ── Markdown rendering (powered by marked) ──
-
-
-
-(function setupMarked() {
-
-  const renderer = new marked.Renderer();
-
-  renderer.code = function({ text, lang }) {
-
-    if (lang === "diff" || lang === "diff ") {
-
-      return renderDiff(text);
-
-    }
-
-    if (lang === "terminal" || lang === "ansi") {
-
-      return `<div class="code-block"><div class="code-head"><span>terminal</span></div><div class="ansi-block">${renderAnsi(text)}</div></div>`;
-
-    }
-
-    const doHighlight = _resolveSyntaxPatterns(lang);
-
-    const lines = text.split("\n");
-
-    const lineHtml = lines
-
-      .map((line, i) => {
-
-        const escaped = escapeHtml(line || " ");
-
-        const highlighted = doHighlight ? highlightSyntax(line || " ", lang) : escaped;
-
-        return `<span class="line-no">${i + 1}</span><code class="line-code">${highlighted}</code>`;
-
-      })
-
-      .join("");
-
-    const codeId = "cb-" + Math.random().toString(36).slice(2, 10);
-    return `<div class="code-block"><div class="code-head"><span>${escapeHtml(lang || "text")}</span><button class="copy-code" type="button" data-code-id="${codeId}">copy</button></div><pre class="code-lines" id="${codeId}">${lineHtml}</pre></div>`;
-
-  };
-
-  marked.setOptions({ renderer, breaks: true, gfm: true });
-
-})();
-
-
-
-function renderMarkdownLite(text) {
-
-  if (!text) return "";
-
-  let html = marked.parse(text);
-
-  // Make inline code (file paths) clickable
-  html = html.replace(/<code>([^<]+)<\/code>/g, (_, code) => {
-    const s = code.trim();
-    // File with extension, or Windows/Unix path pattern
-    if (/\.\w{1,8}$/.test(s) || /^[\/\\]|[A-Za-z]:[\/\\]/.test(s)) {
-      return '<code class="clickable-path" data-path="' + escapeHtml(s) + '" title="Click to open">' + code + '</code>';
-    }
-    return '<code>' + code + '</code>';
-  });
-
-  // Make all links open in new tab
-  html = html.replace(/<a /g, '<a target="_blank" rel="noopener" ');
-
-  // Convert local image paths to API URLs so model-generated images display inline
-  html = html.replace(/<img\s+src="([^"]+)"/g, (full, src) => {
-    // Skip already-absolute URLs (http/https/data/api)
-    if (/^(https?:|data:|\/api\/)/.test(src)) return full;
-    // Normalize: backslash → forward slash, strip leading ./
-    let imgPath = src.replace(/\\/g, "/").replace(/^\.?\/?/, "");
-    // If it's an absolute Windows path (C:/Users/...), pass as-is
-    const ext = (imgPath.split(".").pop() || "").toLowerCase();
-    const isImg = /^(png|jpg|jpeg|gif|webp|svg|bmp|ico)$/i.test(ext);
-    if (!isImg) return full;
-    const apiUrl = "/api/file?path=" + encodeURIComponent(imgPath) + "&raw=1";
-    return `<img src="${apiUrl}" loading="lazy" onclick="showImageOverlay(this.src)" class="msg-inline-img"`;
-  });
-
-  return html;
 
 }
 

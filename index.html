@@ -45,8 +45,8 @@
             </button>
             <div class="cwd-dropdown-menu hidden" id="cwdDropdown">
               <div class="cwd-dropdown-section" id="cwdRecentFolders"></div>
-              <button class="cwd-dropdown-item" onclick="cwdPickFolderAction()" data-i18n="chooseFolder">📂 选择文件夹...</button>
-              <button class="cwd-dropdown-item" id="cwdHomeBtn" onclick="cwdUseHomeFolder()">🏠 ~</button>
+              <button class="cwd-dropdown-item" id="cwdPickFolderBtn" type="button" data-i18n="chooseFolder">📂 选择文件夹...</button>
+              <button class="cwd-dropdown-item" id="cwdHomeBtn" type="button">🏠 ~</button>
             </div>
           </div>
         </div>
@@ -460,6 +460,7 @@
   <script src="./src/core/i18n.js"></script>
   <script src="./src/services/notifications.js"></script>
   <script src="./src/services/api-client.js"></script>
+  <script src="./src/features/files.js"></script>
   <script src="./agent-runtime.js"></script>
   <script src="./app.js"></script>
 </body>

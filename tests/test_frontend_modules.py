@@ -11,6 +11,7 @@ APP_SOURCE = (ROOT / "app.js").read_text(encoding="utf-8")
 RUNTIME_SOURCE = (ROOT / "agent-runtime.js").read_text(encoding="utf-8")
 I18N_SOURCE = (ROOT / "src" / "core" / "i18n.js").read_text(encoding="utf-8")
 API_CLIENT_SOURCE = (ROOT / "src" / "services" / "api-client.js").read_text(encoding="utf-8")
+FILES_SOURCE = (ROOT / "src" / "features" / "files.js").read_text(encoding="utf-8")
 INDEX_SOURCE = (ROOT / "index.html").read_text(encoding="utf-8")
 BUILD_SOURCE = (ROOT / "build_exe.py").read_text(encoding="utf-8")
 STYLE_SOURCE = (ROOT / "styles.css").read_text(encoding="utf-8")
@@ -246,6 +247,7 @@ eval(source);
             "src/core/i18n.js",
             "src/services/notifications.js",
             "src/services/api-client.js",
+            "src/features/files.js",
         ):
             self.assertTrue((ROOT / relative_path).is_file(), relative_path)
 
@@ -257,6 +259,7 @@ eval(source);
             "./src/core/i18n.js",
             "./src/services/notifications.js",
             "./src/services/api-client.js",
+            "./src/features/files.js",
             "./agent-runtime.js",
             "./app.js",
         )
@@ -389,12 +392,88 @@ const {apiJson} = window.Code.services.apiClient;
             {"Content-Type": "application/json", "X-Trace": "trace-1"},
         )
 
+    def test_files_feature_exports_sorting_paths_and_attachment_flow(self):
+        self.assertIn("features.files = Object.freeze", FILES_SOURCE)
+        script = """
+global.window = {
+  Code: {features: {}},
+  btoa: (binary) => Buffer.from(binary, "binary").toString("base64"),
+};
+require("./src/features/files.js");
+const {shortPath, sortFileItems, createFilesFeature} = window.Code.features.files;
+const items = [
+  {name: "z-dir", path: "z-dir", type: "dir", updatedAt: "2026-01-01"},
+  {name: "b.ts", path: "b.ts", type: "file", updatedAt: "2026-01-03"},
+  {name: "a.js", path: "a.js", type: "file", updatedAt: "2026-01-02"},
+  {name: "a-dir", path: "a-dir", type: "dir", updatedAt: "2026-01-04"},
+];
+const calls = [];
+const inserted = [];
+const elements = {
+  filePicker: {value: "old", clicked: false, click() { this.clicked = true; }},
+  attachFile: {disabled: false},
+};
+const feature = createFilesFeature({
+  state: {},
+  elements,
+  t: (key) => key,
+  escapeHtml: (value) => String(value),
+  apiJson: async (url, options) => {
+    calls.push({url, options});
+    return {path: "attachments/demo.txt"};
+  },
+  insertPromptText: (value) => inserted.push(value),
+});
+(async () => {
+  feature.pickProjectFile();
+  await feature.resolvePickedFile({
+    name: "demo.txt",
+    arrayBuffer: async () => Uint8Array.from([104, 105]).buffer,
+  });
+  process.stdout.write(JSON.stringify({
+    short: shortPath("C:/Users/Admin/project"),
+    defaultOrder: sortFileItems(items).map((item) => item.path),
+    typeOrder: sortFileItems(items, "type", true).map((item) => item.path),
+    timeOrder: sortFileItems(items, "time", true).map((item) => item.path),
+    pickerCleared: elements.filePicker.value,
+    pickerClicked: elements.filePicker.clicked,
+    attachDisabled: elements.attachFile.disabled,
+    inserted,
+    calls,
+  }));
+})().catch((error) => { console.error(error); process.exit(1); });
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertEqual(data["short"], "~\\Admin\\project")
+        self.assertEqual(data["defaultOrder"], ["a-dir", "z-dir", "a.js", "b.ts"])
+        self.assertEqual(data["typeOrder"], ["a-dir", "z-dir", "a.js", "b.ts"])
+        self.assertEqual(data["timeOrder"], ["a-dir", "b.ts", "a.js", "z-dir"])
+        self.assertEqual(data["pickerCleared"], "")
+        self.assertTrue(data["pickerClicked"])
+        self.assertFalse(data["attachDisabled"])
+        self.assertEqual(data["inserted"], ["attachments/demo.txt"])
+        self.assertEqual(data["calls"][0]["url"], "/api/attachments")
+        self.assertEqual(data["calls"][0]["options"]["method"], "POST")
+        self.assertEqual(
+            json.loads(data["calls"][0]["options"]["body"]),
+            {"name": "demo.txt", "contentBase64": "aGk="},
+        )
+
     def test_app_uses_extracted_modules_without_duplicate_definitions(self):
         self.assertIn("const { uiIcon } = window.Code.core.icons", APP_SOURCE)
         self.assertIn("} = window.Code.core.utils", APP_SOURCE)
         self.assertIn("const { createI18nRuntime } = window.Code.core.i18n", APP_SOURCE)
         self.assertIn("const { t, setLang, applyI18n } = createI18nRuntime", APP_SOURCE)
         self.assertIn("const { apiJson } = window.Code.services.apiClient", APP_SOURCE)
+        self.assertIn("const { createFilesFeature, shortPath } = window.Code.features.files", APP_SOURCE)
+        self.assertIn("const filesFeature = createFilesFeature", APP_SOURCE)
         self.assertIn(
             "const { showToast, notify: _notify } = window.Code.services.notifications",
             APP_SOURCE,
@@ -413,6 +492,18 @@ const {apiJson} = window.Code.services.apiClient;
             "function setLang(",
             "function applyI18n(",
             "async function apiJson(",
+            "function shortPath(",
+            "function arrayBufferToBase64(",
+            "async function uploadAttachment(",
+            "async function pickProjectFile(",
+            "async function resolvePickedFile(",
+            "function showFileContextMenu(",
+            "function renderFileTree(",
+            "async function loadFiles(",
+            "function goUpDir(",
+            "function toggleCwdDropdown(",
+            "function renderRecentFolders(",
+            "function addRecentFolder(",
             "function showToast(",
             "function _notify(",
         ):
@@ -420,6 +511,8 @@ const {apiJson} = window.Code.services.apiClient;
 
         # Preserve the current duplicate formatSize behavior until its own cleanup.
         self.assertEqual(APP_SOURCE.count("function formatSize("), 2)
+        self.assertNotIn('onclick="cwdPickFolderAction()"', INDEX_SOURCE)
+        self.assertNotIn('onclick="cwdUseHomeFolder()"', INDEX_SOURCE)
 
     def test_packaged_exe_includes_runtime_and_module_tree(self):
         self.assertIn("APP_DIR / 'agent-runtime.js'", BUILD_SOURCE)

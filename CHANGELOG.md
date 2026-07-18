@@ -14,6 +14,20 @@
 
 ---
 
+## 2026-07-18 20:53 · Codex
+
+### 抽离文件树与普通附件模块，进入前端拆分阶段 2
+
+- **产品功能独立**：新增 `src/features/files.js`，集中承接文件列表加载、搜索、排序、目录导航、右键菜单、项目目录选择、最近目录、新建文件夹和普通文件附件上传，并通过 `window.Code.features.files` 暴露稳定入口。
+- **职责边界明确**：`app.js` 改为创建并装配文件功能实例，只保留预览实现、图片附件处理以及消息编辑等其他领域逻辑；文件打开统一通过注入的 `openFile` 回调进入现有预览流程，避免本阶段同时改变预览行为。
+- **事件入口收口**：移除项目目录按钮的内联事件和 `app.js` 中重复的文件事件绑定，改由文件模块一次性绑定；`index.html` 在应用脚本前按依赖顺序加载新模块。
+- **回归保护**：补充模块导出、路径缩写、文件排序、附件上传、路径插入、脚本加载顺序、旧实现禁入和内联事件禁入测试。
+- **验证结果**：`src/features/files.js` 与 `app.js` JavaScript 语法、`git diff --check` 通过；定向回归 `80 passed, 6 subtests passed`，全量回归 `551 passed, 25 subtests passed`。人工确认文件树、目录导航、搜索排序、右键菜单、项目目录、新建文件夹、文件预览及普通附件路径插入均正常。
+
+**涉及文件**：`src/features/files.js`、`app.js`、`index.html`、`tests/test_frontend_modules.py`、`docs/APP_JS_SPLIT_PLAN.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 20:33 · Codex
 
 ### 抽离通用 API 客户端，完成前端拆分阶段 1

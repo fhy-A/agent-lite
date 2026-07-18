@@ -194,6 +194,13 @@ code/
 
 ### 阶段 2：抽离独立产品功能
 
+#### 当前进度
+
+- [x] 抽离文件列表加载、搜索、排序、目录导航、右键菜单、项目目录管理、新建文件夹和普通文件附件到 `src/features/files.js`；预览继续由原所有者实现，文件模块只通过公开回调请求打开文件。
+- [ ] 抽离图片、Markdown、PDF、CSV/TSV、代码和大文件预览到 `src/features/preview.js`。
+- [ ] 抽离 Skill 与 Memory 管理到 `src/features/skills-memory.js`。
+- [ ] 抽离设置、更新和认证到 `src/features/settings.js`。
+
 #### 拆分内容
 
 - 文件树与附件：`files.js`

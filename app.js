@@ -9,6 +9,7 @@ const {
 const { createI18nRuntime } = window.Code.core.i18n;
 const { showToast, notify: _notify } = window.Code.services.notifications;
 const { apiJson } = window.Code.services.apiClient;
+const { createFilesFeature, shortPath } = window.Code.features.files;
 
 function upgradeStaticIcons() {
   const iconOnly = (id, name) => {
@@ -747,6 +748,20 @@ const els = {
   userInputPanel: document.getElementById("userInputPanel"),
 
 };
+
+const filesFeature = createFilesFeature({
+  state,
+  elements: els,
+  t,
+  escapeHtml,
+  apiJson,
+  showToast,
+  openFile: loadFile,
+  insertPromptText,
+  saveProjectRoot,
+});
+const { loadFiles, renderFileTree, addRecentFolder } = filesFeature;
+filesFeature.bind();
 
 
 
@@ -5887,20 +5902,6 @@ async function saveCurrentSession() {
 
 
 
-function shortPath(path = "") {
-
-  const normalized = path.replaceAll("/", "\\");
-
-  const parts = normalized.split("\\").filter(Boolean);
-
-  if (parts.length <= 2) return normalized || "~";
-
-  return `~\\${parts.slice(-2).join("\\")}`;
-
-}
-
-
-
 async function loadConfig() {
 
   const config = await apiJson("/api/config");
@@ -6568,258 +6569,6 @@ function insertPromptText(text) {
   resolveAtImages();
 
   updateSendButtonState();
-
-}
-
-
-
-function arrayBufferToBase64(buffer) {
-
-  const bytes = new Uint8Array(buffer);
-
-  const chunkSize = 0x8000;
-
-  let binary = "";
-
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-
-    binary += String.fromCharCode.apply(null, bytes.subarray(index, index + chunkSize));
-
-  }
-
-  return btoa(binary);
-
-}
-
-
-
-async function uploadAttachment(file) {
-
-  const contentBase64 = arrayBufferToBase64(await file.arrayBuffer());
-
-  return apiJson("/api/attachments", {
-
-    method: "POST",
-
-    body: JSON.stringify({
-
-      name: file.name,
-
-      contentBase64,
-
-    }),
-
-  });
-
-}
-
-
-
-async function pickProjectFile() {
-
-  if (!els.filePicker) return;
-
-  els.filePicker.value = "";
-
-  els.filePicker.click();
-
-}
-
-
-
-async function resolvePickedFile(file) {
-
-  if (!file) return;
-
-  if (els.attachFile) els.attachFile.disabled = true;
-
-  try {
-
-    const data = await uploadAttachment(file);
-
-    insertPromptText(data.path);
-
-  } catch (err) {
-
-    const message = err.message || t("chooseFileFailed");
-
-    showToast(message, "error");
-
-  } finally {
-
-    if (els.attachFile) els.attachFile.disabled = false;
-
-  }
-
-}
-
-
-
-let _fileCtxMenu = null;
-function showFileContextMenu(x, y, path, type) {
-  if (_fileCtxMenu) _fileCtxMenu.remove();
-  const menu = document.createElement("div");
-  menu.className = "file-ctx-menu";
-  // Position within viewport
-  const mw = 180, mh = 130;
-  menu.style.left = Math.min(x, window.innerWidth - mw) + "px";
-  menu.style.top = Math.min(y, window.innerHeight - mh) + "px";
-  const fname = (path || "").split("/").pop() || "";
-  if (type === "file") {
-    menu.innerHTML = `<div class="file-ctx-name">${escapeHtml(fname)}</div>
-      <button data-action="open">${t("openDefaultApp")}</button>
-      <button data-action="copy-path">${t("copyPath")}</button>
-      <button data-action="reveal">${t("revealInFolder")}</button>`;
-  } else {
-    menu.innerHTML = `<div class="file-ctx-name">${escapeHtml(fname)}</div>
-      <button data-action="explore">${t("openExplorer")}</button>
-      <button data-action="copy-path">${t("copyPath")}</button>
-      <button data-action="terminal">${t("openTerminal")}</button>`;
-  }
-  menu.querySelectorAll("button").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const action = btn.dataset.action;
-      if (action === "open") {
-        fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) }).catch(() => showToast(t("openFailed"), "error"));
-      } else if (action === "copy-path") {
-        const root = (els.projectRoot?.value || "").replace(/[\\/]+$/, "");
-        const fullPath = root ? `${root}/${path}`.replace(/\\/g, "/") : path;
-        navigator.clipboard.writeText(fullPath).then(() => showToast(t("pathCopied"), "warning")).catch(() => showToast(t("copyFailed"), "error"));
-      } else if (action === "reveal") {
-        fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, reveal: true }) }).catch(() => showToast(t("openFailed"), "error"));
-      } else if (action === "explore") {
-        fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) }).catch(() => showToast(t("openFailed"), "error"));
-      } else if (action === "terminal") {
-        fetch("/api/open-file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, terminal: true }) }).catch(() => showToast(t("openFailed"), "error"));
-      }
-      menu.remove();
-    });
-  });
-  document.body.appendChild(menu);
-  _fileCtxMenu = menu;
-  const close = (e) => { if (!menu.contains(e.target)) { menu.remove(); _fileCtxMenu = null; document.removeEventListener("click", close); } };
-  setTimeout(() => document.addEventListener("click", close), 0);
-}
-
-function renderFileTree() {
-
-  if (state._noProject) {
-
-    els.fileTree.innerHTML = `<div class="muted-line" style="padding:12px;">${t("noProjectDir")}</div>`;
-
-    els.goUp.disabled = true;
-
-    els.newFolderBtn.disabled = true;
-
-    els.refreshFiles.disabled = true;
-
-    return;
-
-  }
-
-  els.goUp.disabled = false;
-
-  els.newFolderBtn.disabled = false;
-
-  els.refreshFiles.disabled = false;
-
-  const query = els.fileSearch.value.trim().toLowerCase();
-
-  const items = state._fileItems || [];
-
-  const filtered = query ? items.filter((item) => item.name.toLowerCase().includes(query)) : items;
-
-  // Sort
-  const sortMode = state._fileSortMode || "default";
-  const asc = state._fileSortAsc !== false;
-  if (els.fileSortBtn) {
-    const labels = { default: t("sortDefault"), type: t("sortType"), time: t("sortTime") };
-    document.getElementById("fileSortLabel").textContent = labels[sortMode] || t("sortType");
-    document.getElementById("fileSortArrow").textContent = asc ? "↑" : "↓";
-  }
-  const sorted = [...filtered];
-  if (sortMode === "type") {
-    sorted.sort((a, b) => {
-      if (a.type !== b.type) return (a.type === "dir" ? -1 : 1) * (asc ? 1 : -1);
-      const extA = (a.name.split(".").pop() || "").toLowerCase();
-      const extB = (b.name.split(".").pop() || "").toLowerCase();
-      if (extA !== extB) return extA.localeCompare(extB) * (asc ? 1 : -1);
-      return a.name.localeCompare(b.name) * (asc ? 1 : -1);
-    });
-  } else if (sortMode === "time") {
-    sorted.sort((a, b) => ((new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0)) * (asc ? 1 : -1)));
-  } else {
-    sorted.sort((a, b) => { if (a.type !== b.type) return (a.type === "dir" ? -1 : 1) * (asc ? 1 : -1); return a.name.localeCompare(b.name) * (asc ? 1 : -1); });
-  }
-
-  const htmlParts = sorted.length
-    ? sorted.map((item) => {
-        const ext = item.type === "dir" ? "" : ((item.name || "").split(".").pop() || "").toLowerCase().slice(0, 6);
-        const extClass = ext ? ` ext-${ext}` : "";
-        return `<div class="file-item-row ${item.path === state.previewPath ? "active" : ""}">
-          <button class="file-item ${item.type}${extClass}" type="button" data-path="${escapeHtml(item.path)}" data-type="${item.type}">
-            <span class="file-name">${item.type === "dir" ? "📁 " : ""}${escapeHtml(item.name)}</span>
-            <small>${item.updatedAt ? item.updatedAt.slice(0,10) : ""}</small>
-          </button>
-          <button class="file-at-btn" type="button" data-path="${escapeHtml(item.path)}" title="${t("fileAtTitle")}">@</button>
-        </div>`;
-      }).join("")
-    : `<div class="muted-line" style="padding:8px;">${query ? t("noMatchingFiles") : t("emptyDirectory")}</div>`;
-  els.fileTree.innerHTML = htmlParts;
-
-
-
-  document.querySelectorAll(".file-item").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      if (btn.dataset.type === "dir") {
-        loadFiles(btn.dataset.path);
-      } else {
-        loadFile(btn.dataset.path);
-      }
-    });
-    btn.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      showFileContextMenu(e.clientX, e.clientY, btn.dataset.path, btn.dataset.type);
-    });
-  });
-
-
-
-  document.querySelectorAll(".file-at-btn").forEach((btn) => {
-
-    btn.addEventListener("click", (e) => {
-
-      e.stopPropagation();
-
-      const path = btn.dataset.path;
-
-      insertPromptText(`@${path} `);
-
-    });
-
-  });
-
-}
-
-
-
-async function loadFiles(path = state.currentDir) {
-
-  const data = await apiJson(`/api/files?path=${encodeURIComponent(path || "")}`);
-
-  state.currentDir = data.path || "";
-
-  els.filePathBar.textContent = state.currentDir ? `/${state.currentDir}` : "/";
-
-  els.cwdPathText.textContent = shortPath(data.root || "");
-
-  els.fileSearch.value = "";
-
-  state._fileItems = data.items || [];
-
-  els.goUp.disabled = !state.currentDir;
-
-  renderFileTree();
 
 }
 
@@ -11613,20 +11362,6 @@ function exportMarkdown() {
 
 
 
-function goUpDir() {
-
-  if (!state.currentDir) return;
-
-  const parts = state.currentDir.split("/").filter(Boolean);
-
-  parts.pop();
-
-  loadFiles(parts.join("/"));
-
-}
-
-
-
 function showSettings(open = true) {
 
   els.settingsModal.classList.toggle("hidden", !open);
@@ -12015,17 +11750,7 @@ els.sendBtn.addEventListener("click", (event) => {
 
 
 
-els.attachFile.addEventListener("click", pickProjectFile);
-
 els.refreshModelsBtn.addEventListener("click", refreshModels);
-
-els.filePicker.addEventListener("change", () => {
-
-  const file = els.filePicker.files?.[0];
-
-  resolvePickedFile(file);
-
-});
 
 function getEffectiveMaxTokens(model) {
 
@@ -12200,265 +11925,6 @@ els.resetSystemPrompt.addEventListener("click", () => {
   saveSystemPrompt();
 
 });
-
-// saveProjectRoot now called with path parameter from pickFolder / recent items
-
-
-
-// Project directory dropdown
-
-const cwdDropdown = document.getElementById("cwdDropdown");
-
-const cwdRecent = document.getElementById("cwdRecentFolders");
-
-
-
-function toggleCwdDropdown() {
-
-  const open = !cwdDropdown.classList.contains("hidden");
-
-  if (open) { cwdDropdown.classList.add("hidden"); return; }
-
-
-
-  renderRecentFolders();
-
-  const rect = els.projectRootShort.getBoundingClientRect();
-
-  const spaceBelow = window.innerHeight - rect.bottom;
-
-
-
-  // Position relative to button
-
-  cwdDropdown.style.position = "fixed";
-
-  cwdDropdown.style.left = rect.left + "px";
-
-  cwdDropdown.style.right = "auto";
-
-  cwdDropdown.style.width = rect.width + "px";
-
-  cwdDropdown.style.margin = "4px 0 0 0";
-
-
-
-  if (spaceBelow < 200) {
-
-    cwdDropdown.style.top = "auto";
-
-    cwdDropdown.style.bottom = (window.innerHeight - rect.top + 4) + "px";
-
-  } else {
-
-    cwdDropdown.style.top = rect.bottom + "px";
-
-    cwdDropdown.style.bottom = "auto";
-
-  }
-
-  cwdDropdown.classList.remove("hidden");
-
-}
-
-
-
-function renderRecentFolders() {
-
-  const recents = JSON.parse(localStorage.getItem("code-recent-folders") || "[]");
-
-  if (recents.length === 0) {
-
-    cwdRecent.innerHTML = "";
-
-    cwdRecent.style.display = "none";
-
-    return;
-
-  }
-
-  cwdRecent.style.display = "block";
-
-  cwdRecent.innerHTML = `<div class="cwd-dropdown-label">${t("recentLabel")}</div>` +
-
-    recents.slice(0, 5).map((p) =>
-
-      `<button class="cwd-dropdown-item cwd-recent-item" data-path="${escapeHtml(p)}">${escapeHtml(shortPath(p))}</button>`
-
-    ).join("");
-
-  cwdRecent.querySelectorAll(".cwd-recent-item").forEach((btn) => {
-
-    btn.addEventListener("click", async () => {
-      const p = btn.dataset.path;
-      cwdDropdown.classList.add("hidden");
-      try {
-        await saveProjectRoot(p);
-      } catch (err) {
-        // If the path no longer exists, auto-remove it from recents
-        const msg = String(err.message || err);
-        if (/目录不存在|不是文件夹|not exist|not a directory/i.test(msg)) {
-          removeRecentFolder(p);
-          renderRecentFolders();
-        }
-        showToast(err.message || String(err), "error");
-      }
-    });
-
-  });
-
-}
-
-
-
-function addRecentFolder(p) {
-
-  if (!p) return;
-
-  const recents = JSON.parse(localStorage.getItem("code-recent-folders") || "[]");
-
-  const filtered = recents.filter((r) => r !== p);
-
-  filtered.unshift(p);
-
-  localStorage.setItem("code-recent-folders", JSON.stringify(filtered.slice(0, 8)));
-
-}
-
-function removeRecentFolder(p) {
-
-  if (!p) return;
-
-  const recents = JSON.parse(localStorage.getItem("code-recent-folders") || "[]");
-
-  localStorage.setItem("code-recent-folders", JSON.stringify(recents.filter((r) => r !== p)));
-
-}
-
-
-
-async function pickFolder() {
-
-  try {
-
-    const data = await apiJson("/api/pick-folder");
-
-    if (data.cancelled) return;
-
-    await saveProjectRoot(data.path);
-
-  } catch (err) { showToast(err.message, "error"); }
-
-}
-
-
-
-els.projectRootShort.addEventListener("click", toggleCwdDropdown);
-
-
-
-function cwdPickFolderAction() { cwdDropdown.classList.add("hidden"); pickFolder(); }
-
-function cwdNewFolderAction() { document.getElementById("newFolderModal").classList.remove("hidden"); document.getElementById("newFolderName").value = ""; document.getElementById("newFolderName").focus(); }
-
-function cwdUseHomeFolder() {
-
-  cwdDropdown.classList.add("hidden");
-
-  saveProjectRoot("");
-
-}
-
-document.addEventListener("click", (e) => {
-
-  if (!e.target.closest(".cwd-dropdown") && !e.target.closest("#projectRootShort")) {
-
-    cwdDropdown.classList.add("hidden");
-
-  }
-
-});
-
-document.getElementById("closeNewFolder").addEventListener("click", hideNewFolder);
-
-document.getElementById("cancelNewFolder").addEventListener("click", hideNewFolder);
-
-document.getElementById("newFolderModal").addEventListener("click", (e) => {
-
-  if (e.target === e.currentTarget) hideNewFolder();
-
-});
-
-document.getElementById("confirmNewFolder").addEventListener("click", async () => {
-
-  const input = document.getElementById("newFolderName");
-
-  const name = input.value.trim();
-
-  if (!name) return;
-
-  try {
-
-    await apiJson("/api/mkdir", {
-
-      method: "POST",
-
-      body: JSON.stringify({ name, parent: state.currentDir }),
-
-    });
-
-    hideNewFolder();
-
-    await loadFiles(state.currentDir);
-
-  } catch (err) { showToast(err.message, "error"); }
-
-});
-
-document.getElementById("newFolderName").addEventListener("keydown", (e) => {
-
-  if (e.key === "Enter") document.getElementById("confirmNewFolder").click();
-
-  if (e.key === "Escape") hideNewFolder();
-
-});
-
-
-
-function hideNewFolder() {
-
-  document.getElementById("newFolderModal").classList.add("hidden");
-
-}
-
-els.refreshFiles.addEventListener("click", (e) => { e.stopPropagation(); loadFiles().catch((err) => showToast(err.message, "error")); });
-
-els.newFolderBtn.addEventListener("click", (e) => { e.stopPropagation(); cwdNewFolderAction(); });
-
-els.fileSearch.addEventListener("input", () => renderFileTree());
-// Sort button: left click toggles direction, right click cycles mode. Persisted.
-state._fileSortMode = localStorage.getItem("code-sort-mode") || "default";
-state._fileSortAsc = localStorage.getItem("code-sort-asc") !== "false";
-if (els.fileSortBtn) {
-  els.fileSortBtn.addEventListener("click", () => {
-    state._fileSortAsc = !state._fileSortAsc;
-    localStorage.setItem("code-sort-asc", state._fileSortAsc);
-    renderFileTree();
-  });
-  els.fileSortBtn.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    const modes = ["type", "time", "default"];
-    const cur = state._fileSortMode || "type";
-    const idx = modes.indexOf(cur);
-    state._fileSortMode = modes[(idx + 1) % 3];
-    state._fileSortAsc = true;
-    localStorage.setItem("code-sort-mode", state._fileSortMode);
-    localStorage.setItem("code-sort-asc", "true");
-    renderFileTree();
-  });
-}
-
-els.goUp.addEventListener("click", (e) => { e.stopPropagation(); goUpDir(); });
 
 els.refreshPreview.addEventListener("click", () => {
 

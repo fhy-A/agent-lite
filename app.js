@@ -2765,6 +2765,8 @@ const welcomeMotion = {
   root: null,
   timers: [],
   travelAnimation: null,
+  sloganAnimation: null,
+  handoffAnimations: [],
   inputIntentHandler: null,
 };
 
@@ -2781,8 +2783,16 @@ function clearWelcomeMotionRuntime() {
   welcomeMotion.timers = [];
   welcomeMotion.travelAnimation?.cancel();
   welcomeMotion.travelAnimation = null;
+  welcomeMotion.sloganAnimation?.cancel();
+  welcomeMotion.sloganAnimation = null;
+  welcomeMotion.handoffAnimations.forEach((animation) => animation.cancel());
+  welcomeMotion.handoffAnimations = [];
   detachWelcomeInputIntent();
   els.chatForm.classList.remove("welcome-caret-handoff");
+  els.chatForm.classList.remove("welcome-caret-landed");
+  welcomeMotion.root?.querySelectorAll(
+    ".welcome-handoff-trace, .welcome-handoff-beam, .welcome-handoff-signal, .welcome-handoff-mark",
+  ).forEach((node) => node.remove());
   welcomeMotion.root = null;
 }
 
@@ -2806,12 +2816,7 @@ function finishWelcomeMotion(root, { focusPrompt = false } = {}) {
   const travelCaret = root.querySelector(".welcome-travel-caret");
   if (travelCaret) travelCaret.removeAttribute("style");
 
-  const activeElement = document.activeElement;
-  const canMoveFocus = !activeElement
-    || activeElement === document.body
-    || activeElement === document.documentElement
-    || activeElement === els.prompt;
-  if (focusPrompt && canMoveFocus && !els.prompt.disabled) {
+  if (focusPrompt && !els.prompt.disabled) {
     els.prompt.focus({ preventScroll: true });
     els.prompt.setSelectionRange(els.prompt.value.length, els.prompt.value.length);
   }
@@ -2823,6 +2828,214 @@ function welcomeBezierPoint(t, start, controlA, controlB, end) {
     + 3 * inverse ** 2 * t * controlA
     + 3 * inverse * t ** 2 * controlB
     + t ** 3 * end;
+}
+
+const WELCOME_HANDOFF_VARIANTS = [
+  { id: "return", weight: 30 },
+  { id: "wrap", weight: 30 },
+  { id: "relay", weight: 20 },
+  { id: "packet", weight: 15 },
+  { id: "jump", weight: 5 },
+];
+
+function selectWelcomeHandoffVariant() {
+  let previous = "";
+  try {
+    previous = sessionStorage.getItem("code.welcomeHandoff") || "";
+  } catch {}
+  const eligible = WELCOME_HANDOFF_VARIANTS.filter(({ id }) => id !== previous);
+  const choices = eligible.length ? eligible : WELCOME_HANDOFF_VARIANTS;
+  const totalWeight = choices.reduce((total, variant) => total + variant.weight, 0);
+  let roll = Math.random() * totalWeight;
+  const selected = choices.find((variant) => {
+    roll -= variant.weight;
+    return roll < 0;
+  }) || choices[choices.length - 1];
+  try {
+    sessionStorage.setItem("code.welcomeHandoff", selected.id);
+  } catch {}
+  return selected.id;
+}
+
+function trackWelcomeHandoffAnimation(animation) {
+  welcomeMotion.handoffAnimations.push(animation);
+  return animation;
+}
+
+function animateWelcomeHandoff(element, frames, options) {
+  const animation = trackWelcomeHandoffAnimation(element.animate(frames, options));
+  return animation.finished.then(() => true).catch(() => false);
+}
+
+function welcomeCaretTransform(x, y, scaleY, extra = "") {
+  return `translate(${x}px, ${y}px) scaleY(${scaleY})${extra}`;
+}
+
+function appendWelcomeHandoffNode(root, className) {
+  const node = document.createElement("span");
+  node.className = className;
+  node.setAttribute("aria-hidden", "true");
+  root.appendChild(node);
+  return node;
+}
+
+function addWelcomeHandoffSegment(root, from, to, delay = 0) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = Math.hypot(dx, dy);
+  const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+  const segment = appendWelcomeHandoffNode(root, "welcome-handoff-trace");
+  segment.style.left = `${from.x}px`;
+  segment.style.top = `${from.y}px`;
+  segment.style.width = `${length}px`;
+  trackWelcomeHandoffAnimation(segment.animate([
+    { opacity: 0, transform: `rotate(${angle}deg) scaleX(0)` },
+    { opacity: .74, transform: `rotate(${angle}deg) scaleX(1)`, offset: .34 },
+    { opacity: 0, transform: `rotate(${angle}deg) scaleX(1)` },
+  ], { duration: 600, delay, easing: "ease-out", fill: "forwards" }));
+}
+
+function finishWelcomeHandoff(root, context) {
+  if (!root?.isConnected || welcomeMotion.root !== root) return;
+  const { travelCaret, inputEnd, inputScale } = context;
+  welcomeMotion.handoffAnimations.forEach((animation) => animation.cancel());
+  welcomeMotion.handoffAnimations = [];
+  travelCaret.style.opacity = "1";
+  travelCaret.style.transform = welcomeCaretTransform(inputEnd.x, inputEnd.y, inputScale);
+  travelCaret.classList.add("is-landed");
+  detachWelcomeInputIntent();
+  if (!els.prompt.disabled) {
+    els.prompt.focus({ preventScroll: true });
+    els.prompt.setSelectionRange(els.prompt.value.length, els.prompt.value.length);
+  }
+  els.chatForm.classList.add("welcome-caret-landed");
+  scheduleWelcomeMotion(() => finishWelcomeMotion(root, { focusPrompt: true }), 320);
+}
+
+function playWelcomeHardReturn(root, context) {
+  const { travelCaret, sloganEnd, inputEnd, sloganScale, inputScale, basePoint } = context;
+  const p1 = { x: sloganEnd.x + 24, y: sloganEnd.y };
+  const p2 = { x: p1.x, y: inputEnd.y - 25 };
+  const p3 = { x: inputEnd.x, y: inputEnd.y - 25 };
+  const path = [sloganEnd, p1, p2, p3, inputEnd];
+  path.slice(0, -1).forEach((point, index) => {
+    const next = path[index + 1];
+    addWelcomeHandoffSegment(root, {
+      x: basePoint.x + point.x + 1,
+      y: basePoint.y + point.y + 12,
+    }, {
+      x: basePoint.x + next.x + 1,
+      y: basePoint.y + next.y + (index === path.length - 2 ? 10 : 12),
+    }, index * 42);
+  });
+  return animateWelcomeHandoff(travelCaret, [
+    { offset: 0, opacity: 1, transform: welcomeCaretTransform(sloganEnd.x, sloganEnd.y, sloganScale) },
+    { offset: .16, opacity: 1, transform: welcomeCaretTransform(p1.x, p1.y, sloganScale) },
+    { offset: .48, opacity: 1, transform: welcomeCaretTransform(p2.x, p2.y, sloganScale) },
+    { offset: .84, opacity: 1, transform: welcomeCaretTransform(p3.x, p3.y, inputScale) },
+    { offset: 1, opacity: 1, transform: welcomeCaretTransform(inputEnd.x, inputEnd.y, inputScale) },
+  ], { duration: 680, easing: "linear", fill: "forwards" });
+}
+
+function playWelcomeSoftWrap(_root, context) {
+  const { travelCaret, sloganEnd, inputEnd, sloganScale, inputScale } = context;
+  const tx = inputEnd.x - sloganEnd.x;
+  const ty = inputEnd.y - sloganEnd.y;
+  return animateWelcomeHandoff(travelCaret, [
+    { offset: 0, opacity: 1, transform: welcomeCaretTransform(sloganEnd.x, sloganEnd.y, sloganScale) },
+    { offset: .28, opacity: 1, transform: welcomeCaretTransform(sloganEnd.x + tx * .22, sloganEnd.y + ty * .08 - 16, sloganScale, " rotate(2deg)") },
+    { offset: .62, opacity: 1, transform: welcomeCaretTransform(sloganEnd.x + tx * .7, sloganEnd.y + ty * .46 - 12, (sloganScale + inputScale) / 2, " rotate(-2deg)") },
+    { offset: .9, opacity: 1, transform: welcomeCaretTransform(sloganEnd.x + tx * .96, sloganEnd.y + ty * .92, inputScale) },
+    { offset: 1, opacity: 1, transform: welcomeCaretTransform(inputEnd.x, inputEnd.y, inputScale) },
+  ], { duration: 650, easing: "cubic-bezier(.38,.04,.18,1)", fill: "forwards" });
+}
+
+function playWelcomeSignalRelay(root, context) {
+  const { travelCaret, sloganEnd, inputEnd, sloganScale, basePoint } = context;
+  const source = { x: basePoint.x + sloganEnd.x + 1, y: basePoint.y + sloganEnd.y + 12 };
+  const target = { x: basePoint.x + inputEnd.x + 1, y: basePoint.y + inputEnd.y + 10 };
+  const dx = target.x - source.x;
+  const dy = target.y - source.y;
+  const length = Math.hypot(dx, dy);
+  const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+  const beam = appendWelcomeHandoffNode(root, "welcome-handoff-beam");
+  beam.style.left = `${source.x}px`;
+  beam.style.top = `${source.y}px`;
+  beam.style.width = `${length}px`;
+  const signal = appendWelcomeHandoffNode(root, "welcome-handoff-signal");
+  signal.style.left = `${source.x - 3}px`;
+  signal.style.top = `${source.y - 3}px`;
+  const caretPulse = animateWelcomeHandoff(travelCaret, [
+    { opacity: 1, transform: welcomeCaretTransform(sloganEnd.x, sloganEnd.y, sloganScale) },
+    { opacity: 1, transform: welcomeCaretTransform(sloganEnd.x, sloganEnd.y, sloganScale * 1.35), offset: .35 },
+    { opacity: 0, transform: welcomeCaretTransform(sloganEnd.x, sloganEnd.y, sloganScale * .2) },
+  ], { duration: 260, fill: "forwards" });
+  const beamPulse = animateWelcomeHandoff(beam, [
+    { opacity: 0, transform: `rotate(${angle}deg) scaleX(0)` },
+    { opacity: .9, transform: `rotate(${angle}deg) scaleX(1)`, offset: .42 },
+    { opacity: 0, transform: `rotate(${angle}deg) scaleX(1)` },
+  ], { duration: 570, easing: "ease-out", fill: "forwards" });
+  const signalMove = animateWelcomeHandoff(signal, [
+    { opacity: 0, transform: "translate(0, 0) scale(.5)" },
+    { opacity: 1, transform: "translate(0, 0) scale(1)", offset: .12 },
+    { opacity: 1, transform: `translate(${dx}px, ${dy}px) scale(1)`, offset: .78 },
+    { opacity: 0, transform: `translate(${dx}px, ${dy}px) scale(.4)` },
+  ], { duration: 570, easing: "cubic-bezier(.3,0,.2,1)", fill: "forwards" });
+  return Promise.all([caretPulse, beamPulse, signalMove]).then((results) => results.every(Boolean));
+}
+
+function playWelcomeCommandPacket(_root, context) {
+  const { travelCaret, sloganEnd, inputEnd, sloganScale, inputScale } = context;
+  const tx = inputEnd.x - sloganEnd.x;
+  const ty = inputEnd.y - sloganEnd.y;
+  return animateWelcomeHandoff(travelCaret, [
+    { offset: 0, opacity: 1, borderRadius: "2px", background: "var(--text)", transform: welcomeCaretTransform(sloganEnd.x, sloganEnd.y, sloganScale) },
+    { offset: .14, opacity: 1, borderRadius: "2px", background: "var(--accent)", transform: `translate(${sloganEnd.x + 7}px, ${sloganEnd.y - 2}px) scale(2.5, .3) rotate(45deg)` },
+    { offset: .38, opacity: 1, borderRadius: "2px", background: "var(--accent)", transform: `translate(${sloganEnd.x + tx * .34}px, ${sloganEnd.y + ty * .14 - 19}px) scale(2.5, .3) rotate(135deg)` },
+    { offset: .72, opacity: 1, borderRadius: "2px", background: "var(--accent)", transform: `translate(${sloganEnd.x + tx * .8}px, ${sloganEnd.y + ty * .62 - 10}px) scale(2.5, .3) rotate(315deg)` },
+    { offset: .9, opacity: 1, borderRadius: "2px", background: "var(--text)", transform: `translate(${inputEnd.x}px, ${inputEnd.y}px) scale(1.4, .7) rotate(360deg)` },
+    { offset: 1, opacity: 1, borderRadius: "2px", background: "var(--text)", transform: welcomeCaretTransform(inputEnd.x, inputEnd.y, inputScale, " rotate(360deg)") },
+  ], { duration: 680, easing: "cubic-bezier(.42,0,.16,1)", fill: "forwards" });
+}
+
+function playWelcomeFocusJump(root, context) {
+  const { travelCaret, sloganEnd, inputEnd, sloganScale, inputScale, basePoint } = context;
+  [0.25, 0.5, 0.75].forEach((amount, index) => {
+    const mark = appendWelcomeHandoffNode(root, "welcome-handoff-mark");
+    mark.style.left = `${basePoint.x + sloganEnd.x + (inputEnd.x - sloganEnd.x) * amount}px`;
+    mark.style.top = `${basePoint.y + sloganEnd.y + (inputEnd.y - sloganEnd.y) * amount - Math.sin(Math.PI * amount) * 12}px`;
+    trackWelcomeHandoffAnimation(mark.animate([
+      { opacity: 0, transform: "translateY(-4px) scaleY(.4)" },
+      { opacity: .9, transform: "translateY(0) scaleY(1)", offset: .38 },
+      { opacity: 0, transform: "translateY(4px) scaleY(.4)" },
+    ], { duration: 230, delay: 150 + index * 95, easing: "ease-out", fill: "forwards" }));
+  });
+  return animateWelcomeHandoff(travelCaret, [
+    { offset: 0, opacity: 1, transform: welcomeCaretTransform(sloganEnd.x, sloganEnd.y, sloganScale) },
+    { offset: .24, opacity: .18, transform: welcomeCaretTransform(sloganEnd.x, sloganEnd.y, sloganScale * .65) },
+    { offset: .48, opacity: 0, transform: welcomeCaretTransform(sloganEnd.x, sloganEnd.y, sloganScale * .08) },
+    { offset: .78, opacity: 0, transform: welcomeCaretTransform(inputEnd.x, inputEnd.y, inputScale * .08) },
+    { offset: 1, opacity: 1, transform: welcomeCaretTransform(inputEnd.x, inputEnd.y, inputScale) },
+  ], { duration: 560, easing: "ease-out", fill: "forwards" });
+}
+
+const WELCOME_HANDOFF_PLAYERS = {
+  return: playWelcomeHardReturn,
+  wrap: playWelcomeSoftWrap,
+  relay: playWelcomeSignalRelay,
+  packet: playWelcomeCommandPacket,
+  jump: playWelcomeFocusJump,
+};
+
+function playSelectedWelcomeHandoff(root, context) {
+  if (!root?.isConnected || welcomeMotion.root !== root) return;
+  const variant = selectWelcomeHandoffVariant();
+  root.dataset.welcomeHandoff = variant;
+  WELCOME_HANDOFF_PLAYERS[variant](root, context)
+    .then((completed) => {
+      if (completed) finishWelcomeHandoff(root, context);
+    })
+    .catch(() => finishWelcomeMotion(root, { focusPrompt: true }));
 }
 
 function playWelcomeMotion(root) {
@@ -2864,8 +3077,12 @@ function playWelcomeMotion(root) {
     const brandRect = typedBrand.getBoundingClientRect();
     const sloganRect = slogan.getBoundingClientRect();
     const promptRect = els.prompt.getBoundingClientRect();
-    travelCaret.style.left = `${brandRect.right - rootRect.left}px`;
-    travelCaret.style.top = `${brandRect.top - rootRect.top + 6}px`;
+    const basePoint = {
+      x: brandRect.right - rootRect.left,
+      y: brandRect.top - rootRect.top + 6,
+    };
+    travelCaret.style.left = `${basePoint.x}px`;
+    travelCaret.style.top = `${basePoint.y}px`;
 
     const from = travelCaret.getBoundingClientRect();
     const sloganStart = {
@@ -2880,16 +3097,10 @@ function playWelcomeMotion(root) {
       x: promptRect.left + 17 - from.left,
       y: promptRect.top + 15 - from.top,
     };
-    const finalDistance = Math.hypot(
-      inputEnd.x - sloganEnd.x,
-      inputEnd.y - sloganEnd.y,
-    );
-    const finalDuration = Math.min(600, Math.max(440, finalDistance / .9));
     const approachDuration = 335;
     const revealDuration = 780;
-    const travelDuration = approachDuration + revealDuration + finalDuration;
-    const approachEnd = approachDuration / travelDuration;
-    const revealEnd = (approachDuration + revealDuration) / travelDuration;
+    const revealTravelDuration = approachDuration + revealDuration;
+    const approachEnd = approachDuration / revealTravelDuration;
     const sloganScale = Math.max(.36, sloganRect.height / from.height);
     const inputScale = Math.max(.34, 21 / from.height);
     const frames = [];
@@ -2906,45 +3117,61 @@ function playWelcomeMotion(root) {
     [0, .2, .4, .6, .8, 1].forEach((t) => {
       const x = sloganStart.x + (sloganEnd.x - sloganStart.x) * t;
       frames.push({
-        offset: approachEnd + (revealEnd - approachEnd) * t,
+        offset: approachEnd + (1 - approachEnd) * t,
         opacity: 1,
         transform: `translate(${x}px, ${sloganStart.y}px) scaleY(${sloganScale})`,
       });
     });
-    [0, .18, .38, .6, .8, .93, 1].forEach((t) => {
-      const x = welcomeBezierPoint(t, sloganEnd.x, sloganEnd.x + 30, inputEnd.x + 112, inputEnd.x);
-      const y = welcomeBezierPoint(t, sloganEnd.y, sloganEnd.y + 36, inputEnd.y - 24, inputEnd.y);
-      frames.push({
-        offset: revealEnd + (1 - revealEnd) * t,
-        opacity: 1,
-        transform: `translate(${x}px, ${y}px) scaleY(${sloganScale + (inputScale - sloganScale) * t})`,
-      });
-    });
 
-    if (typeof travelCaret.animate !== "function") {
-      scheduleWelcomeMotion(() => finishWelcomeMotion(root, { focusPrompt: true }), travelDuration);
+    if (typeof travelCaret.animate !== "function" || typeof slogan.animate !== "function") {
+      scheduleWelcomeMotion(
+        () => finishWelcomeMotion(root, { focusPrompt: true }),
+        revealTravelDuration + 830,
+      );
       return;
     }
     welcomeMotion.travelAnimation = travelCaret.animate(frames, {
-      duration: travelDuration,
+      duration: revealTravelDuration,
       easing: "linear",
       fill: "forwards",
     });
+    welcomeMotion.sloganAnimation = slogan.animate([
+      { clipPath: "inset(0 100% 0 0)" },
+      { clipPath: "inset(0 0 0 0)" },
+    ], {
+      delay: approachDuration,
+      duration: revealDuration,
+      easing: "linear",
+      fill: "forwards",
+    });
+    const sharedStartTime = document.timeline?.currentTime;
+    if (Number.isFinite(sharedStartTime)) {
+      welcomeMotion.travelAnimation.startTime = sharedStartTime;
+      welcomeMotion.sloganAnimation.startTime = sharedStartTime;
+    }
     welcomeMotion.travelAnimation.finished
       .then(() => {
-        if (!root.isConnected) return;
-        detachWelcomeInputIntent();
-        const activeElement = document.activeElement;
-        const canMoveFocus = !activeElement
-          || activeElement === document.body
-          || activeElement === document.documentElement
-          || activeElement === els.prompt;
-        if (canMoveFocus && !els.prompt.disabled) {
-          els.prompt.focus({ preventScroll: true });
-          els.prompt.setSelectionRange(els.prompt.value.length, els.prompt.value.length);
-        }
-        travelCaret.classList.add("is-landed");
-        scheduleWelcomeMotion(() => finishWelcomeMotion(root), 240);
+        if (!root.isConnected || welcomeMotion.root !== root) return;
+        travelCaret.style.opacity = "1";
+        travelCaret.style.transform = welcomeCaretTransform(
+          sloganEnd.x,
+          sloganEnd.y,
+          sloganScale,
+        );
+        welcomeMotion.travelAnimation?.cancel();
+        welcomeMotion.travelAnimation = null;
+        slogan.style.clipPath = "inset(0 0 0 0)";
+        welcomeMotion.sloganAnimation?.cancel();
+        welcomeMotion.sloganAnimation = null;
+        const context = {
+          travelCaret,
+          sloganEnd,
+          inputEnd,
+          sloganScale,
+          inputScale,
+          basePoint,
+        };
+        scheduleWelcomeMotion(() => playSelectedWelcomeHandoff(root, context), 150);
       })
       .catch(() => {});
   }, 1820);

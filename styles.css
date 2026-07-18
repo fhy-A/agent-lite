@@ -5491,6 +5491,46 @@ body.theme-dark .chat-pane.empty-chat .composer {
   opacity: 1;
 }
 
+.welcome-handoff-trace,
+.welcome-handoff-beam {
+  position: absolute;
+  z-index: 3;
+  height: 1px;
+  background: color-mix(in srgb, var(--accent) 52%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transform-origin: 0 50%;
+}
+
+.welcome-handoff-beam {
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 55%, transparent));
+}
+
+.welcome-handoff-signal {
+  position: absolute;
+  z-index: 4;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 78%, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.welcome-handoff-mark {
+  position: absolute;
+  z-index: 3;
+  width: 2px;
+  height: 12px;
+  border-radius: 1px;
+  background: var(--accent);
+  opacity: 0;
+  pointer-events: none;
+}
+
 .welcome-title {
   margin: 0 0 6px;
   color: color-mix(in srgb, var(--muted) 88%, var(--text));
@@ -5503,7 +5543,6 @@ body.theme-dark .chat-pane.empty-chat .composer {
 
 .welcome-screen.is-animating .welcome-title {
   clip-path: inset(0 100% 0 0);
-  animation: welcomeRevealSlogan .78s cubic-bezier(.4, 0, .2, 1) 2.155s forwards;
 }
 
 .welcome-screen.is-complete .welcome-command-prompt,
@@ -5529,6 +5568,10 @@ body.theme-dark .chat-pane.empty-chat .composer {
   caret-color: transparent;
 }
 
+.chat-pane.empty-chat .composer.welcome-caret-landed {
+  animation: welcomeComposerLanding .3s ease-out;
+}
+
 @keyframes welcomePromptIn {
   to { opacity: 1; transform: translateX(0); }
 }
@@ -5546,8 +5589,15 @@ body.theme-dark .chat-pane.empty-chat .composer {
   100% { left: 100%; opacity: 0; }
 }
 
-@keyframes welcomeRevealSlogan {
-  to { clip-path: inset(0 0 0 0); }
+@keyframes welcomeComposerLanding {
+  0%, 100% {
+    border-color: color-mix(in srgb, var(--line-strong) 72%, var(--line));
+    box-shadow: 0 18px 50px rgba(15, 23, 42, .09), 0 1px 0 rgba(255, 255, 255, .05) inset;
+  }
+  48% {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent), 0 18px 50px rgba(15, 23, 42, .09);
+  }
 }
 
 /* Preserve model-authored thought paragraphs and make their boundaries readable. */

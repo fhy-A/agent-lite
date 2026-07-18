@@ -1483,6 +1483,65 @@ process.stdout.write(JSON.stringify({
         self.assertIn("background: var(--text);", STYLE_SOURCE)
         self.assertIn("@keyframes welcomeCaretType", STYLE_SOURCE)
         self.assertIn("width: min(680px, calc(100% - 48px));", STYLE_SOURCE)
+        self.assertIn("welcomeMotion.sloganAnimation = slogan.animate", APP_SOURCE)
+        self.assertIn('delay: approachDuration,', APP_SOURCE)
+        self.assertIn('duration: revealDuration,', APP_SOURCE)
+        self.assertIn('easing: "linear",', APP_SOURCE)
+        self.assertIn("const sharedStartTime = document.timeline?.currentTime;", APP_SOURCE)
+        self.assertIn(
+            "welcomeMotion.travelAnimation.startTime = sharedStartTime;",
+            APP_SOURCE,
+        )
+        self.assertIn(
+            "welcomeMotion.sloganAnimation.startTime = sharedStartTime;",
+            APP_SOURCE,
+        )
+        self.assertIn("const approachDuration = 335;", APP_SOURCE)
+        self.assertIn("const revealDuration = 780;", APP_SOURCE)
+        self.assertIn(
+            "const revealTravelDuration = approachDuration + revealDuration;",
+            APP_SOURCE,
+        )
+        self.assertNotIn("const finalDistance = Math.hypot(", APP_SOURCE)
+        self.assertIn("const WELCOME_HANDOFF_VARIANTS = [", APP_SOURCE)
+        self.assertIn('{ id: "return", weight: 30 }', APP_SOURCE)
+        self.assertIn('{ id: "wrap", weight: 30 }', APP_SOURCE)
+        self.assertIn('{ id: "relay", weight: 20 }', APP_SOURCE)
+        self.assertIn('{ id: "packet", weight: 15 }', APP_SOURCE)
+        self.assertIn('{ id: "jump", weight: 5 }', APP_SOURCE)
+        self.assertIn("function selectWelcomeHandoffVariant()", APP_SOURCE)
+        self.assertIn('sessionStorage.getItem("code.welcomeHandoff")', APP_SOURCE)
+        self.assertIn('sessionStorage.setItem("code.welcomeHandoff", selected.id)', APP_SOURCE)
+        self.assertIn("function playSelectedWelcomeHandoff(root, context)", APP_SOURCE)
+        finish_start = APP_SOURCE.index("function finishWelcomeMotion(")
+        finish_end = APP_SOURCE.index("function welcomeBezierPoint", finish_start)
+        finish_block = APP_SOURCE[finish_start:finish_end]
+        self.assertIn("if (focusPrompt && !els.prompt.disabled) {", finish_block)
+        self.assertNotIn("const canMoveFocus", finish_block)
+        handoff_finish_start = APP_SOURCE.index("function finishWelcomeHandoff(")
+        handoff_finish_end = APP_SOURCE.index("function playWelcomeHardReturn", handoff_finish_start)
+        handoff_finish_block = APP_SOURCE[handoff_finish_start:handoff_finish_end]
+        self.assertIn("if (!els.prompt.disabled) {", handoff_finish_block)
+        self.assertNotIn("const canMoveFocus", handoff_finish_block)
+        self.assertIn(
+            "scheduleWelcomeMotion(() => finishWelcomeMotion(root, { focusPrompt: true }), 320);",
+            handoff_finish_block,
+        )
+        self.assertIn(
+            "scheduleWelcomeMotion(() => playSelectedWelcomeHandoff(root, context), 150);",
+            APP_SOURCE,
+        )
+        self.assertLess(
+            APP_SOURCE.index("welcomeMotion.travelAnimation.finished"),
+            APP_SOURCE.index("playSelectedWelcomeHandoff(root, context), 150"),
+        )
+        self.assertIn(".welcome-handoff-trace,", STYLE_SOURCE)
+        self.assertIn(".welcome-handoff-beam {", STYLE_SOURCE)
+        self.assertIn(".welcome-handoff-signal {", STYLE_SOURCE)
+        self.assertIn(".welcome-handoff-mark {", STYLE_SOURCE)
+        self.assertIn("@keyframes welcomeComposerLanding", STYLE_SOURCE)
+        self.assertNotIn("animation: welcomeRevealSlogan", STYLE_SOURCE)
+        self.assertNotIn("@keyframes welcomeRevealSlogan", STYLE_SOURCE)
 
     def test_thought_projection_only_collects_tool_round_summaries(self):
         render_start = MESSAGES_SOURCE.index("function projectMessages(")

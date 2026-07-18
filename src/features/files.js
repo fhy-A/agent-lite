@@ -49,6 +49,30 @@
     return sorted;
   }
 
+  const FILE_TIME_WIDE_SIDEBAR_MIN = 320;
+
+  function formatFileTimestamp(value, now = new Date()) {
+    const date = value instanceof Date ? value : new Date(value || "");
+    const current = now instanceof Date ? now : new Date(now);
+    if (Number.isNaN(date.getTime()) || Number.isNaN(current.getTime())) {
+      return { compact: "", full: "" };
+    }
+    const pad = (number) => String(number).padStart(2, "0");
+    const year = date.getFullYear();
+    const monthDay = `${pad(date.getMonth() + 1)}/${pad(date.getDate())}`;
+    const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    const full = `${year}/${monthDay} ${time}`;
+    const sameDay = year === current.getFullYear()
+      && date.getMonth() === current.getMonth()
+      && date.getDate() === current.getDate();
+    const compact = sameDay
+      ? time
+      : year === current.getFullYear()
+        ? `${monthDay} ${time}`
+        : `${year}/${monthDay}`;
+    return { compact, full };
+  }
+
   function createFilesFeature(options = {}) {
     const state = options.state;
     const elements = options.elements;
@@ -218,10 +242,14 @@
               ? ""
               : ((item.name || "").split(".").pop() || "").toLowerCase().slice(0, 6);
             const extensionClass = extension ? ` ext-${extension}` : "";
+            const timestamp = formatFileTimestamp(item.updatedAt);
+            const timestampHtml = timestamp.full
+              ? `<small class="file-time" title="${escapeHtml(timestamp.full)}" aria-label="${escapeHtml(timestamp.full)}"><span class="file-time-compact" aria-hidden="true">${escapeHtml(timestamp.compact)}</span><span class="file-time-full" aria-hidden="true">${escapeHtml(timestamp.full)}</span></small>`
+              : "";
             return `<div class="file-item-row ${item.path === state.previewPath ? "active" : ""}">
               <button class="file-item ${item.type}${extensionClass}" type="button" data-path="${escapeHtml(item.path)}" data-type="${item.type}">
                 <span class="file-name">${item.type === "dir" ? "📁 " : ""}${escapeHtml(item.name)}</span>
-                <small>${item.updatedAt ? item.updatedAt.slice(0, 10) : ""}</small>
+                ${timestampHtml}
               </button>
               <button class="file-at-btn" type="button" data-path="${escapeHtml(item.path)}" title="${t("fileAtTitle")}">@</button>
             </div>`;
@@ -250,6 +278,13 @@
           insertPromptText?.(`@${button.dataset.path} `);
         });
       });
+    }
+
+    function setFileTimeDensity(sidebarWidth) {
+      elements.fileTree?.classList.toggle(
+        "file-time-wide",
+        Number(sidebarWidth) >= FILE_TIME_WIDE_SIDEBAR_MIN,
+      );
     }
 
     async function loadFiles(path = state.currentDir) {
@@ -441,6 +476,7 @@
       bind,
       loadFiles,
       renderFileTree,
+      setFileTimeDensity,
       addRecentFolder,
       removeRecentFolder,
       pickProjectFile,
@@ -452,6 +488,8 @@
     shortPath,
     arrayBufferToBase64,
     sortFileItems,
+    formatFileTimestamp,
+    FILE_TIME_WIDE_SIDEBAR_MIN,
     createFilesFeature,
   });
 })(window);

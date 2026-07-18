@@ -439,7 +439,7 @@ global.window = {
   btoa: (binary) => Buffer.from(binary, "binary").toString("base64"),
 };
 require("./src/features/files.js");
-const {shortPath, sortFileItems, createFilesFeature} = window.Code.features.files;
+const {shortPath, sortFileItems, formatFileTimestamp, FILE_TIME_WIDE_SIDEBAR_MIN, createFilesFeature} = window.Code.features.files;
 const items = [
   {name: "z-dir", path: "z-dir", type: "dir", updatedAt: "2026-01-01"},
   {name: "b.ts", path: "b.ts", type: "file", updatedAt: "2026-01-03"},
@@ -448,9 +448,11 @@ const items = [
 ];
 const calls = [];
 const inserted = [];
+const density = [];
 const elements = {
   filePicker: {value: "old", clicked: false, click() { this.clicked = true; }},
   attachFile: {disabled: false},
+  fileTree: {classList: {toggle: (name, enabled) => density.push({name, enabled})}},
 };
 const feature = createFilesFeature({
   state: {},
@@ -469,6 +471,9 @@ const feature = createFilesFeature({
     name: "demo.txt",
     arrayBuffer: async () => Uint8Array.from([104, 105]).buffer,
   });
+  feature.setFileTimeDensity(319);
+  feature.setFileTimeDensity(320);
+  const now = new Date(2026, 6, 19, 15, 0);
   process.stdout.write(JSON.stringify({
     short: shortPath("C:/Users/Admin/project"),
     defaultOrder: sortFileItems(items).map((item) => item.path),
@@ -479,6 +484,12 @@ const feature = createFilesFeature({
     attachDisabled: elements.attachFile.disabled,
     inserted,
     calls,
+    density,
+    densityBoundary: FILE_TIME_WIDE_SIDEBAR_MIN,
+    todayTime: formatFileTimestamp(new Date(2026, 6, 19, 8, 7), now),
+    sameYearTime: formatFileTimestamp(new Date(2026, 0, 2, 3, 4), now),
+    oldTime: formatFileTimestamp(new Date(2025, 11, 31, 23, 59), now),
+    invalidTime: formatFileTimestamp("invalid", now),
   }));
 })().catch((error) => { console.error(error); process.exit(1); });
 """
@@ -498,6 +509,29 @@ const feature = createFilesFeature({
         self.assertTrue(data["pickerClicked"])
         self.assertFalse(data["attachDisabled"])
         self.assertEqual(data["inserted"], ["attachments/demo.txt"])
+        self.assertEqual(data["densityBoundary"], 320)
+        self.assertEqual(data["density"], [
+            {"name": "file-time-wide", "enabled": False},
+            {"name": "file-time-wide", "enabled": True},
+        ])
+        self.assertEqual(data["todayTime"], {
+            "compact": "08:07",
+            "full": "2026/07/19 08:07",
+        })
+        self.assertEqual(data["sameYearTime"], {
+            "compact": "01/02 03:04",
+            "full": "2026/01/02 03:04",
+        })
+        self.assertEqual(data["oldTime"], {
+            "compact": "2025/12/31",
+            "full": "2025/12/31 23:59",
+        })
+        self.assertEqual(data["invalidTime"], {"compact": "", "full": ""})
+        self.assertIn('class="file-time"', FILES_SOURCE)
+        self.assertIn('class="file-time-compact"', FILES_SOURCE)
+        self.assertIn('class="file-time-full"', FILES_SOURCE)
+        self.assertIn(".file-tree.file-time-wide .file-time-full", STYLE_SOURCE)
+        self.assertIn(".file-item-row:hover .file-time", STYLE_SOURCE)
         self.assertEqual(data["calls"][0]["url"], "/api/attachments")
         self.assertEqual(data["calls"][0]["options"]["method"], "POST")
         self.assertEqual(

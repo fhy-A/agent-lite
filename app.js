@@ -956,7 +956,7 @@ const filesFeature = createFilesFeature({
   insertPromptText,
   saveProjectRoot,
 });
-const { loadFiles, renderFileTree, addRecentFolder } = filesFeature;
+const { loadFiles, renderFileTree, addRecentFolder, setFileTimeDensity } = filesFeature;
 filesFeature.bind();
 
 
@@ -4130,6 +4130,8 @@ function applySidebarWidth(width = state.sidebarWidth) {
   const next = Math.min(Math.max(Number(width) || 264, 220), 480);
 
   state.sidebarWidth = next;
+
+  setFileTimeDensity(next);
 
   document.documentElement.style.setProperty("--sidebar-width", `${next}px`);
 

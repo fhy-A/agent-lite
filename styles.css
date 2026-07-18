@@ -585,6 +585,18 @@ input:focus, select:focus, textarea:focus {
 .file-at-btn:hover { color: var(--accent); background: var(--panel-2); opacity: 1; }
 .file-item-row:hover .file-at-btn { opacity: 1; }
 
+.file-time {
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transition: opacity .12s;
+}
+
+.file-time-full { display: none; }
+.file-tree.file-time-wide .file-time-compact { display: none; }
+.file-tree.file-time-wide .file-time-full { display: inline; }
+.file-item-row:hover .file-time { opacity: 0; }
+
 .file-name {
   overflow: hidden;
   text-overflow: ellipsis;

@@ -70,11 +70,16 @@ class TestUpdaterHelpers(unittest.TestCase):
         self.assertTrue(result["downloadUrl"].endswith("/v0.4.11/Code-v0.4.11.exe"))
 
     def test_frontend_waits_for_new_version_before_cache_busting_reload(self):
-        app_js = (Path(__file__).resolve().parent.parent / "app.js").read_text(encoding="utf-8")
-        self.assertIn('if (versionInfo.localVersion !== remoteVer) return;', app_js)
-        self.assertIn('cache: "no-store"', app_js)
-        self.assertIn('refreshed.searchParams.set("updated", remoteVer + "-" + Date.now())', app_js)
-        self.assertIn("location.replace(refreshed.toString())", app_js)
+        settings_js = (
+            Path(__file__).resolve().parent.parent / "src" / "features" / "settings.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn('if (versionInfo.localVersion !== remoteVersion) return;', settings_js)
+        self.assertIn('cache: "no-store"', settings_js)
+        self.assertIn(
+            'refreshed.searchParams.set("updated", `${remoteVersion}-${Date.now()}`)',
+            settings_js,
+        )
+        self.assertIn("global.location.replace(refreshed.toString())", settings_js)
 
 
 class TestSanitizeFilename(unittest.TestCase):

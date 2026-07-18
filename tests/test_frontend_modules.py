@@ -11,6 +11,7 @@ APP_SOURCE = (ROOT / "app.js").read_text(encoding="utf-8")
 RUNTIME_SOURCE = (ROOT / "agent-runtime.js").read_text(encoding="utf-8")
 I18N_SOURCE = (ROOT / "src" / "core" / "i18n.js").read_text(encoding="utf-8")
 API_CLIENT_SOURCE = (ROOT / "src" / "services" / "api-client.js").read_text(encoding="utf-8")
+SETTINGS_SOURCE = (ROOT / "src" / "features" / "settings.js").read_text(encoding="utf-8")
 PREVIEW_SOURCE = (ROOT / "src" / "features" / "preview.js").read_text(encoding="utf-8")
 FILES_SOURCE = (ROOT / "src" / "features" / "files.js").read_text(encoding="utf-8")
 SKILLS_MEMORY_SOURCE = (ROOT / "src" / "features" / "skills-memory.js").read_text(encoding="utf-8")
@@ -249,6 +250,7 @@ eval(source);
             "src/core/i18n.js",
             "src/services/notifications.js",
             "src/services/api-client.js",
+            "src/features/settings.js",
             "src/features/preview.js",
             "src/features/files.js",
             "src/features/skills-memory.js",
@@ -263,6 +265,7 @@ eval(source);
             "./src/core/i18n.js",
             "./src/services/notifications.js",
             "./src/services/api-client.js",
+            "./src/features/settings.js",
             "./src/features/skills-memory.js",
             "./src/features/preview.js",
             "./src/features/files.js",
@@ -529,6 +532,92 @@ const feature = createSkillsMemoryFeature({
             ["/api/skills?brief=1", "/api/skills/demo", "/api/memory-context"],
         )
 
+    def test_settings_feature_owns_theme_update_auth_and_key_storage(self):
+        self.assertIn("features.settings = Object.freeze", SETTINGS_SOURCE)
+        script = """
+const values = new Map([["code-key-config", JSON.stringify([{name: "primary", key: "sk-1", enabled: true}])]]);
+const storage = {
+  getItem: (key) => values.has(key) ? values.get(key) : null,
+  setItem: (key, value) => values.set(key, String(value)),
+  removeItem: (key) => values.delete(key),
+};
+const bodyClasses = new Set();
+const replaced = [];
+global.window = {
+  Code: {features: {}},
+  localStorage: storage,
+  URLSearchParams,
+  location: {search: "?code_token=token-1&user_id=user-1&username=Alice", href: "http://127.0.0.1:3010/", replace: () => {}},
+  history: {replaceState: (...args) => replaced.push(args)},
+  matchMedia: () => ({matches: false, addEventListener: () => {}}),
+  setTimeout,
+  setInterval,
+  clearInterval,
+};
+require("./src/features/settings.js");
+const {createSettingsFeature, loadKeyConfig} = window.Code.features.settings;
+const calls = [];
+const toasts = [];
+const state = {};
+const documentStub = {
+  body: {classList: {toggle: (name, active) => active ? bodyClasses.add(name) : bodyClasses.delete(name)}},
+  getElementById: () => null,
+  querySelectorAll: () => [],
+};
+const feature = createSettingsFeature({
+  state,
+  elements: {},
+  t: (key, args) => args?.name ? `${key}:${args.name}` : key,
+  apiJson: async (url) => {
+    calls.push(url);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    return {updateAvailable: true, remoteVersion: "0.6.0"};
+  },
+  showToast: (...args) => toasts.push(args),
+  document: documentStub,
+  storage,
+});
+(async () => {
+  feature.applyTheme("dark");
+  const [first, second] = await Promise.all([
+    feature.checkForUpdates(),
+    feature.checkForUpdates(),
+  ]);
+  const callbackHandled = await feature.checkCodeCallback();
+  process.stdout.write(JSON.stringify({
+    bodyClasses: [...bodyClasses],
+    theme: values.get("code-theme"),
+    keys: loadKeyConfig(storage),
+    calls,
+    first,
+    second,
+    updateInfo: state.updateInfo,
+    callbackHandled,
+    auth: JSON.parse(values.get("code-platform-auth")),
+    replaced,
+    toasts,
+  }));
+})().catch((error) => { console.error(error); process.exit(1); });
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertEqual(data["bodyClasses"], ["theme-dark"])
+        self.assertEqual(data["theme"], "dark")
+        self.assertEqual(data["keys"], [{"name": "primary", "key": "sk-1", "enabled": True}])
+        self.assertEqual(data["calls"], ["/api/check-update"])
+        self.assertEqual(data["first"], data["second"])
+        self.assertEqual(data["updateInfo"]["remoteVersion"], "0.6.0")
+        self.assertTrue(data["callbackHandled"])
+        self.assertEqual(data["auth"], {"token": "token-1", "userId": "user-1", "username": "Alice"})
+        self.assertEqual(data["replaced"], [[None, "", "/"]])
+        self.assertEqual(data["toasts"], [["loggedInAs:Alice", "warning"]])
+
     def test_preview_feature_exports_parsing_urls_and_width_rules(self):
         self.assertIn("features.preview = Object.freeze", PREVIEW_SOURCE)
         script = """
@@ -595,6 +684,8 @@ process.stdout.write(JSON.stringify({
         self.assertIn("const filesFeature = createFilesFeature", APP_SOURCE)
         self.assertIn("const { createSkillsMemoryFeature } = window.Code.features.skillsMemory", APP_SOURCE)
         self.assertIn("const skillsMemoryFeature = createSkillsMemoryFeature", APP_SOURCE)
+        self.assertIn("const { createSettingsFeature } = window.Code.features.settings", APP_SOURCE)
+        self.assertIn("const settingsFeature = createSettingsFeature", APP_SOURCE)
         self.assertIn(
             "const { showToast, notify: _notify } = window.Code.services.notifications",
             APP_SOURCE,
@@ -669,6 +760,38 @@ process.stdout.write(JSON.stringify({
             "function renderSkillsInSettings(",
             "function renderSettingsSkillsSidebar(",
             "async function showSkillDetailInSettings(",
+            "function loadKeyConfig(",
+            "function saveKeyConfig(",
+            "function parseKeyLines(",
+            "function serializeKeys(",
+            "function renderKeyEditor(",
+            "function bindKeyEditorEvents(",
+            "function showInlineKeyDeleteConfirm(",
+            "function applyTheme(",
+            "function updateThemeButtons(",
+            "function showSettings(",
+            "function openSettingsPage(",
+            "function switchSettingsPanel(",
+            "function renderModelsPanel(",
+            "function renderSystemPanel(",
+            "function renderLanguagePanel(",
+            "function renderThemePanel(",
+            "function renderAccountPanel(",
+            "function isUpdateNoticeUnread(",
+            "function markUpdateNoticeSeen(",
+            "function setUpdateNotice(",
+            "async function checkForUpdates(",
+            "function renderUpdatePanel(",
+            "function shouldShowOnboarding(",
+            "function markOnboardingDone(",
+            "function showOnboarding(",
+            "function getPlatformUrl(",
+            "function getPlatformAuth(",
+            "function savePlatformAuth(",
+            "function clearPlatformAuth(",
+            "async function checkCodeCallback(",
+            "async function syncKeysFromPlatform(",
+            "function showKeySyncModal(",
             "function showToast(",
             "function _notify(",
         ):

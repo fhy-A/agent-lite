@@ -14,6 +14,21 @@
 
 ---
 
+## 2026-07-18 22:16 · Codex
+
+### 抽离设置、更新与认证模块，完成前端拆分阶段 2
+
+- **设置功能独立**：新增 `src/features/settings.js`，集中承接统一设置页导航、模型配置界面、Key 编辑器、系统提示词、主题与语言、平台账户、首次使用引导和旧设置弹窗入口。
+- **更新与平台认证收口**：版本提示、更新检查去重、下载进度、安装重启后的版本确认与缓存刷新，以及 Code × New API 登录回调、登录状态、Key 同步和复制弹窗均迁入新模块。
+- **执行边界保持**：模型选择、API Key 轮换、权限和 AgentRun 执行链继续由 `app.js` 持有；设置模块只通过显式注入读取界面状态并调用保存、刷新、翻译及 Skills/Memory 面板接口，`loadKeyConfig()` 作为最小公开入口供请求链读取启用状态。
+- **旧实现退场与稳定性**：`app.js` 删除 Key 编辑器、设置页、主题、更新、引导、平台认证及重复事件绑定，共减少约 1,291 行；模型设置页对已不存在的旧 Key 显隐按钮改为可选绑定，避免打开设置时产生空节点异常。
+- **回归保护**：补充模块存在与加载顺序、公开导出、主题持久化、更新请求去重、平台登录回调、Key 配置读取和旧定义禁入测试；更新安装的版本确认测试改为验证实际所有者 `settings.js`。
+- **验证结果**：`src/features/settings.js` 与 `app.js` JavaScript 语法、`git diff --check` 通过；定向回归 `28 passed` 与 `185 passed, 10 subtests passed`，最终全量回归 `554 passed, 25 subtests passed`。人工确认模型、账户、Memory、Skills、系统提示、主题、语言与更新页面，Key 临时增删、主题刷新保持及中英文切换均正常。
+
+**涉及文件**：`src/features/settings.js`、`app.js`、`index.html`、`tests/test_frontend_modules.py`、`tests/test_server.py`、`docs/APP_JS_SPLIT_PLAN.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 21:44 · Codex
 
 ### 抽离 Skills 与 Memory 模块，完成前端拆分阶段 2 的第三项

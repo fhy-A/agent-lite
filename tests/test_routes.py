@@ -158,7 +158,7 @@ class TestFileTools(TestServerFixture):
     def test_registry_declares_read_interaction_and_proposal_effects(self):
         self.assertEqual(set(server_mod.SERVER_TOOL_REGISTRY), {
             "request_user_input", "list_files", "read_file", "search_files", "glob_files",
-            "web_fetch", "use_skill", "read_skill_resource", "propose_edit",
+            "web_fetch", "use_skill", "read_skill_resource", "run_command", "propose_edit",
         })
         interaction = server_mod.SERVER_TOOL_REGISTRY["request_user_input"]
         self.assertEqual(interaction["effect"], "interaction")
@@ -176,6 +176,10 @@ class TestFileTools(TestServerFixture):
         self.assertEqual(proposal["effect"], "proposal")
         self.assertTrue(proposal["idempotent"])
         self.assertFalse(proposal["background"])
+        command = server_mod.SERVER_TOOL_REGISTRY["run_command"]
+        self.assertEqual(command["effect"], "command")
+        self.assertFalse(command["idempotent"])
+        self.assertTrue(command["background"])
 
     def test_http_read_only_tools_share_registry_results(self):
         cases = [
@@ -379,6 +383,19 @@ class TestFileTools(TestServerFixture):
 
 class TestCommandExecution(TestServerFixture):
 
+    def test_http_command_uses_shared_registry_service(self):
+        direct = server_mod.execute_registered_tool(
+            "run_command", {"command": "echo shared-command"},
+        )
+        status, routed = _req(
+            "POST", "/api/tools/run_command", json={"command": "echo shared-command"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(routed["ok"], direct["ok"])
+        self.assertEqual(routed["action"], direct["action"])
+        self.assertEqual(routed["command"], direct["command"])
+        self.assertIn("shared-command", routed["stdout"])
+
     def test_safe_command_echo(self):
         status, data = _req("POST", "/api/tools/run_command",
                             json={"command": "echo hello world", "description": "test"})
@@ -421,6 +438,31 @@ class TestCommandExecution(TestServerFixture):
                             json={"command": "ping -n 4 127.0.0.1", "description": "ping", "timeout": 10})
         self.assertEqual(status, 200)
         self.assertTrue(data.get("ok"))
+
+    def test_command_timeout_returns_checkpointed_failure(self):
+        status, data = _req(
+            "POST",
+            "/api/tools/run_command",
+            json={
+                "command": 'python -c "import time; print(\'before-timeout\', flush=True); time.sleep(5)"',
+                "timeout": 1,
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(data["ok"])
+        self.assertTrue(data["timedOut"])
+        self.assertIn("before-timeout", data["stdout"])
+
+    def test_nonzero_command_preserves_exit_code_and_stderr(self):
+        status, data = _req(
+            "POST",
+            "/api/tools/run_command",
+            json={"command": 'python -c "import sys; print(\'failed\', file=sys.stderr); raise SystemExit(3)"'},
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(data["ok"])
+        self.assertEqual(data["exitCode"], 3)
+        self.assertIn("failed", data["stderr"])
 
 
 # ═══════════════════════════════════════════════════════════════════

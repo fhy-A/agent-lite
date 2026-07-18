@@ -60,8 +60,54 @@ class _AgentUpstream(BaseHTTPRequestHandler):
             and message.get("content") == "inspect skill and network"
             for message in messages
         )
+        runs_command = any(
+            message.get("role") == "user"
+            and message.get("content") in {"run approved command", "run slow command"}
+            for message in messages
+        )
+        runs_slow_command = any(
+            message.get("role") == "user" and message.get("content") == "run slow command"
+            for message in messages
+        )
         should_call_tool = tool_result_count == 0 or (repeat_id and tool_result_count < 2)
-        if uses_network_and_skills and tool_result_count == 0:
+        if runs_command and tool_result_count == 0:
+            command = (
+                'python -c "import time; print(\'command-started\', flush=True); time.sleep(20)"'
+                if runs_slow_command
+                else 'python -c "print(\'agent-command\')"'
+            )
+            frames = [{
+                "choices": [{
+                    "delta": {"tool_calls": [{
+                        "index": 0,
+                        "id": "agent-command-1",
+                        "type": "function",
+                        "function": {
+                            "name": "run_command",
+                            "arguments": json.dumps({
+                                "command": command,
+                                "description": "Agent runtime command",
+                            }),
+                        },
+                    }]},
+                    "finish_reason": "tool_calls",
+                }],
+            }]
+        elif runs_command:
+            frames = [
+                {
+                    "choices": [{
+                        "delta": {"content": "command task complete"},
+                        "finish_reason": "stop",
+                    }],
+                },
+                {"choices": [], "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 3,
+                    "total_tokens": 13,
+                }},
+            ]
+        elif uses_network_and_skills and tool_result_count == 0:
             calls = [
                 ("agent-skill-1", "use_skill", {"name": "runtime-skill"}),
                 (
@@ -328,6 +374,26 @@ class TestDurableAgentRuntime(unittest.TestCase):
         self.assertNotIn("agent-secret-key", json.dumps(snapshot))
         self.assertEqual(_AgentUpstream.authorizations, ["Bearer agent-secret-key"] * 2)
 
+    def test_command_tool_requires_accept_or_bypass_permission(self):
+        payload = {"tools": [server_mod._SERVER_TOOL_DEFINITIONS["run_command"]]}
+        self.assertEqual(
+            server_mod._agent_selected_tools(payload, ["run_command"], "read"),
+            [],
+        )
+        self.assertEqual(
+            server_mod._agent_selected_tools(payload, ["run_command"], "plan"),
+            [],
+        )
+        for profile in ("accept", "bypass"):
+            with self.subTest(profile=profile):
+                selected = server_mod._agent_selected_tools(
+                    payload, ["run_command"], profile,
+                )
+                self.assertEqual(
+                    [item["function"]["name"] for item in selected],
+                    ["run_command"],
+                )
+
     def test_agent_executes_network_and_skill_tools_without_browser_polling(self):
         skill_dir = self.data_dir / "skills" / "runtime-skill"
         reference_dir = skill_dir / "references"
@@ -384,6 +450,198 @@ class TestDurableAgentRuntime(unittest.TestCase):
         persisted = server_mod._agent_run_path(run["id"]).read_text(encoding="utf-8")
         self.assertNotIn("network-skill-key", persisted)
         self.assertNotIn("network-skill-key", json.dumps(snapshot))
+
+    def test_accept_command_waits_for_authorization_then_executes_once(self):
+        run = server_mod._create_agent_run(
+            "command-accept-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "run approved command"}],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["run_command"]],
+            },
+            self.base_url,
+            ["command-before-approval-key"],
+            allowed_tools=["run_command"],
+            permission_profile="accept",
+        )
+        self._wait_status(run, "waiting_authorization")
+        self._wait_worker_idle(run)
+        pending = server_mod._agent_snapshot(run, 0)["pendingAuthorization"]
+        self.assertEqual(pending["action"], "run_command")
+        self.assertIn("agent-command", pending["command"])
+        execution = run["tool_executions"]["agent-command-1"]
+        self.assertEqual(execution["status"], "waiting_authorization")
+
+        decision = server_mod._submit_agent_authorization(
+            run, pending["authorizationId"], "approved",
+        )
+        self.assertTrue(decision["authorized"])
+        self.assertFalse(decision["executed"])
+        self.assertEqual(run["status"], "waiting_credentials")
+        self.assertEqual(execution["status"], "authorized")
+
+        server_mod._resume_agent_run(run, ["command-after-approval-key"])
+        self._wait_terminal(run)
+        snapshot = server_mod._agent_snapshot(run, 0)
+        self.assertEqual(snapshot["status"], "completed")
+        self.assertEqual(snapshot["result"]["content"], "command task complete")
+        command_execution = snapshot["toolExecutions"][0]
+        self.assertEqual(command_execution["status"], "completed")
+        self.assertTrue(command_execution["result"]["ok"])
+        self.assertIn("agent-command", command_execution["result"]["stdout"])
+        self.assertEqual(
+            [event["type"] for event in snapshot["events"]].count("command_started"),
+            1,
+        )
+        persisted = server_mod._agent_run_path(run["id"]).read_text(encoding="utf-8")
+        self.assertNotIn("command-before-approval-key", persisted)
+        self.assertNotIn("command-after-approval-key", persisted)
+
+    def test_rejected_command_becomes_tool_result_without_execution(self):
+        run = server_mod._create_agent_run(
+            "command-reject-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "run approved command"}],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["run_command"]],
+            },
+            self.base_url,
+            ["command-reject-key"],
+            allowed_tools=["run_command"],
+            permission_profile="accept",
+        )
+        self._wait_status(run, "waiting_authorization")
+        self._wait_worker_idle(run)
+        pending = server_mod._agent_snapshot(run, 0)["pendingAuthorization"]
+        with mock.patch.object(server_mod.subprocess, "Popen") as popen_mock:
+            result = server_mod._submit_agent_authorization(
+                run, pending["authorizationId"], "rejected",
+            )
+            popen_mock.assert_not_called()
+        self.assertTrue(result["rejected"])
+        self.assertEqual(run["status"], "waiting_credentials")
+        server_mod._resume_agent_run(run, ["command-reject-resume-key"])
+        self._wait_terminal(run)
+        execution = server_mod._agent_snapshot(run, 0)["toolExecutions"][0]
+        self.assertEqual(execution["status"], "completed")
+        self.assertTrue(execution["result"]["rejected"])
+
+    def test_bypass_command_persists_output_and_cancel_stops_process(self):
+        run = server_mod._create_agent_run(
+            "command-cancel-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "run slow command"}],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["run_command"]],
+            },
+            self.base_url,
+            ["command-cancel-key"],
+            allowed_tools=["run_command"],
+            permission_profile="bypass",
+        )
+        deadline = time.time() + 8
+        process = None
+        while time.time() < deadline:
+            execution = run["tool_executions"].get("agent-command-1") or {}
+            process = run.get("active_process")
+            if execution.get("status") == "running" and "command-started" in execution.get("stdout", ""):
+                break
+            time.sleep(0.05)
+        self.assertIsNotNone(process)
+        self.assertIsNone(process.poll())
+        persisted_running = server_mod._agent_run_path(run["id"]).read_text(encoding="utf-8")
+        self.assertIn("command-started", persisted_running)
+
+        server_mod._cancel_agent_run(run["id"])
+        self._wait_terminal(run)
+        self._wait_worker_idle(run)
+        self.assertIsNotNone(process.poll())
+        snapshot = server_mod._agent_snapshot(run, 0)
+        self.assertEqual(snapshot["status"], "cancelled")
+        execution = snapshot["toolExecutions"][0]
+        self.assertEqual(execution["status"], "cancelled")
+        self.assertTrue(execution["result"]["cancelled"])
+        self.assertIn("command-started", execution["stdout"])
+
+    def test_restart_marks_running_command_unknown_and_never_replays_it(self):
+        run_id = uuid.uuid4().hex
+        arguments = json.dumps({
+            "command": 'python -c "print(\'must-not-run-again\')"',
+            "description": "Non-replayable command",
+        }, separators=(",", ":"))
+        fingerprint = hashlib.sha256(f"run_command\0{arguments}".encode()).hexdigest()
+        timestamp = server_mod.now_iso()
+        record = {
+            "version": 1,
+            "id": run_id,
+            "sessionId": "command-restart-session",
+            "status": "tools",
+            "resumeStatus": "",
+            "permissionProfile": "bypass",
+            "error": "",
+            "baseUrl": self.base_url,
+            "request": {"model": "test-model", "tool_choice": "auto"},
+            "messages": [
+                {"role": "user", "content": "run approved command"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "agent-command-1",
+                        "type": "function",
+                        "function": {"name": "run_command", "arguments": arguments},
+                    }],
+                },
+            ],
+            "tools": [server_mod._SERVER_TOOL_DEFINITIONS["run_command"]],
+            "rounds": [{"round": 1, "toolCalls": [], "usage": {"total_tokens": 5}}],
+            "pendingToolCalls": [{
+                "index": 0,
+                "id": "agent-command-1",
+                "type": "function",
+                "function": {"name": "run_command", "arguments": arguments},
+                "arguments": json.loads(arguments),
+                "parseError": "",
+                "fingerprint": fingerprint,
+            }],
+            "toolExecutions": {
+                "agent-command-1": {
+                    "name": "run_command",
+                    "arguments": arguments,
+                    "fingerprint": fingerprint,
+                    "status": "running",
+                    "command": "must-not-run-again",
+                    "cwd": str(self.project_dir),
+                    "stdout": "partial output\n",
+                    "stderr": "",
+                    "startedAt": timestamp,
+                    "completedAt": "",
+                },
+            },
+            "usage": {"total_tokens": 5},
+            "result": {},
+            "events": [],
+            "nextSeq": 1,
+            "maxRounds": 4,
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+        }
+        server_mod.write_json(server_mod._agent_run_path(run_id), record)
+
+        loaded = server_mod._get_agent_run(run_id)
+        self.assertEqual(loaded["status"], "waiting_credentials")
+        interrupted = loaded["tool_executions"]["agent-command-1"]
+        self.assertEqual(interrupted["status"], "completed")
+        self.assertTrue(interrupted["result"]["unknownState"])
+        self.assertTrue(interrupted["result"]["notReplayed"])
+        with mock.patch.object(server_mod.subprocess, "Popen") as popen_mock:
+            server_mod._resume_agent_run(loaded, ["command-restart-key"])
+            self._wait_terminal(loaded)
+            popen_mock.assert_not_called()
+        snapshot = server_mod._agent_snapshot(loaded, 0)
+        self.assertEqual(snapshot["status"], "completed")
+        self.assertEqual(snapshot["result"]["content"], "command task complete")
+        self.assertTrue(snapshot["toolExecutions"][0]["result"]["notReplayed"])
 
     def test_agent_questionnaire_waits_durably_and_continues_after_valid_answer(self):
         run = server_mod._create_agent_run(

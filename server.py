@@ -517,7 +517,13 @@ def _agent_selected_tools(payload, allowed_tools=None, permission_profile="read"
             and spec.get("idempotent")
             and permission_profile in {"plan", "accept", "bypass"}
         )
-        if not (safe_read or safe_interaction or safe_proposal):
+        gated_command = (
+            spec.get("effect") == "command"
+            and not spec.get("idempotent")
+            and spec.get("background")
+            and permission_profile in {"accept", "bypass"}
+        )
+        if not (safe_read or safe_interaction or safe_proposal or gated_command):
             continue
         definition = _agent_registry_tool_definition(name)
         if definition:
@@ -579,6 +585,11 @@ def _agent_public_tool_executions(run):
             "error": execution.get("error", ""),
             "startedAt": execution.get("startedAt", ""),
             "completedAt": execution.get("completedAt", ""),
+            "stdout": str(execution.get("stdout") or ""),
+            "stderr": str(execution.get("stderr") or ""),
+            "stdoutChars": int(execution.get("stdoutChars") or 0),
+            "stderrChars": int(execution.get("stderrChars") or 0),
+            "lastOutputAt": str(execution.get("lastOutputAt") or ""),
         })
     return items
 
@@ -595,7 +606,7 @@ def _agent_public_pending_authorization(run):
     if not isinstance(pending, dict):
         return None
     proposal = pending.get("proposal") or {}
-    return {
+    public = {
         "authorizationId": str(pending.get("authorizationId") or ""),
         "toolCallId": str(pending.get("toolCallId") or ""),
         "action": str(pending.get("action") or ""),
@@ -605,6 +616,10 @@ def _agent_public_pending_authorization(run):
         "decision": str(pending.get("decision") or "pending"),
         "requestedAt": str(pending.get("requestedAt") or ""),
     }
+    if pending.get("action") == "run_command":
+        public["command"] = str(pending.get("command") or "")
+        public["description"] = str(pending.get("description") or "")
+    return public
 
 
 def _agent_snapshot(run, cursor=0):
@@ -741,6 +756,33 @@ def _agent_run_from_record(record):
     )
     if pending_authorization:
         pending_authorization["submitting"] = False
+    tool_executions = dict(record.get("toolExecutions") or {})
+    for execution in tool_executions.values():
+        if not isinstance(execution, dict):
+            continue
+        spec = SERVER_TOOL_REGISTRY.get(str(execution.get("name") or "")) or {}
+        if spec.get("effect") != "command" or execution.get("status") != "running":
+            continue
+        # A process that was active when the service exited has an unknown
+        # external outcome. Persist a synthetic result and never launch it a
+        # second time during credential recovery.
+        result = {
+            "ok": False,
+            "action": "run_command",
+            "command": str(execution.get("command") or ""),
+            "cwd": str(execution.get("cwd") or ""),
+            "exitCode": None,
+            "stdout": str(execution.get("stdout") or ""),
+            "stderr": str(execution.get("stderr") or ""),
+            "interrupted": True,
+            "unknownState": True,
+            "notReplayed": True,
+            "error": "Command was interrupted by a service restart; its external effects are unknown and it was not replayed.",
+        }
+        execution["status"] = "completed"
+        execution["result"] = result
+        execution["error"] = result["error"]
+        execution["completedAt"] = now_iso()
     return {
         "id": run_id,
         "session_id": str(record.get("sessionId") or ""),
@@ -756,7 +798,7 @@ def _agent_run_from_record(record):
         "pending_tool_calls": list(record.get("pendingToolCalls") or []),
         "pending_input": _json_clone(record.get("pendingInput")) if isinstance(record.get("pendingInput"), dict) else None,
         "pending_authorization": pending_authorization,
-        "tool_executions": dict(record.get("toolExecutions") or {}),
+        "tool_executions": tool_executions,
         "usage": dict(record.get("usage") or {}),
         "result": dict(record.get("result") or {}),
         "events": events,
@@ -769,6 +811,8 @@ def _agent_run_from_record(record):
         "cancel_event": threading.Event(),
         "keys": [],
         "active_runtime_id": "",
+        "active_process": None,
+        "active_command_call_id": "",
         "worker": None,
     }
 
@@ -1128,6 +1172,97 @@ def _agent_edit_authorization_request(run, call, proposal):
     }
 
 
+def _agent_command_authorization_request(run, call):
+    call_id = str(call.get("id") or "")
+    arguments = call.get("arguments") or {}
+    command = str(arguments.get("command") or "").strip()
+    authorization_id = hashlib.sha256(
+        f"{run['id']}\0{call_id}\0{call.get('fingerprint') or ''}\0run_command".encode("utf-8")
+    ).hexdigest()
+    return {
+        "authorizationId": authorization_id,
+        "toolCallId": call_id,
+        "action": "run_command",
+        "command": command,
+        "description": str(arguments.get("description") or ""),
+        "decision": "pending",
+        "requestedAt": now_iso(),
+    }
+
+
+def _submit_agent_command_authorization(run, pending, normalized_decision):
+    authorization_id = str(pending.get("authorizationId") or "")
+    call_id = str(pending.get("toolCallId") or "")
+    with run["condition"]:
+        current = run.get("pending_authorization") or {}
+        if str(current.get("authorizationId") or "") != authorization_id:
+            raise ValueError("Agent authorization request changed before submission")
+        execution = run.get("tool_executions", {}).get(call_id)
+        if not isinstance(execution, dict):
+            raise ValueError("Agent authorization tool execution is missing")
+        execution["authorizationDecision"] = normalized_decision
+        if normalized_decision == "approved":
+            execution["status"] = "authorized"
+            execution["error"] = ""
+            execution["authorizedAt"] = now_iso()
+            result = {
+                "ok": True,
+                "action": "run_command",
+                "command": str(pending.get("command") or ""),
+                "authorized": True,
+                "executed": False,
+            }
+            resume_status = "tools"
+        else:
+            result = {
+                "ok": False,
+                "action": "run_command",
+                "command": str(pending.get("command") or ""),
+                "rejected": True,
+                "error": "User rejected the command.",
+            }
+            execution["status"] = "completed"
+            execution["result"] = _json_clone(result)
+            execution["error"] = result["error"]
+            execution["completedAt"] = now_iso()
+            if not _agent_has_current_tool_message(run, call_id):
+                run["messages"].append({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": "run_command",
+                    "content": _agent_tool_message_content(result),
+                })
+            run["pending_tool_calls"] = [
+                call for call in run.get("pending_tool_calls") or []
+                if call.get("id") != call_id
+            ]
+            resume_status = "tools" if run["pending_tool_calls"] else "model"
+        run["pending_authorization"] = None
+        run["keys"] = []
+        run["status"] = "waiting_credentials"
+        run["resume_status"] = resume_status
+        run["updated_at"] = now_iso()
+        run["condition"].notify_all()
+
+    _append_agent_event(run, "authorization_submitted", {
+        "authorizationId": authorization_id,
+        "toolCallId": call_id,
+        "decision": normalized_decision,
+    })
+    if normalized_decision == "rejected":
+        _append_agent_event(run, "tool_completed", {
+            "toolCallId": call_id,
+            "name": "run_command",
+            "result": result,
+            "replayed": False,
+        })
+    _append_agent_event(run, "waiting_credentials", {
+        "resumeStatus": resume_status,
+        "reason": "authorization_submitted",
+    })
+    return result
+
+
 def _submit_agent_authorization(run, authorization_id, decision):
     normalized_decision = str(decision or "").strip().lower()
     if normalized_decision not in {"approved", "rejected"}:
@@ -1141,6 +1276,8 @@ def _submit_agent_authorization(run, authorization_id, decision):
     expected_id = str(pending.get("authorizationId") or "")
     if authorization_id and str(authorization_id) != expected_id:
         raise ValueError("Agent authorization request changed before submission")
+    if pending.get("action") == "run_command":
+        return _submit_agent_command_authorization(run, pending, normalized_decision)
     call_id = str(pending.get("toolCallId") or "")
     proposal = pending.get("proposal") or {}
 
@@ -1266,10 +1403,15 @@ def _execute_agent_pending_tools(run):
             and execution.get("status") == "applying_edit"
             and isinstance(execution.get("proposal"), dict)
         )
+        resuming_command = bool(
+            execution
+            and execution.get("status") == "authorized"
+            and execution.get("authorizationDecision") == "approved"
+        )
         if reused_execution:
             result = execution.get("result") or {}
         else:
-            if not resuming_proposal:
+            if not resuming_proposal and not resuming_command:
                 execution = {
                     "name": name,
                     "arguments": (call.get("function") or {}).get("arguments", "{}"),
@@ -1338,6 +1480,70 @@ def _execute_agent_pending_tools(run):
                         raise ValueError(
                             f"permission profile does not allow edit proposals: {permission_profile}"
                         )
+                elif spec.get("effect") == "command":
+                    if call.get("parseError") or not isinstance(call.get("arguments"), dict):
+                        raise ValueError(call.get("parseError") or "tool arguments must be an object")
+                    arguments = call["arguments"]
+                    command = str(arguments.get("command") or "").strip()
+                    safe, reason = is_safe_command(command)
+                    if not safe:
+                        raise ValueError(reason)
+                    permission_profile = run.get("permission_profile", "read")
+                    execution["command"] = command
+                    execution["description"] = str(arguments.get("description") or "")
+                    execution["nonReplayable"] = True
+                    command_root, _ = resolve_project_path("")
+                    execution["cwd"] = str(command_root)
+                    if permission_profile == "accept" and not resuming_command:
+                        pending_authorization = _agent_command_authorization_request(run, call)
+                        execution["status"] = "waiting_authorization"
+                        execution["result"] = None
+                        run["pending_authorization"] = pending_authorization
+                        run["keys"] = []
+                        _set_agent_status(run, "waiting_authorization")
+                        _append_agent_event(
+                            run,
+                            "authorization_required",
+                            _agent_public_pending_authorization(run),
+                        )
+                        return False
+                    if permission_profile != "bypass" and not resuming_command:
+                        raise ValueError(
+                            f"permission profile does not allow commands: {permission_profile}"
+                        )
+                    execution["status"] = "running"
+                    execution["startedAt"] = now_iso()
+                    execution["stdout"] = str(execution.get("stdout") or "")[-20000:]
+                    execution["stderr"] = str(execution.get("stderr") or "")[-20000:]
+                    execution["stdoutChars"] = int(execution.get("stdoutChars") or 0)
+                    execution["stderrChars"] = int(execution.get("stderrChars") or 0)
+                    _append_agent_event(run, "command_started", {
+                        "toolCallId": call_id,
+                        "command": command,
+                    })
+
+                    def on_output(stream_name, chunk):
+                        with run["condition"]:
+                            current = run.get("tool_executions", {}).get(call_id)
+                            if not isinstance(current, dict):
+                                return
+                            current[stream_name] = (str(current.get(stream_name) or "") + chunk)[-20000:]
+                            count_key = f"{stream_name}Chars"
+                            current[count_key] = int(current.get(count_key) or 0) + len(chunk)
+                            current["lastOutputAt"] = now_iso()
+                        _persist_agent_run(run)
+
+                    def set_process(process):
+                        with run["condition"]:
+                            run["active_process"] = process
+                            run["active_command_call_id"] = call_id if process is not None else ""
+
+                    result = execute_run_command_tool(
+                        arguments,
+                        cancel_event=run["cancel_event"],
+                        output_callback=on_output,
+                        process_callback=set_process,
+                    )
                 elif (
                     spec.get("effect") != "read"
                     or not spec.get("idempotent")
@@ -1485,6 +1691,8 @@ def _agent_run_worker(run):
             if run.get("worker") is current_worker:
                 run["keys"] = []
                 run["active_runtime_id"] = ""
+                run["active_process"] = None
+                run["active_command_call_id"] = ""
                 run["worker"] = None
 
 
@@ -1556,6 +1764,8 @@ def _create_agent_run(
         "cancel_event": threading.Event(),
         "keys": [str(key) for key in keys if str(key)],
         "active_runtime_id": "",
+        "active_process": None,
+        "active_command_call_id": "",
         "worker": None,
     }
     with _agent_run_lock:
@@ -1617,6 +1827,31 @@ def _cancel_agent_run(run_id):
     runtime_id = run.get("active_runtime_id")
     if runtime_id:
         _cancel_model_runtime_run(runtime_id)
+    process = run.get("active_process")
+    command_call_id = str(run.get("active_command_call_id") or "")
+    if process is not None:
+        _terminate_command_process(process)
+    if command_call_id:
+        with run["condition"]:
+            execution = run.get("tool_executions", {}).get(command_call_id)
+            if isinstance(execution, dict) and execution.get("status") == "running":
+                result = {
+                    "ok": False,
+                    "action": "run_command",
+                    "command": str(execution.get("command") or ""),
+                    "cwd": str(execution.get("cwd") or ""),
+                    "exitCode": None,
+                    "stdout": str(execution.get("stdout") or ""),
+                    "stderr": str(execution.get("stderr") or ""),
+                    "cancelled": True,
+                    "error": "Command cancelled.",
+                }
+                execution["status"] = "cancelled"
+                execution["result"] = result
+                execution["error"] = result["error"]
+                execution["completedAt"] = now_iso()
+            run["active_process"] = None
+            run["active_command_call_id"] = ""
     _finish_agent_run(run, "cancelled")
     return run
 
@@ -3381,6 +3616,188 @@ def execute_web_fetch_tool(body):
         }
 
 
+def _terminate_command_process(process):
+    if process is None or process.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=5,
+                **_hidden_subprocess_kwargs(),
+            )
+        else:
+            process.terminate()
+            process.wait(timeout=3)
+    except Exception:
+        try:
+            process.kill()
+        except Exception:
+            pass
+
+
+def execute_run_command_tool(
+    body,
+    *,
+    cancel_event=None,
+    output_callback=None,
+    process_callback=None,
+):
+    body = dict(body or {})
+    command = (body.get("command") or "").strip()
+    if body.get("permissionProfile") == "plan":
+        return {
+            "ok": False,
+            "action": "run_command",
+            "command": command,
+            "blocked": True,
+            "error": "当前权限模式为计划，不允许运行命令",
+        }
+    if not command:
+        return {
+            "ok": False,
+            "action": "run_command",
+            "blocked": True,
+            "error": "命令不能为空。请提供 command 参数。脚本超过 2000 字符请用 write_file 写入文件后 python 执行。",
+        }
+    safe, reason = is_safe_command(command)
+    if not safe:
+        return {
+            "ok": False,
+            "action": "run_command",
+            "command": command,
+            "blocked": True,
+            "error": reason,
+        }
+    try:
+        timeout_seconds = int(body.get("timeout") or MAX_COMMAND_SECONDS)
+    except (TypeError, ValueError):
+        timeout_seconds = MAX_COMMAND_SECONDS
+    timeout_seconds = max(1, min(timeout_seconds, MAX_COMMAND_SECONDS))
+    root, _ = resolve_project_path("")
+    process = None
+    output_lock = threading.Lock()
+    output = {"stdout": "", "stderr": "", "stdoutChars": 0, "stderrChars": 0}
+
+    def consume(stream, stream_name):
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        try:
+            while True:
+                raw = os.read(stream.fileno(), 4096)
+                if not raw:
+                    break
+                chunk = decoder.decode(raw)
+                if not chunk:
+                    continue
+                with output_lock:
+                    output[stream_name] = (output[stream_name] + chunk)[-20000:]
+                    output[f"{stream_name}Chars"] += len(chunk)
+                if callable(output_callback):
+                    output_callback(stream_name, chunk)
+            final_chunk = decoder.decode(b"", final=True)
+            if final_chunk:
+                with output_lock:
+                    output[stream_name] = (output[stream_name] + final_chunk)[-20000:]
+                    output[f"{stream_name}Chars"] += len(final_chunk)
+                if callable(output_callback):
+                    output_callback(stream_name, final_chunk)
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+    started_at = time.monotonic()
+    cancelled = False
+    timed_out = False
+    powershell_script = (
+        "$global:LASTEXITCODE = $null\n"
+        "& {\n"
+        f"{command}\n"
+        "}\n"
+        "$codeCommandSucceeded = $?\n"
+        "$codeNativeExit = $LASTEXITCODE\n"
+        "if ($null -ne $codeNativeExit -and $codeNativeExit -ne 0) { exit $codeNativeExit }\n"
+        "if (-not $codeCommandSucceeded) { exit 1 }\n"
+        "exit 0"
+    )
+    try:
+        process = subprocess.Popen(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", powershell_script],
+            cwd=str(root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=0,
+            **_hidden_subprocess_kwargs(),
+        )
+        if callable(process_callback):
+            process_callback(process)
+        readers = [
+            threading.Thread(target=consume, args=(process.stdout, "stdout"), daemon=True),
+            threading.Thread(target=consume, args=(process.stderr, "stderr"), daemon=True),
+        ]
+        for reader in readers:
+            reader.start()
+        while process.poll() is None:
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                _terminate_command_process(process)
+                break
+            if time.monotonic() - started_at >= timeout_seconds:
+                timed_out = True
+                _terminate_command_process(process)
+                break
+            time.sleep(0.05)
+        try:
+            exit_code = process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _terminate_command_process(process)
+            exit_code = process.wait(timeout=2)
+        for reader in readers:
+            reader.join(timeout=2)
+    except Exception as exc:
+        _terminate_command_process(process)
+        return {
+            "ok": False,
+            "action": "run_command",
+            "command": command,
+            "cwd": str(root),
+            "exitCode": None,
+            "stdout": output["stdout"],
+            "stderr": output["stderr"],
+            "error": str(exc),
+        }
+    finally:
+        if callable(process_callback):
+            process_callback(None)
+
+    _, stdout_text = scan_injection(output["stdout"])
+    _, stderr_text = scan_injection(output["stderr"])
+    if cancelled:
+        error_text = "Command cancelled."
+    elif timed_out:
+        error_text = f"Command timed out after {timeout_seconds} seconds."
+    elif exit_code != 0:
+        error_text = stderr_text.strip() or f"Exit code {exit_code}"
+    else:
+        error_text = None
+    return {
+        "ok": exit_code == 0 and not cancelled and not timed_out,
+        "action": "run_command",
+        "command": command,
+        "cwd": str(root),
+        "exitCode": exit_code,
+        "stdout": stdout_text[-20000:],
+        "stderr": stderr_text[-20000:],
+        "stdoutTruncated": output["stdoutChars"] > 20000,
+        "stderrTruncated": output["stderrChars"] > 20000,
+        "cancelled": cancelled,
+        "timedOut": timed_out,
+        "error": error_text,
+    }
+
+
 _SERVER_TOOL_DEFINITIONS = {
     "request_user_input": {
         "type": "function",
@@ -3544,6 +3961,23 @@ _SERVER_TOOL_DEFINITIONS = {
             },
         },
     },
+    "run_command": {
+        "type": "function",
+        "function": {
+            "name": "run_command",
+            "description": "Run a low-risk command for inspection, tests, builds, or version-control queries.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "PowerShell command to run in the project root."},
+                    "description": {"type": "string", "description": "Short explanation of the command."},
+                    "timeout": {"type": "integer", "description": "Optional timeout in seconds, capped by the server."},
+                },
+                "required": ["command"],
+                "additionalProperties": False,
+            },
+        },
+    },
     "propose_edit": {
         "type": "function",
         "function": {
@@ -3620,6 +4054,13 @@ SERVER_TOOL_REGISTRY = {
         "definition": _SERVER_TOOL_DEFINITIONS["read_skill_resource"],
         "effect": "read",
         "idempotent": True,
+        "background": True,
+    },
+    "run_command": {
+        "execute": execute_run_command_tool,
+        "definition": _SERVER_TOOL_DEFINITIONS["run_command"],
+        "effect": "command",
+        "idempotent": False,
         "background": True,
     },
     "propose_edit": {
@@ -5224,58 +5665,8 @@ class CodeHandler(BaseHTTPRequestHandler):
         })
 
     def tool_run_command(self):
-        body = self.read_body_json()
-        if body.get("permissionProfile") == "plan":
-            self.send_json({
-                "ok": False,
-                "action": "run_command",
-                "command": body.get("command") or "",
-                "error": "当前权限模式为计划，不允许运行命令",
-            }, 400)
-            return
-        command = (body.get("command") or "").strip()
-        if not command:
-            self.send_json({
-                "ok": False,
-                "action": "run_command",
-                "error": "命令不能为空。请提供 command 参数。脚本超过 2000 字符请用 write_file 写入文件后 python 执行。",
-            }, 400)
-            return
-        ok, reason = is_safe_command(command)
-        if not ok:
-            self.send_json({
-                "ok": False,
-                "action": "run_command",
-                "command": command,
-                "error": reason,
-            }, 400)
-            return
-
-        root, _ = resolve_project_path("")
-        completed = subprocess.run(
-            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=MAX_COMMAND_SECONDS,
-            **_hidden_subprocess_kwargs(),
-        )
-        ok = completed.returncode == 0
-        error = None if ok else (completed.stderr.strip() or f"Exit code {completed.returncode}")
-        _, stdout_text = scan_injection(completed.stdout)
-        _, stderr_text = scan_injection(completed.stderr)
-        self.send_json({
-            "ok": ok,
-            "action": "run_command",
-            "command": command,
-            "cwd": str(root),
-            "exitCode": completed.returncode,
-            "stdout": stdout_text[-20000:],
-            "stderr": stderr_text[-20000:],
-            "error": error,
-        })
+        result = execute_registered_tool("run_command", self.read_body_json())
+        self.send_json(result, 400 if result.get("blocked") else 200)
 
     def tool_write_file(self):
         body = self.read_body_json()

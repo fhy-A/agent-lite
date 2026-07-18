@@ -6,7 +6,7 @@
 
 ## 当前边界
 
-截至 2026-07-18，服务端同时具备两层运行时：单次模型轮次由 `/api/runtime/runs` 持有；独立的 `/api/agent/runs` 持久化多轮消息，并能按任务工具策略自动执行四个项目读取工具、`web_fetch`、`use_skill` 和 `read_skill_resource`。AgentRun 也已具备结构化问卷等待、编辑提案、`waiting_authorization` 持久授权和幂等应用协议；正式前端能够投影问卷与 diff 审查卡片、跨刷新恢复并提交决定。由于计划/接受编辑档位仍包含尚未迁移的命令、直接写入/删除和子任务工具，“只读分析”仍是当前唯一正式所有权开关，其余档位继续由浏览器端 `runAgentLoop()` 编排。
+截至 2026-07-18，服务端同时具备两层运行时：单次模型轮次由 `/api/runtime/runs` 持有；独立的 `/api/agent/runs` 持久化多轮消息，并能按任务工具策略自动执行项目读取、网络、Skills 和命令工具。AgentRun 也已具备结构化问卷等待，以及编辑与命令共用的 `waiting_authorization` 持久授权协议；编辑应用可幂等回放，命令则持久保存有限输出、支持取消，并在服务重启后明确标记结果未知且禁止重放。正式前端能够投影问卷与编辑 diff 审查卡片、跨刷新恢复并提交决定。由于计划/接受编辑档位仍包含尚未迁移的直接写入/删除、记忆保存和子任务工具，“只读分析”仍是当前唯一正式所有权开关，其余档位继续由浏览器端 `runAgentLoop()` 编排。
 
 正式界面目前有两条互斥链路：
 
@@ -25,7 +25,7 @@
 | SSE 原始事件缓存 | 服务端 | 服务端 |
 | 模型轮次结构化结果 | 服务端（阶段 1） | 服务端 |
 | Agent 消息构造 | 只读档位在服务端；其他档位在浏览器 | 服务端 |
-| 工具注册与执行编排 | 项目读取、网络、Skills 及编辑提案/应用协议在服务端；正式命令、直接写入/删除和子任务仍在浏览器 | 服务端 |
+| 工具注册与执行编排 | 项目读取、网络、Skills、命令及编辑提案/应用协议在服务端；正式直接写入/删除、记忆保存和子任务仍在浏览器 | 服务端 |
 | 结构化问卷等待状态 | 服务端状态机；浏览器只提交答案 | 服务端状态机；浏览器只提交答案 |
 | 副作用权限决定 | 编辑授权状态和卡片投影已完成，常规编辑任务仍由浏览器编排 | 服务端状态机；浏览器只提交决定 |
 | 子任务调度 | 浏览器 | 服务端 |
@@ -49,13 +49,15 @@
 - `propose_edit` 已作为 `effect=proposal`、`idempotent=true` 工具加入注册表；计划档位只返回提案，接受编辑档位持久等待授权，自动档位可通过同一幂等应用服务执行。正式界面尚未切换这些档位。
 - `web_fetch`、`use_skill` 和 `read_skill_resource` 已拆成可直接调用的服务函数并加入注册表；现有 HTTP 路由与 AgentRun 共用实现，运行结果可进入持久工具检查点而无需浏览器中继。
 - Skill 资源读取只允许 `scripts/`、`references/` 和 `assets/` 内的文件，并同时校验 Skill 名称和解析后的资源根目录，拒绝跨目录访问。
-- 后续命令、直接写入/删除和子任务工具将在各自的权限、输出检查点及幂等协议确定后加入注册表。
+- `run_command` 已作为 `effect=command`、`idempotent=false` 工具加入注册表；HTTP 与 AgentRun 共用安全检查和进程服务，`accept` 持久等待授权，`bypass` 可直接执行。运行输出按上限持续写入工具检查点，取消会终止进程树，服务重启后绝不自动重放已启动命令。
+- 后续直接写入/删除、记忆保存和子任务工具将在各自的权限、检查点及幂等协议确定后加入注册表。
 
 ### 阶段 3：持久化 AgentRun 状态机（只读闭环已完成）
 
 - 已新增任务级 `AgentRun`，持有模型参数、消息、轮次、工具结果、累计用量、状态和事件游标，并写入 `data/agent-runs/{id}.json`。
 - 当前状态包含 `model`、`tools`、`waiting_credentials`、`waiting_user_input`、`waiting_authorization`、`completed`、`failed`、`cancelled`；`pendingInput`、`pendingAuthorization`、对应工具执行和事件均随 AgentRun 持久化。
 - `list_files`、`read_file`、`search_files`、`glob_files`、`web_fetch`、`use_skill` 和 `read_skill_resource` 可在浏览器完全不轮询时自动完成“模型 → 工具 → 模型”闭环；正式“只读分析”入口仍只暴露四个本地项目读取工具，保持现有产品边界不变。
+- `run_command` 可在 `accept` 授权后或 `bypass` 策略下由 AgentRun 执行；stdout/stderr 尾部、字符计数和最后输出时间随运行持久化。活动命令被取消时同步终止进程，服务重启遇到 `running` 检查点时生成 `unknownState + notReplayed` 工具结果，让模型基于不确定状态继续而不是重复执行。
 - 工具执行前持久化调用 ID、规范化参数与指纹；已完成结果可复用，重复调用不会再次触发执行，但仍补齐模型协议要求的工具结果消息。
 - API Key 仅保留在内存；服务重启后活动模型/工具任务转为 `waiting_credentials`，而 `waiting_user_input` 与 `waiting_authorization` 保持可提交决定。答案或授权结果成为工具结果后再进入凭据恢复，从持久化检查点继续。
 - 正式前端已通过“只读分析”显式切换到 AgentRun；其他权限档位保持原链路，避免同一个工具调用同时被浏览器和服务端消费。
@@ -71,8 +73,9 @@
 - [已完成] 文件在等待授权期间被其他任务修改时返回冲突工具结果，不覆盖新内容；拒绝决定同样补成原 `tool_call_id` 的正式工具结果。
 - [已完成] 正式前端将 `pendingAuthorization` 投影为现有 diff 审查卡片，以稳定授权 ID 去重；卡片和决定进度进入会话检查点。刷新后即使原 Promise 已消失，也能直接提交决定并恢复同一个 AgentRun；会话切换只显示当前会话的授权项。
 - [已完成] `web_fetch`、`use_skill` 和 `read_skill_resource` 已进入服务端注册表和 AgentRun 持久执行链；HTTP 工具接口共用同一实现，工具结果和凭据边界由自动化闭环验证。
-- [待完成] 迁移 `plan` / `accept` 仍依赖的命令、直接写入/删除和子任务能力，或为这些能力建立明确的持久客户端委托协议；覆盖齐全后再切换整次任务的单一执行所有权，不能通过缩减工具列表制造静默能力回退。
-- [待完成] 为 `bypass` 建立明确的产品入口与端到端验证；命令和删除分别设计授权、输出检查点和幂等/不可重放边界。
+- [已完成] `run_command` 已接入服务端注册表、持久授权、增量输出、超时、取消和不可重放恢复；批准决定先持久化为 `authorized`，恢复凭据后才启动进程，拒绝直接补成工具结果。
+- [待完成] 迁移 `plan` / `accept` 仍依赖的直接写入/删除、`save_memory` 和子任务能力，或为这些能力建立明确的持久客户端委托协议；覆盖齐全后再切换整次任务的单一执行所有权，不能通过缩减工具列表制造静默能力回退。
+- [待完成] 为 `bypass` 建立明确的产品入口与正式前端端到端验证；直接写入/删除分别复用或扩展现有编辑授权、备份和幂等边界。
 
 ### 阶段 5：子任务与前端瘦身
 
@@ -126,7 +129,7 @@
 - `GET /api/agent/runs/{id}?cursor=N&wait=25`：按游标读取状态、事件、累计用量、工具执行记录和最终结果。
 - `POST /api/agent/runs/{id}/resume`：服务重启后向 `waiting_credentials` 任务重新注入 Key 并继续。
 - `POST /api/agent/runs/{id}/input`：向 `waiting_user_input` 任务提交结构化答案；服务端按持久问题校验答案、完成对应工具调用并转入凭据恢复。
-- `POST /api/agent/runs/{id}/authorization`：向 `waiting_authorization` 任务提交稳定授权 ID 和 `approved` / `rejected` 决定；服务端完成幂等应用或拒绝结果后转入凭据恢复。
+- `POST /api/agent/runs/{id}/authorization`：向 `waiting_authorization` 任务提交稳定授权 ID 和 `approved` / `rejected` 决定；编辑批准会完成幂等应用，命令批准先持久化为待执行授权，拒绝则直接形成工具结果，随后均转入凭据恢复。
 - `DELETE /api/agent/runs/{id}`：取消模型请求和 AgentRun；对已进入终态的任务保持幂等。
 
-持久化记录包含请求选项、消息、轮次、工具检查点、`pendingInput`、`pendingAuthorization` 和事件，但不包含 API Key。显式 Base URL 禁止嵌入用户名或密码，Payload 顶层及嵌套模型选项中的凭据字段会被拒绝。服务端会按权限档位筛选工具：`read` 只允许只读工具和问卷，`plan` / `accept` / `bypass` 才能获得编辑提案工具。
+持久化记录包含请求选项、消息、轮次、工具检查点、`pendingInput`、`pendingAuthorization` 和事件，但不包含 API Key。显式 Base URL 禁止嵌入用户名或密码，Payload 顶层及嵌套模型选项中的凭据字段会被拒绝。服务端会按权限档位筛选工具：`read` 只允许只读工具和问卷，`plan` / `accept` / `bypass` 可获得编辑提案工具，只有 `accept` / `bypass` 可获得命令工具。

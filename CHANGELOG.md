@@ -14,6 +14,21 @@
 
 ---
 
+## 2026-07-18 15:34 · Codex
+
+### 建立 AgentRun 命令授权、增量输出、取消和不可重放协议
+
+- **共享命令服务**：将原 `/api/tools/run_command` 的安全校验与 PowerShell 执行抽成 `execute_run_command_tool` 并加入 `SERVER_TOOL_REGISTRY`，声明为 `effect=command`、`idempotent=false`、`background=true`；HTTP 路由和 AgentRun 共用同一实现，保留危险命令拦截，并新增受服务端上限约束的超时参数、准确的原生命令退出码和 stdout/stderr 截断标记。
+- **权限与授权**：`read` / `plan` 不会获得命令工具；`accept` 遇到命令后生成稳定授权 ID 并进入 `waiting_authorization`，批准只持久化为 `authorized`、不会在决定提交请求中立即执行，待凭据恢复后才启动一次；拒绝不创建进程，直接补成原工具调用结果。`bypass` 可按现有语义直接执行，但正式前端尚未切换所有权。
+- **运行检查点**：活动命令以独立进程运行，后台读取 stdout/stderr，并持续将最近 `20,000` 字符、累计字符数与最后输出时间写入 AgentRun 工具检查点；公开快照可观察进度，最终结果继续经过提示注入扫描并保留退出码、超时与截断状态。
+- **取消与恢复安全**：停止 AgentRun 会终止当前 PowerShell 及其进程树，并把工具执行标为已取消。若服务在命令已启动但完成状态尚未落盘时退出，恢复层会把 `running` 检查点转换为 `interrupted + unknownState + notReplayed` 的失败工具结果；即使命令可能已经产生外部效果，也不会自动执行第二次。
+- **迁移边界**：本阶段没有改动正式前端的执行所有权和命令授权界面；下一阶段处理直接写入/删除与 `save_memory`，之后再迁移子任务。复核工具策略时补记 `save_memory`，避免未来切换 `plan` / `accept` 时静默丢失现有能力。
+- **验证结果**：新增权限筛选、批准后单次执行、拒绝零进程、运行输出落盘、取消进程、重启不重放、HTTP 共享服务、超时和非零退出码回归；命令/安全/恢复/并发定向测试 `202 passed, 6 subtests passed`，AgentRun 定向测试 `24 passed, 2 subtests passed`。首次全量运行因本地模拟上游一次不完整 JSON 读取出现原编辑用例偶发失败，单例及 AgentRun 全集复跑通过，随后完整回归 `520 passed, 14 subtests passed`，Python 编译和 `git diff --check` 通过。
+
+**涉及文件**：`server.py`、`tests/test_agent_runtime.py`、`tests/test_routes.py`、`README.md`、`docs/SERVER_AGENT_LOOP_PLAN.md`、`data/memory/code-architecture.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 15:12 · Codex
 
 ### 将网络与 Skills 只读能力迁入持久 AgentRun

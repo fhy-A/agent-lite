@@ -14,6 +14,7 @@ API_CLIENT_SOURCE = (ROOT / "src" / "services" / "api-client.js").read_text(enco
 SETTINGS_SOURCE = (ROOT / "src" / "features" / "settings.js").read_text(encoding="utf-8")
 DIFF_SOURCE = (ROOT / "src" / "ui" / "diff.js").read_text(encoding="utf-8")
 MARKDOWN_SOURCE = (ROOT / "src" / "ui" / "markdown.js").read_text(encoding="utf-8")
+MESSAGES_SOURCE = (ROOT / "src" / "ui" / "messages.js").read_text(encoding="utf-8")
 PREVIEW_SOURCE = (ROOT / "src" / "features" / "preview.js").read_text(encoding="utf-8")
 FILES_SOURCE = (ROOT / "src" / "features" / "files.js").read_text(encoding="utf-8")
 SKILLS_MEMORY_SOURCE = (ROOT / "src" / "features" / "skills-memory.js").read_text(encoding="utf-8")
@@ -257,6 +258,7 @@ eval(source);
             "src/services/api-client.js",
             "src/ui/diff.js",
             "src/ui/markdown.js",
+            "src/ui/messages.js",
             "src/features/settings.js",
             "src/features/preview.js",
             "src/features/files.js",
@@ -274,6 +276,7 @@ eval(source);
             "./src/services/api-client.js",
             "./src/ui/diff.js",
             "./src/ui/markdown.js",
+            "./src/ui/messages.js",
             "./src/features/settings.js",
             "./src/features/skills-memory.js",
             "./src/features/preview.js",
@@ -794,6 +797,88 @@ process.stdout.write(JSON.stringify({
         self.assertTrue(data["isEdit"])
         self.assertFalse(data["isNotEdit"])
 
+    def test_messages_ui_owns_grouping_projection_and_response_status(self):
+        self.assertIn("Code.ui.messages = Object.freeze", MESSAGES_SOURCE)
+        for obsolete in (
+            "function renderUserProjection(",
+            "function renderThinkingProjection(",
+            "function renderFinalAssistantProjection(",
+            "function renderCompletedRunStatus(",
+            "function renderBackgroundReplyReference(",
+        ):
+            self.assertNotIn(obsolete, APP_SOURCE)
+        self.assertIn("window.copyMessageText = copyMessageText", APP_SOURCE)
+        script = r"""
+global.window = {Code: {ui: {}}};
+require("./src/ui/messages.js");
+const {createMessagesFeature} = window.Code.ui.messages;
+const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+let messages = [];
+const feature = createMessagesFeature({
+  escapeHtml,
+  formatCompact: (value) => String(value),
+  renderMarkdown: (value) => `<md>${escapeHtml(value)}</md>`,
+  t: (key) => key,
+  getMessageText: (msg) => String(msg?.content || ""),
+  getBackgroundJob: (id) => id === "job-1" ? {status: "running"} : null,
+  getMessages: () => messages,
+  getSessionId: () => "session-1",
+  getSelectedModel: () => "model-1",
+  renderNetworkRecoveryStatus: () => "<recovery></recovery>",
+  renderAssistantContent: (value) => `<answer>${escapeHtml(value)}</answer>`,
+  renderCompactSummary: (_msg, index) => `<compact data-index="${index}"></compact>`,
+  renderBranchFlow: (title) => `<branch>${escapeHtml(title)}</branch>`,
+  isEditSuggestionMessage: (msg) => Boolean(msg?.meta?.edit),
+  renderEditSuggestion: (_msg, index) => `<edit data-index="${index}"></edit>`,
+});
+messages = [
+  {role: "user", content: "run <task>", meta: {backgroundDispatch: {id: "job-1"}}},
+  {role: "assistant", content: "inspect project", meta: {toolCalls: [{id: "call-1"}]}},
+  {role: "tool-call", content: "hidden tool"},
+  {role: "assistant", content: "done", _model: "model-1", meta: {_usage: {input: 12, output: 3}}, _responseTime: "4s"},
+  {role: "assistant", content: "background done", meta: {kind: "background-subagent", jobId: "job-1", _usage: {input: 2}}},
+  {role: "tool-result", content: "diff", meta: {edit: true}},
+  {role: "assistant", content: "hidden internal", meta: {_system: true}},
+];
+const html = feature.projectMessages(messages, {
+  hasActiveRun: true,
+  branchMarker: {messageCount: 1, parentTitle: "Parent"},
+});
+const streaming = feature.renderFinalAssistantProjection({
+  role: "assistant",
+  content: "streaming answer",
+  streaming: true,
+  _streamProjection: "answer",
+}, 9);
+const usageOnly = feature.renderCompletedRunStatus("model-1", "", {input: 8});
+process.stdout.write(JSON.stringify({html, streaming, usageOnly}));
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        html = data["html"]
+        self.assertLess(html.index("run &lt;task&gt;"), html.index("data-active-run-anchor"))
+        self.assertLess(html.index("data-active-run-anchor"), html.index("<branch>Parent</branch>"))
+        self.assertLess(html.index("<branch>Parent</branch>"), html.index("thinking-process"))
+        self.assertLess(html.index("thinking-process"), html.index("<answer>done</answer>"))
+        self.assertLess(html.index("<answer>done</answer>"), html.index("background-reply-reference"))
+        self.assertLess(html.index("background-reply-reference"), html.index("<edit data-index=\"5\">"))
+        self.assertIn("backgroundRunning", html)
+        self.assertIn("inspect project", html)
+        self.assertIn("background done", html)
+        self.assertNotIn("hidden tool", html)
+        self.assertNotIn("hidden internal", html)
+        self.assertIn('data-stream-session="session-1"', data["streaming"])
+        self.assertIn('data-stream-kind="answer"', data["streaming"])
+        self.assertIn("<recovery></recovery>", data["streaming"])
+        self.assertNotIn("0s", data["usageOnly"])
+
     def test_preview_feature_exports_parsing_urls_and_width_rules(self):
         self.assertIn("features.preview = Object.freeze", PREVIEW_SOURCE)
         script = """
@@ -1054,10 +1139,10 @@ process.stdout.write(JSON.stringify({
         self.assertIn("width: min(680px, calc(100% - 48px));", STYLE_SOURCE)
 
     def test_thought_projection_only_collects_tool_round_summaries(self):
-        render_start = APP_SOURCE.index("function renderMessages()")
-        assistant_start = APP_SOURCE.index('if (msg.role === "assistant") {', render_start)
-        assistant_end = APP_SOURCE.index('if (msg.role === "user") {', assistant_start)
-        assistant_block = APP_SOURCE[assistant_start:assistant_end]
+        render_start = MESSAGES_SOURCE.index("function projectMessages(")
+        assistant_start = MESSAGES_SOURCE.index('if (msg.role === "assistant") {', render_start)
+        assistant_end = MESSAGES_SOURCE.index('if (msg.role === "user") {', assistant_start)
+        assistant_block = MESSAGES_SOURCE[assistant_start:assistant_end]
 
         self.assertIn(
             'const streamingToolRound = msg.streaming && msg._streamProjection === "thinking"',
@@ -1072,9 +1157,9 @@ process.stdout.write(JSON.stringify({
             assistant_block.index("if (msg.meta?.toolCalls?.length || streamingToolRound) {"),
             assistant_block.index("pendingThoughts.push"),
         )
-        projection_start = APP_SOURCE.index("function renderThinkingProjection")
-        projection_end = APP_SOURCE.index("function renderAssistantResponseInfo", projection_start)
-        projection = APP_SOURCE[projection_start:projection_end]
+        projection_start = MESSAGES_SOURCE.index("function renderThinkingProjection")
+        projection_end = MESSAGES_SOURCE.index("function renderAssistantResponseInfo", projection_start)
+        projection = MESSAGES_SOURCE[projection_start:projection_end]
         self.assertIn('data-stream-kind="thinking"', projection)
         self.assertIn('data-stream-part="summary"', projection)
         self.assertNotIn('t("thoughtProcess")', projection)
@@ -1112,11 +1197,11 @@ process.stdout.write(JSON.stringify({
         self.assertIn("margin-bottom: 20px", STYLE_SOURCE[thought_spacing_start:thought_spacing_end])
 
     def test_streaming_projection_switches_kind_without_leaking_raw_reasoning(self):
-        projection_start = APP_SOURCE.index("function renderFinalAssistantProjection")
-        projection_end = APP_SOURCE.index("function createCompactSummaryMessage", projection_start)
-        projection = APP_SOURCE[projection_start:projection_end]
+        projection_start = MESSAGES_SOURCE.index("function renderFinalAssistantProjection")
+        projection_end = MESSAGES_SOURCE.index("function projectMessages", projection_start)
+        projection = MESSAGES_SOURCE[projection_start:projection_end]
 
-        self.assertIn('data-stream-session="${escapeHtml(state.sessionId || "")}"', projection)
+        self.assertIn('data-stream-session="${escapeHtml(getSessionId() || "")}"', projection)
         self.assertIn('const streamKind = msg._streamProjection === "answer" ? "answer" : "pending"', projection)
         self.assertIn('data-stream-kind="${streamKind}"', projection)
         self.assertIn('streamKind === "pending" ? " is-pending" : ""', projection)
@@ -1165,7 +1250,7 @@ process.stdout.write(JSON.stringify({
 
     def test_active_run_banner_uses_one_stable_task_status(self):
         helper_start = APP_SOURCE.index("function ensureActiveRunBannerStructure")
-        helper_end = APP_SOURCE.index("function normalizeResponseUsage", helper_start)
+        helper_end = APP_SOURCE.index("function cloneUsageStats", helper_start)
         helper = APP_SOURCE[helper_start:helper_end]
         self.assertEqual(helper.count("banner.innerHTML ="), 1)
         self.assertIn('nodes.label.textContent = t("processingLabel")', helper)
@@ -1187,14 +1272,16 @@ process.stdout.write(JSON.stringify({
         render_start = APP_SOURCE.index("function renderMessages()")
         render_end = APP_SOURCE.index("function isProcessMessage", render_start)
         render = APP_SOURCE[render_start:render_end]
-        user_start = render.index('if (msg.role === "user") {')
-        user_end = render.index("continue;", user_start)
-        user_projection = render[user_start:user_end]
+        project_start = MESSAGES_SOURCE.index("function projectMessages(")
+        user_start = MESSAGES_SOURCE.index('if (msg.role === "user") {', project_start)
+        user_end = MESSAGES_SOURCE.index("continue;", user_start)
+        user_projection = MESSAGES_SOURCE[user_start:user_end]
         self.assertLess(
-            user_projection.index("rows.push(renderUserProjection(msg, j))"),
+            user_projection.index("rows.push(renderUserProjection(msg, index))"),
             user_projection.index("insertActiveRunAnchor()"),
         )
-        self.assertIn('data-active-run-anchor', render)
+        self.assertIn('data-active-run-anchor', MESSAGES_SOURCE)
+        self.assertIn("projectMessages(msgs, { hasActiveRun, branchMarker })", render)
         self.assertLess(render.index("parkActiveRunBanner();\n  els.messageList.innerHTML = html"), render.index("mountActiveRunBanner();", render.index("els.messageList.innerHTML = html")))
 
         helper_start = APP_SOURCE.index("function parkActiveRunBanner")

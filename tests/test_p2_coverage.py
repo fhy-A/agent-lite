@@ -280,11 +280,12 @@ class TestCompactSummaryMarker(unittest.TestCase):
     def setUpClass(cls):
         root = Path(__file__).resolve().parent.parent
         cls.source = (root / "app.js").read_text(encoding="utf-8")
+        cls.messages_source = (root / "src" / "ui" / "messages.js").read_text(encoding="utf-8")
         cls.i18n_source = (root / "src" / "core" / "i18n.js").read_text(encoding="utf-8")
 
     def test_compact_summary_has_message_flow_projection(self):
-        self.assertIn('msg.meta?.kind === "compact-summary"', self.source)
-        self.assertIn("renderCompactSummaryProjection(msg, j)", self.source)
+        self.assertIn('msg.meta?.kind === "compact-summary"', self.messages_source)
+        self.assertIn("renderCompactSummary(msg, index)", self.messages_source)
         self.assertIn('class="msg branch-indicator compact-indicator"', self.source)
 
     def test_manual_compaction_uses_summary_message_factory(self):
@@ -318,13 +319,14 @@ class TestBranchFlowMarker(unittest.TestCase):
     def setUpClass(cls):
         root = Path(__file__).resolve().parent.parent
         cls.source = (root / "app.js").read_text(encoding="utf-8")
+        cls.messages_source = (root / "src" / "ui" / "messages.js").read_text(encoding="utf-8")
 
     def test_branch_marker_uses_raw_message_boundary(self):
         self.assertIn("const branchMarker = getBranchFlowMarker();", self.source)
-        self.assertIn("if (j === branchBoundary) insertBranchMarker();", self.source)
+        self.assertIn("if (index === branchBoundary) insertBranchMarker();", self.messages_source)
 
     def test_branch_marker_does_not_splice_projected_rows(self):
-        self.assertNotIn("rows.splice(insertAt", self.source)
+        self.assertNotIn("rows.splice(insertAt", self.messages_source)
 
     def test_plain_session_is_not_treated_as_branch(self):
         self.assertIn("if (!current || current._branchMsgCount == null) return null;", self.source)

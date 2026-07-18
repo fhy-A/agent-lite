@@ -10,6 +10,7 @@ class TestSubAgentFrontend(unittest.TestCase):
     def setUpClass(cls):
         cls.source = (ROOT / "app.js").read_text(encoding="utf-8")
         cls.i18n_source = (ROOT / "src" / "core" / "i18n.js").read_text(encoding="utf-8")
+        cls.messages_source = (ROOT / "src" / "ui" / "messages.js").read_text(encoding="utf-8")
 
     def test_subagent_system_message_stays_system(self):
         self.assertIn('if (msg.role === "system")', self.source)
@@ -107,9 +108,9 @@ class TestSubAgentFrontend(unittest.TestCase):
         self.assertIn("backgroundDispatch: { id, status: \"pending\", agentRunId: \"\", parentTaskStartedAt }", self.source)
 
     def test_background_answer_uses_clickable_reply_reference_without_prompt_prefix(self):
-        self.assertIn("function renderBackgroundReplyReference(msg)", self.source)
-        self.assertIn("data-background-reply-id=", self.source)
-        self.assertIn("data-background-message-id=", self.source)
+        self.assertIn("function renderBackgroundReplyReference(msg)", self.messages_source)
+        self.assertIn("data-background-reply-id=", self.messages_source)
+        self.assertIn("data-background-message-id=", self.messages_source)
         self.assertIn('target.scrollIntoView({ behavior: "smooth", block: "center" })', self.source)
         self.assertNotIn('`**后台处理**：${job.userText.slice(0, 80)}', self.source)
 

@@ -14,6 +14,21 @@
 
 ---
 
+## 2026-07-18 23:53 · Codex
+
+### 抽离消息分组与投影模块，完成前端拆分阶段 3 的第三项
+
+- **消息投影独立**：新增 `src/ui/messages.js`，集中承接内部消息过滤、工具轮次思考摘要分组、用户消息与图片、问卷摘要、最终回答、后台回复引用、编辑建议插槽、分支/压缩插槽及活动任务锚点的稳定顺序投影。
+- **回复状态统一**：Token 用量标准化、耗时状态、消息时间戳和复制按钮迁入消息模块；此前修复的真实耗时持久化与历史缺失耗时降级行为保持不变。
+- **流式边界保持**：`app.js` 仍拥有欢迎页、活动状态栏节点、增量流式 DOM 补丁、事件绑定、自动滚动、会话切换和网络恢复状态；消息模块只通过显式注入组合 Markdown、Diff、分支、压缩和恢复提示，不改变 SSE 或会话协议。
+- **旧实现退场**：`app.js` 删除消息分类、分组和 HTML 投影实现，净减少约 321 行；`index.html` 在应用脚本前加载新模块，正式 EXE 继续通过既有 `src` 资源目录自动收录。
+- **回归保护**：新增独立 Node 投影测试，覆盖用户/助手/工具消息过滤、思考与最终回答分离、活动状态锚点、后台任务状态与回复引用、分支顺序、编辑建议、流式回答、用量及缺失耗时；原刷新恢复、后台任务、压缩与分支测试同步改为验证新所有者，并禁止旧实现回流 `app.js`。
+- **验证结果**：`src/ui/messages.js` 与 `app.js` JavaScript 语法、`git diff --check` 通过；定向回归 `132 passed, 4 subtests passed`，最终全量回归 `559 passed, 25 subtests passed`。人工确认普通只读任务的用户 Markdown、思考摘要、最终回答、模型名、Token、耗时、时间戳、复制按钮、刷新恢复，以及旧后台会话引用定位均正常，未发现重复或闪烁。
+
+**涉及文件**：`src/ui/messages.js`、`app.js`、`index.html`、`tests/test_frontend_modules.py`、`tests/test_p0_stability.py`、`tests/test_p2_coverage.py`、`tests/test_subagent_frontend.py`、`docs/APP_JS_SPLIT_PLAN.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 23:22 · Codex
 
 ### 修复模型回复耗时刷新后丢失并显示为 0s

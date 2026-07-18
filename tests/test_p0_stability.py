@@ -15,6 +15,7 @@ import server as server_mod
 ROOT = Path(__file__).resolve().parent.parent
 APP_SOURCE = (ROOT / "app.js").read_text(encoding="utf-8")
 RUNTIME_SOURCE = (ROOT / "agent-runtime.js").read_text(encoding="utf-8")
+MESSAGES_SOURCE = (ROOT / "src" / "ui" / "messages.js").read_text(encoding="utf-8")
 
 
 class TestFrontendNetworkRecovery(unittest.TestCase):
@@ -50,11 +51,11 @@ class TestFrontendNetworkRecovery(unittest.TestCase):
             self.assertIn(expected, RUNTIME_SOURCE)
         for expected in (
             "networkReconnectStatus",
-            "renderNetworkRecoveryStatus(state.sessionId)",
             'source: "runtime-poll"',
             "network-reconnect-countdown",
         ):
             self.assertIn(expected, APP_SOURCE)
+        self.assertIn("renderNetworkRecoveryStatus(getSessionId())", MESSAGES_SOURCE)
 
 
 class TestFrontendRefreshRecovery(unittest.TestCase):
@@ -206,12 +207,12 @@ class TestFrontendRefreshRecovery(unittest.TestCase):
         self.assertIn("_responseTime: display", timing)
 
     def test_missing_historical_elapsed_does_not_render_fake_zero_seconds(self):
-        status_start = APP_SOURCE.index("function renderCompletedRunStatus")
-        status_end = APP_SOURCE.index("function hasUsageStats", status_start)
-        status = APP_SOURCE[status_start:status_end]
-        response_start = APP_SOURCE.index("function renderAssistantResponseInfo")
-        response_end = APP_SOURCE.index("function renderBackgroundReplyReference", response_start)
-        response = APP_SOURCE[response_start:response_end]
+        status_start = MESSAGES_SOURCE.index("function renderCompletedRunStatus")
+        status_end = MESSAGES_SOURCE.index("function renderUserProjection", status_start)
+        status = MESSAGES_SOURCE[status_start:status_end]
+        response_start = MESSAGES_SOURCE.index("function renderAssistantResponseInfo")
+        response_end = MESSAGES_SOURCE.index("function renderBackgroundReplyReference", response_start)
+        response = MESSAGES_SOURCE[response_start:response_end]
 
         self.assertIn("const elapsedHtml = elapsed", status)
         self.assertIn("usageHtml && elapsedHtml", status)

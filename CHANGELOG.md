@@ -14,6 +14,21 @@
 
 ---
 
+## 2026-07-18 16:32 · Codex
+
+### 将顺序子任务迁入持久 Child AgentRun，打通授权、取消与重启复用
+
+- **持久子任务协议**：将 `task` 以 `effect=delegation`、`idempotent=true`、`background=true` 加入服务端工具注册表，仅向 `plan` / `accept` / `bypass` 提供。每个父工具调用创建独立 AgentRun，并持久化 `parentAgentRunId`、`parentToolCallId` 与深度；子任务继承父任务模型、权限和允许工具，同时移除 `task` 与 `request_user_input`，禁止权限提升、孙级委派和子问卷。
+- **单一执行与崩溃恢复**：父工具检查点先保存 Child AgentRun ID，再启动子任务；父任务或服务重启后按原 ID 恢复活动子任务或复用终态结果，不发起第二次子模型请求。子任务结果、轮次、工具统计和用量写回父工具结果，用量通过持久 `childUsageMerged` 标记只累计一次。
+- **父级授权代理**：子任务在 `accept` 下遇到写入、删除、命令或编辑授权时，父 AgentRun 生成稳定代理授权 ID，并把安全的 action、path、diff 或 command 信息投影到原 `waiting_authorization` 协议。用户决定转发到原 Child AgentRun，父子任务均转入凭据恢复后继续，API Key 不进入任一运行记录。
+- **取消传播**：取消父 AgentRun 会递归取消所有活动 Child AgentRun 及其模型轮次/命令；子任务失败或取消形成明确的父工具结果，不遗留独立后台执行。
+- **迁移边界**：本阶段只实现确定性的顺序子任务，不切换正式 `plan` / `accept` / `bypass` 前端所有权。下一阶段补齐同一模型轮次多个 `task` 调用的有界并发和结果排序，再进行正式界面端到端切换。
+- **验证结果**：新增权限筛选、父子元数据/工具继承、用量单次合并、子写入授权代理、父级取消传播及完成子任务重启复用回归；AgentRun/HTTP 定向回归 `91 passed, 19 subtests passed`，最终全量回归 `530 passed, 25 subtests passed`，Python 编译与 `git diff --check` 通过。
+
+**涉及文件**：`server.py`、`tests/test_agent_runtime.py`、`tests/test_routes.py`、`README.md`、`docs/SERVER_AGENT_LOOP_PLAN.md`、`data/memory/code-architecture.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 16:03 · Codex
 
 ### 将直接写入与删除迁入持久 AgentRun，建立授权后执行与崩溃恢复闭环

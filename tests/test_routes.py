@@ -159,7 +159,7 @@ class TestFileTools(TestServerFixture):
         self.assertEqual(set(server_mod.SERVER_TOOL_REGISTRY), {
             "request_user_input", "list_files", "read_file", "search_files", "glob_files",
             "web_fetch", "use_skill", "read_skill_resource", "save_memory", "run_command",
-            "propose_edit", "write_file", "delete_file",
+            "propose_edit", "write_file", "delete_file", "task",
         })
         interaction = server_mod.SERVER_TOOL_REGISTRY["request_user_input"]
         self.assertEqual(interaction["effect"], "interaction")
@@ -190,6 +190,11 @@ class TestFileTools(TestServerFixture):
             self.assertEqual(mutation["effect"], "file_mutation")
             self.assertTrue(mutation["idempotent"])
             self.assertTrue(mutation["background"])
+        delegation = server_mod.SERVER_TOOL_REGISTRY["task"]
+        self.assertEqual(delegation["effect"], "delegation")
+        self.assertTrue(delegation["idempotent"])
+        self.assertTrue(delegation["background"])
+        self.assertIsNone(delegation["execute"])
 
     def test_http_read_only_tools_share_registry_results(self):
         cases = [

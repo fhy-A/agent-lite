@@ -535,6 +535,12 @@ def _agent_selected_tools(payload, allowed_tools=None, permission_profile="read"
             and spec.get("background")
             and permission_profile in {"accept", "bypass"}
         )
+        durable_delegation = (
+            spec.get("effect") == "delegation"
+            and spec.get("idempotent")
+            and spec.get("background")
+            and permission_profile in {"plan", "accept", "bypass"}
+        )
         if not (
             safe_read
             or safe_interaction
@@ -542,6 +548,7 @@ def _agent_selected_tools(payload, allowed_tools=None, permission_profile="read"
             or gated_command
             or durable_memory
             or durable_file_mutation
+            or durable_delegation
         ):
             continue
         definition = _agent_registry_tool_definition(name)
@@ -557,6 +564,9 @@ def _agent_run_record(run):
         "version": 1,
         "id": run["id"],
         "sessionId": run["session_id"],
+        "parentAgentRunId": run.get("parent_agent_run_id", ""),
+        "parentToolCallId": run.get("parent_tool_call_id", ""),
+        "agentDepth": int(run.get("agent_depth") or 0),
         "status": run["status"],
         "resumeStatus": run.get("resume_status", ""),
         "permissionProfile": run.get("permission_profile", "read"),
@@ -609,6 +619,7 @@ def _agent_public_tool_executions(run):
             "stdoutChars": int(execution.get("stdoutChars") or 0),
             "stderrChars": int(execution.get("stderrChars") or 0),
             "lastOutputAt": str(execution.get("lastOutputAt") or ""),
+            "childAgentRunId": str(execution.get("childAgentRunId") or ""),
         })
     return items
 
@@ -638,6 +649,8 @@ def _agent_public_pending_authorization(run):
     if pending.get("action") == "run_command":
         public["command"] = str(pending.get("command") or "")
         public["description"] = str(pending.get("description") or "")
+    if pending.get("childAgentRunId"):
+        public["childAgentRunId"] = str(pending.get("childAgentRunId") or "")
     return public
 
 
@@ -653,6 +666,9 @@ def _agent_snapshot(run, cursor=0):
         return {
             "agentRunId": run["id"],
             "sessionId": run["session_id"],
+            "parentAgentRunId": run.get("parent_agent_run_id", ""),
+            "parentToolCallId": run.get("parent_tool_call_id", ""),
+            "agentDepth": int(run.get("agent_depth") or 0),
             "status": run["status"],
             "permissionProfile": run.get("permission_profile", "read"),
             "error": run.get("error", ""),
@@ -805,6 +821,9 @@ def _agent_run_from_record(record):
     return {
         "id": run_id,
         "session_id": str(record.get("sessionId") or ""),
+        "parent_agent_run_id": str(record.get("parentAgentRunId") or ""),
+        "parent_tool_call_id": str(record.get("parentToolCallId") or ""),
+        "agent_depth": max(0, int(record.get("agentDepth") or 0)),
         "status": status,
         "resume_status": resume_status,
         "permission_profile": permission_profile,
@@ -1374,6 +1393,96 @@ def _submit_agent_file_authorization(run, pending, normalized_decision):
     return result
 
 
+def _submit_agent_child_authorization(run, pending, normalized_decision):
+    child_run_id = str(pending.get("childAgentRunId") or "")
+    child_authorization_id = str(pending.get("childAuthorizationId") or "")
+    child_tool_call_id = str(pending.get("childToolCallId") or "")
+    parent_tool_call_id = str(pending.get("toolCallId") or "")
+    expected_id = str(pending.get("authorizationId") or "")
+    child = _get_agent_run(child_run_id)
+    if not child:
+        raise ValueError("Delegated child Agent run no longer exists")
+
+    with run["condition"]:
+        current = run.get("pending_authorization") or {}
+        if str(current.get("authorizationId") or "") != expected_id:
+            raise ValueError("Agent authorization request changed before submission")
+        if current.get("submitting"):
+            raise ValueError("Agent authorization decision is already being applied")
+        current["decision"] = normalized_decision
+        current["decidedAt"] = now_iso()
+        current["submitting"] = True
+        run["updated_at"] = now_iso()
+    _persist_agent_run(run)
+
+    try:
+        if child.get("status") == "waiting_authorization":
+            child_result = _submit_agent_authorization(
+                child, child_authorization_id, normalized_decision,
+            )
+        elif child.get("status") == "waiting_credentials":
+            # The child decision may have been persisted immediately before a
+            # service interruption. Accept the identical replay instead of
+            # trying to submit the authorization twice.
+            child_execution = (child.get("tool_executions") or {}).get(child_tool_call_id) or {}
+            if child_execution.get("authorizationDecision") != normalized_decision:
+                raise ValueError("Delegated child authorization state changed before submission")
+            child_result = child_execution.get("result") or {
+                "ok": normalized_decision == "approved",
+                "action": str(pending.get("action") or ""),
+                "authorized": normalized_decision == "approved",
+                "rejected": normalized_decision == "rejected",
+                "replayed": True,
+            }
+        else:
+            raise ValueError(
+                f"Delegated child Agent is not waiting for authorization: {child.get('status')}"
+            )
+    except Exception:
+        with run["condition"]:
+            current = run.get("pending_authorization") or {}
+            if str(current.get("authorizationId") or "") == expected_id:
+                current["submitting"] = False
+                current["decision"] = "pending"
+                run["updated_at"] = now_iso()
+        _persist_agent_run(run)
+        raise
+
+    with run["condition"]:
+        current = run.get("pending_authorization") or {}
+        if str(current.get("authorizationId") or "") != expected_id:
+            raise ValueError("Agent authorization request changed during submission")
+        execution = (run.get("tool_executions") or {}).get(parent_tool_call_id)
+        if not isinstance(execution, dict):
+            raise ValueError("Delegated parent tool execution is missing")
+        execution["status"] = "waiting_child"
+        execution["authorizationDecision"] = normalized_decision
+        execution["childAuthorizationId"] = child_authorization_id
+        run["pending_authorization"] = None
+        run["keys"] = []
+        run["status"] = "waiting_credentials"
+        run["resume_status"] = "tools"
+        run["updated_at"] = now_iso()
+        run["condition"].notify_all()
+    _append_agent_event(run, "authorization_submitted", {
+        "authorizationId": expected_id,
+        "toolCallId": parent_tool_call_id,
+        "childAgentRunId": child_run_id,
+        "decision": normalized_decision,
+    })
+    _append_agent_event(run, "waiting_credentials", {
+        "resumeStatus": "tools",
+        "reason": "child_authorization_submitted",
+    })
+    return {
+        "ok": True,
+        "action": "task_authorization",
+        "childAgentRunId": child_run_id,
+        "decision": normalized_decision,
+        "childResult": _json_clone(child_result),
+    }
+
+
 def _submit_agent_authorization(run, authorization_id, decision):
     normalized_decision = str(decision or "").strip().lower()
     if normalized_decision not in {"approved", "rejected"}:
@@ -1387,6 +1496,8 @@ def _submit_agent_authorization(run, authorization_id, decision):
     expected_id = str(pending.get("authorizationId") or "")
     if authorization_id and str(authorization_id) != expected_id:
         raise ValueError("Agent authorization request changed before submission")
+    if pending.get("childAgentRunId"):
+        return _submit_agent_child_authorization(run, pending, normalized_decision)
     if pending.get("action") == "run_command":
         return _submit_agent_command_authorization(run, pending, normalized_decision)
     if pending.get("action") in {"write_file", "delete_file"}:
@@ -1493,6 +1604,192 @@ def _submit_agent_authorization(run, authorization_id, decision):
     return result
 
 
+def _agent_child_system_prompt():
+    return (
+        "You are a focused child coding agent working inside the same project as a parent agent. "
+        "Complete only the delegated task. Inspect the project and use the available tools when useful. "
+        "You inherit the parent's permission profile and may never elevate it. You cannot delegate another "
+        "agent or open an interactive questionnaire. If a decision is required, explain the decision point "
+        "plainly in your final response. Finish with a concise result that names important files and checks."
+    )
+
+
+def _agent_proxy_child_authorization(run, call, execution, child):
+    child_pending = _agent_public_pending_authorization(child)
+    if not isinstance(child_pending, dict):
+        raise ValueError("Delegated child Agent has no pending authorization")
+    child_authorization_id = str(child_pending.get("authorizationId") or "")
+    child_tool_call_id = str(child_pending.get("toolCallId") or "")
+    authorization_id = hashlib.sha256(
+        (
+            f"{run['id']}\0{call['id']}\0{child['id']}\0"
+            f"{child_authorization_id}"
+        ).encode("utf-8")
+    ).hexdigest()
+    proposal = {
+        "proposalId": str(child_pending.get("proposalId") or ""),
+        "path": str(child_pending.get("path") or ""),
+        "diff": str(child_pending.get("diff") or ""),
+    }
+    pending = {
+        "authorizationId": authorization_id,
+        "toolCallId": call["id"],
+        "action": str(child_pending.get("action") or ""),
+        "proposal": proposal,
+        "path": proposal["path"],
+        "diff": proposal["diff"],
+        "command": str(child_pending.get("command") or ""),
+        "description": str(child_pending.get("description") or ""),
+        "decision": "pending",
+        "requestedAt": now_iso(),
+        "childAgentRunId": child["id"],
+        "childAuthorizationId": child_authorization_id,
+        "childToolCallId": child_tool_call_id,
+    }
+    with run["condition"]:
+        execution["status"] = "waiting_child_authorization"
+        execution["childAgentRunId"] = child["id"]
+        execution["childAuthorizationId"] = child_authorization_id
+        execution["result"] = {
+            "ok": True,
+            "action": "task",
+            "childAgentRunId": child["id"],
+            "status": "waiting_authorization",
+        }
+        run["pending_authorization"] = pending
+        run["keys"] = []
+        run["status"] = "waiting_authorization"
+        run["resume_status"] = ""
+        run["updated_at"] = now_iso()
+        run["condition"].notify_all()
+    _append_agent_event(run, "authorization_required", _agent_public_pending_authorization(run))
+
+
+def _agent_delegation_result(child, prompt):
+    child_status = str(child.get("status") or "failed")
+    child_result = child.get("result") or {}
+    rounds = list(child.get("rounds") or [])
+    tool_executions = child.get("tool_executions") or {}
+    error = str(child.get("error") or "")
+    if child_status == "completed":
+        content = str(child_result.get("content") or "")
+    else:
+        content = error or f"Child Agent ended with status {child_status}."
+    result = {
+        "ok": child_status == "completed",
+        "action": "task",
+        "prompt": prompt,
+        "result": content,
+        "status": child_status,
+        "rounds": len(rounds),
+        "toolRounds": sum(1 for item in rounds if item.get("toolCalls")),
+        "toolCalls": len(tool_executions),
+        "childAgentRunId": child["id"],
+        "usage": _json_clone(child.get("usage") or {}),
+    }
+    if error:
+        result["error"] = error
+    return result
+
+
+def _execute_agent_delegation(run, call, execution):
+    if call.get("parseError") or not isinstance(call.get("arguments"), dict):
+        raise ValueError(call.get("parseError") or "tool arguments must be an object")
+    if int(run.get("agent_depth") or 0) >= 1:
+        raise ValueError("nested Agent delegation is not allowed")
+    prompt = str(call["arguments"].get("prompt") or "").strip()
+    if not prompt:
+        raise ValueError("task.prompt is required")
+    if len(prompt) > 20000:
+        raise ValueError("task.prompt exceeds 20000 characters")
+
+    child_run_id = str(execution.get("childAgentRunId") or "")
+    child = _get_agent_run(child_run_id) if child_run_id else None
+    if child_run_id and not child:
+        raise ValueError("Delegated child Agent run no longer exists")
+    if not child:
+        child_tool_names = []
+        child_tool_definitions = []
+        for definition in run.get("tools") or []:
+            function = definition.get("function") or {}
+            name = str(function.get("name") or "")
+            if not name or name in {"task", "request_user_input"}:
+                continue
+            child_tool_names.append(name)
+            child_tool_definitions.append(_json_clone(definition))
+        child_payload = dict(run.get("request") or {})
+        child_payload["messages"] = [
+            {"role": "system", "content": _agent_child_system_prompt()},
+            {"role": "user", "content": prompt},
+        ]
+        child_payload["tools"] = child_tool_definitions
+        child = _create_agent_run(
+            run.get("session_id") or "",
+            child_payload,
+            run.get("base_url") or "",
+            list(run.get("keys") or []),
+            child_tool_names,
+            min(int(run.get("max_rounds") or _AGENT_RUN_DEFAULT_MAX_ROUNDS), 8),
+            run.get("permission_profile") or "read",
+            parent_run_id=run["id"],
+            parent_tool_call_id=call["id"],
+            agent_depth=int(run.get("agent_depth") or 0) + 1,
+            start_worker=False,
+        )
+        execution["childAgentRunId"] = child["id"]
+        execution["prompt"] = prompt
+        execution["status"] = "waiting_child"
+        _append_agent_event(run, "child_agent_created", {
+            "toolCallId": call["id"],
+            "childAgentRunId": child["id"],
+        })
+        _start_agent_worker(child)
+    else:
+        prompt = str(execution.get("prompt") or prompt)
+
+    while True:
+        if run["cancel_event"].is_set():
+            _cancel_agent_run(child["id"])
+            return None
+        with child["condition"]:
+            child_status = str(child.get("status") or "")
+            child_worker = child.get("worker")
+        if child_status in _AGENT_RUN_TERMINAL:
+            break
+        if child_status == "waiting_authorization":
+            _agent_proxy_child_authorization(run, call, execution, child)
+            return None
+        if child_status == "waiting_user_input":
+            raise ValueError("Delegated child Agent requested unsupported interactive input")
+        if child_status == "waiting_credentials":
+            keys = list(run.get("keys") or [])
+            if not keys:
+                execution["status"] = "waiting_child"
+                with run["condition"]:
+                    run["status"] = "waiting_credentials"
+                    run["resume_status"] = "tools"
+                    run["updated_at"] = now_iso()
+                _append_agent_event(run, "waiting_credentials", {
+                    "resumeStatus": "tools",
+                    "reason": "child_requires_credentials",
+                })
+                return None
+            _resume_agent_run(child, keys, run.get("base_url") or "")
+            continue
+        if child_status in _AGENT_RUN_ACTIVE and child_worker is None:
+            _start_agent_worker(child)
+        with child["condition"]:
+            child["condition"].wait(timeout=0.1)
+
+    if not execution.get("childUsageMerged"):
+        with run["condition"]:
+            _agent_usage_add(run["usage"], child.get("usage") or {})
+            execution["childUsageMerged"] = True
+            run["updated_at"] = now_iso()
+        _persist_agent_run(run)
+    return _agent_delegation_result(child, prompt)
+
+
 def _execute_agent_pending_tools(run):
     allowed_names = {
         str((definition.get("function") or {}).get("name") or "")
@@ -1529,10 +1826,22 @@ def _execute_agent_pending_tools(run):
                 or execution.get("authorizationDecision") == "approved"
             )
         )
+        resuming_delegation = bool(
+            execution
+            and execution.get("status") in {
+                "waiting_child", "waiting_child_authorization",
+            }
+            and execution.get("childAgentRunId")
+        )
         if reused_execution:
             result = execution.get("result") or {}
         else:
-            if not resuming_proposal and not resuming_command and not resuming_file_mutation:
+            if not (
+                resuming_proposal
+                or resuming_command
+                or resuming_file_mutation
+                or resuming_delegation
+            ):
                 execution = {
                     "name": name,
                     "arguments": (call.get("function") or {}).get("arguments", "{}"),
@@ -1696,6 +2005,10 @@ def _execute_agent_pending_tools(run):
                     _persist_agent_run(run)
                     arguments = {**call["arguments"], "_operationId": operation_id}
                     result = execute_registered_tool(name, arguments)
+                elif spec.get("effect") == "delegation":
+                    result = _execute_agent_delegation(run, call, execution)
+                    if result is None:
+                        return False
                 elif (
                     spec.get("effect") not in {"read", "memory_write"}
                     or not spec.get("idempotent")
@@ -1864,6 +2177,10 @@ def _create_agent_run(
     allowed_tools=None,
     max_rounds=None,
     permission_profile="read",
+    parent_run_id="",
+    parent_tool_call_id="",
+    agent_depth=0,
+    start_worker=True,
 ):
     if not isinstance(payload, dict):
         raise ValueError("payload must be an object")
@@ -1891,6 +2208,9 @@ def _create_agent_run(
     run = {
         "id": run_id,
         "session_id": str(session_id or ""),
+        "parent_agent_run_id": str(parent_run_id or ""),
+        "parent_tool_call_id": str(parent_tool_call_id or ""),
+        "agent_depth": max(0, int(agent_depth or 0)),
         "status": "model",
         "resume_status": "",
         "permission_profile": permission_profile,
@@ -1932,7 +2252,8 @@ def _create_agent_run(
             "maxRounds": rounds_limit,
             "permissionProfile": permission_profile,
         })
-        _start_agent_worker(run)
+        if start_worker:
+            _start_agent_worker(run)
     except Exception:
         run["keys"] = []
         with _agent_run_lock:
@@ -1979,6 +2300,14 @@ def _cancel_agent_run(run_id):
     runtime_id = run.get("active_runtime_id")
     if runtime_id:
         _cancel_model_runtime_run(runtime_id)
+    child_run_ids = {
+        str(execution.get("childAgentRunId") or "")
+        for execution in (run.get("tool_executions") or {}).values()
+        if isinstance(execution, dict) and execution.get("childAgentRunId")
+    }
+    for child_run_id in child_run_ids:
+        if child_run_id and child_run_id != run["id"]:
+            _cancel_agent_run(child_run_id)
     process = run.get("active_process")
     command_call_id = str(run.get("active_command_call_id") or "")
     if process is not None:
@@ -4435,6 +4764,24 @@ _SERVER_TOOL_DEFINITIONS = {
             },
         },
     },
+    "task": {
+        "type": "function",
+        "function": {
+            "name": "task",
+            "description": "Delegate one focused subtask to an independent child agent that shares the current project and permission profile.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "A complete, focused task with the expected outcome and any useful constraints.",
+                    },
+                },
+                "required": ["prompt"],
+                "additionalProperties": False,
+            },
+        },
+    },
     "run_command": {
         "type": "function",
         "function": {
@@ -4548,6 +4895,13 @@ SERVER_TOOL_REGISTRY = {
         "execute": lambda payload: execute_delete_file_tool(payload),
         "definition": _SERVER_TOOL_DEFINITIONS["delete_file"],
         "effect": "file_mutation",
+        "idempotent": True,
+        "background": True,
+    },
+    "task": {
+        "execute": None,
+        "definition": _SERVER_TOOL_DEFINITIONS["task"],
+        "effect": "delegation",
         "idempotent": True,
         "background": True,
     },

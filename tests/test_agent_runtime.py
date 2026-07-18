@@ -81,8 +81,53 @@ class _AgentUpstream(BaseHTTPRequestHandler):
             message.get("role") == "user" and message.get("content") == "delete project file"
             for message in messages
         )
+        delegation_prompts = {
+            "delegate inspection": "inspect child file",
+            "delegate write child": "write project file",
+            "delegate slow child": "slow request",
+        }
+        delegated_prompt = next((
+            prompt
+            for message_text, prompt in delegation_prompts.items()
+            if any(
+                message.get("role") == "user" and message.get("content") == message_text
+                for message in messages
+            )
+        ), "")
         should_call_tool = tool_result_count == 0 or (repeat_id and tool_result_count < 2)
-        if writes_file and tool_result_count == 0:
+        if delegated_prompt and tool_result_count == 0:
+            frames = [
+                {"choices": [{
+                    "delta": {"tool_calls": [{
+                        "index": 0,
+                        "id": "agent-task-1",
+                        "type": "function",
+                        "function": {
+                            "name": "task",
+                            "arguments": json.dumps({"prompt": delegated_prompt}),
+                        },
+                    }]},
+                    "finish_reason": "tool_calls",
+                }]},
+                {"choices": [], "usage": {
+                    "prompt_tokens": 5,
+                    "completion_tokens": 3,
+                    "total_tokens": 8,
+                }},
+            ]
+        elif delegated_prompt:
+            frames = [
+                {"choices": [{
+                    "delta": {"content": "delegation task complete"},
+                    "finish_reason": "stop",
+                }]},
+                {"choices": [], "usage": {
+                    "prompt_tokens": 7,
+                    "completion_tokens": 3,
+                    "total_tokens": 10,
+                }},
+            ]
+        elif writes_file and tool_result_count == 0:
             frames = [{
                 "choices": [{
                     "delta": {"tool_calls": [{
@@ -476,6 +521,242 @@ class TestDurableAgentRuntime(unittest.TestCase):
         self.assertNotIn("agent-secret-key", persisted)
         self.assertNotIn("agent-secret-key", json.dumps(snapshot))
         self.assertEqual(_AgentUpstream.authorizations, ["Bearer agent-secret-key"] * 2)
+
+    def test_task_tool_requires_plan_accept_or_bypass_permission(self):
+        payload = {"tools": [server_mod._SERVER_TOOL_DEFINITIONS["task"]]}
+        self.assertEqual(
+            server_mod._agent_selected_tools(payload, ["task"], "read"),
+            [],
+        )
+        for profile in ("plan", "accept", "bypass"):
+            with self.subTest(profile=profile):
+                selected = server_mod._agent_selected_tools(payload, ["task"], profile)
+                self.assertEqual(
+                    [item["function"]["name"] for item in selected],
+                    ["task"],
+                )
+
+    def test_plan_delegation_runs_persistent_child_and_merges_usage_once(self):
+        run = server_mod._create_agent_run(
+            "delegation-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "delegate inspection"}],
+                "tools": [
+                    server_mod._SERVER_TOOL_DEFINITIONS["task"],
+                    server_mod._SERVER_TOOL_DEFINITIONS["read_file"],
+                    server_mod._SERVER_TOOL_DEFINITIONS["request_user_input"],
+                ],
+            },
+            self.base_url,
+            ["delegation-secret-key"],
+            allowed_tools=["task", "read_file", "request_user_input"],
+            permission_profile="plan",
+        )
+
+        self._wait_terminal(run)
+        snapshot = server_mod._agent_snapshot(run, 0)
+        task_execution = next(
+            item for item in snapshot["toolExecutions"] if item["name"] == "task"
+        )
+        child_id = task_execution["childAgentRunId"]
+        child = server_mod._get_agent_run(child_id)
+        child_snapshot = server_mod._agent_snapshot(child, 0)
+
+        self.assertEqual(snapshot["status"], "completed")
+        self.assertEqual(snapshot["result"]["content"], "delegation task complete")
+        self.assertEqual(snapshot["usage"]["total_tokens"], 38)
+        self.assertEqual(task_execution["status"], "completed")
+        self.assertEqual(task_execution["result"]["status"], "completed")
+        self.assertEqual(task_execution["result"]["result"], "read-only task complete")
+        self.assertEqual(child_snapshot["parentAgentRunId"], run["id"])
+        self.assertEqual(child_snapshot["parentToolCallId"], "agent-task-1")
+        self.assertEqual(child_snapshot["agentDepth"], 1)
+        self.assertEqual(child_snapshot["allowedTools"], ["read_file"])
+        self.assertEqual(child_snapshot["status"], "completed")
+        self.assertEqual(child_snapshot["usage"]["total_tokens"], 20)
+        self.assertEqual(_AgentUpstream.calls, 4)
+        self.assertTrue(run["tool_executions"]["agent-task-1"]["childUsageMerged"])
+        parent_record = server_mod._agent_run_path(run["id"]).read_text(encoding="utf-8")
+        child_record = server_mod._agent_run_path(child_id).read_text(encoding="utf-8")
+        self.assertNotIn("delegation-secret-key", parent_record)
+        self.assertNotIn("delegation-secret-key", child_record)
+
+    def test_accept_delegation_proxies_child_file_authorization(self):
+        target = self.project_dir / "generated.txt"
+        run = server_mod._create_agent_run(
+            "delegated-write-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "delegate write child"}],
+                "tools": [
+                    server_mod._SERVER_TOOL_DEFINITIONS["task"],
+                    server_mod._SERVER_TOOL_DEFINITIONS["write_file"],
+                ],
+            },
+            self.base_url,
+            ["delegated-write-key"],
+            allowed_tools=["task", "write_file"],
+            permission_profile="accept",
+        )
+
+        self._wait_status(run, "waiting_authorization")
+        self._wait_worker_idle(run)
+        waiting = server_mod._agent_snapshot(run, 0)
+        pending = waiting["pendingAuthorization"]
+        child = server_mod._get_agent_run(pending["childAgentRunId"])
+        self.assertEqual(pending["action"], "write_file")
+        self.assertEqual(pending["path"], "generated.txt")
+        self.assertEqual(child["status"], "waiting_authorization")
+        self.assertFalse(target.exists())
+
+        forwarded = server_mod._submit_agent_authorization(
+            run, pending["authorizationId"], "approved",
+        )
+        self.assertEqual(forwarded["action"], "task_authorization")
+        self.assertEqual(run["status"], "waiting_credentials")
+        self.assertEqual(child["status"], "waiting_credentials")
+        self.assertFalse(target.exists())
+
+        server_mod._resume_agent_run(run, ["delegated-resume-key"])
+        self._wait_terminal(run)
+        self.assertEqual(run["status"], "completed")
+        self.assertEqual(child["status"], "completed")
+        self.assertEqual(target.read_text(encoding="utf-8"), "written by AgentRun\n")
+        persisted = (
+            server_mod._agent_run_path(run["id"]).read_text(encoding="utf-8")
+            + server_mod._agent_run_path(child["id"]).read_text(encoding="utf-8")
+        )
+        self.assertNotIn("delegated-write-key", persisted)
+        self.assertNotIn("delegated-resume-key", persisted)
+
+    def test_cancelling_parent_cancels_active_delegated_child(self):
+        run = server_mod._create_agent_run(
+            "delegated-cancel-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "delegate slow child"}],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["task"]],
+            },
+            self.base_url,
+            ["delegated-cancel-key"],
+            allowed_tools=["task"],
+            permission_profile="plan",
+        )
+
+        self.assertTrue(_AgentUpstream.slow_started.wait(timeout=3))
+        deadline = time.time() + 2
+        child_id = ""
+        while not child_id and time.time() < deadline:
+            execution = run.get("tool_executions", {}).get("agent-task-1") or {}
+            child_id = str(execution.get("childAgentRunId") or "")
+            time.sleep(0.01)
+        self.assertTrue(child_id)
+        child = server_mod._get_agent_run(child_id)
+
+        server_mod._cancel_agent_run(run["id"])
+        _AgentUpstream.release_slow.set()
+        self._wait_terminal(run)
+        self._wait_terminal(child)
+        self.assertEqual(run["status"], "cancelled")
+        self.assertEqual(child["status"], "cancelled")
+        self.assertEqual(run["keys"], [])
+        self.assertEqual(child["keys"], [])
+
+    def test_restart_reuses_completed_child_without_second_child_request(self):
+        parent = server_mod._create_agent_run(
+            "delegated-restart-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "delegate inspection"}],
+                "tools": [
+                    server_mod._SERVER_TOOL_DEFINITIONS["task"],
+                    server_mod._SERVER_TOOL_DEFINITIONS["read_file"],
+                ],
+            },
+            self.base_url,
+            ["restart-parent-key"],
+            allowed_tools=["task", "read_file"],
+            permission_profile="plan",
+            start_worker=False,
+        )
+        child = server_mod._create_agent_run(
+            "delegated-restart-session",
+            {
+                "model": "test-model",
+                "messages": [
+                    {"role": "system", "content": server_mod._agent_child_system_prompt()},
+                    {"role": "user", "content": "inspect child file"},
+                ],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["read_file"]],
+            },
+            self.base_url,
+            ["restart-child-key"],
+            allowed_tools=["read_file"],
+            permission_profile="plan",
+            parent_run_id=parent["id"],
+            parent_tool_call_id="agent-task-1",
+            agent_depth=1,
+        )
+        self._wait_terminal(child)
+        calls_after_child = _AgentUpstream.calls
+        arguments = json.dumps({"prompt": "inspect child file"}, separators=(",", ":"))
+        fingerprint = hashlib.sha256(f"task\0{arguments}".encode()).hexdigest()
+        call = {
+            "index": 0,
+            "id": "agent-task-1",
+            "type": "function",
+            "function": {"name": "task", "arguments": arguments},
+            "arguments": {"prompt": "inspect child file"},
+            "parseError": "",
+            "fingerprint": fingerprint,
+        }
+        timestamp = server_mod.now_iso()
+        with parent["condition"]:
+            parent["messages"].append({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": server_mod._agent_assistant_tool_calls([call]),
+            })
+            parent["rounds"].append({
+                "round": 1,
+                "toolCalls": server_mod._agent_assistant_tool_calls([call]),
+                "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+            })
+            parent["usage"] = {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+            parent["pending_tool_calls"] = [call]
+            parent["tool_executions"] = {
+                "agent-task-1": {
+                    "name": "task",
+                    "arguments": arguments,
+                    "fingerprint": fingerprint,
+                    "status": "waiting_child",
+                    "result": None,
+                    "error": "",
+                    "startedAt": timestamp,
+                    "completedAt": "",
+                    "childAgentRunId": child["id"],
+                    "prompt": "inspect child file",
+                },
+            }
+            parent["status"] = "tools"
+            parent["updated_at"] = timestamp
+        server_mod._persist_agent_run(parent)
+        with server_mod._agent_run_lock:
+            server_mod._agent_runs.pop(parent["id"], None)
+            server_mod._agent_runs.pop(child["id"], None)
+
+        loaded = server_mod._get_agent_run(parent["id"])
+        self.assertEqual(loaded["status"], "waiting_credentials")
+        server_mod._resume_agent_run(loaded, ["restart-resume-key"])
+        self._wait_terminal(loaded)
+
+        self.assertEqual(loaded["status"], "completed")
+        self.assertEqual(_AgentUpstream.calls, calls_after_child + 1)
+        self.assertEqual(loaded["usage"]["total_tokens"], 38)
+        execution = loaded["tool_executions"]["agent-task-1"]
+        self.assertEqual(execution["childAgentRunId"], child["id"])
+        self.assertTrue(execution["childUsageMerged"])
 
     def test_command_tool_requires_accept_or_bypass_permission(self):
         payload = {"tools": [server_mod._SERVER_TOOL_DEFINITIONS["run_command"]]}

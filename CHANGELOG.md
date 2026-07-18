@@ -14,6 +14,21 @@
 
 ---
 
+## 2026-07-19 03:28 · Codex
+
+### 将通用工作流 Skills 改写为 Code 原生指令，补齐结构验证
+
+- **清理外部环境依赖**：改写头脑风暴、并行子 Agent、执行计划、收到/请求代码审查、子 Agent 驱动开发、TDD 和编写计划 8 个工作流，移除 `superpowers:*`、不存在的下游 Skill 和平台专用调度语法。
+- **对齐 Code 行为边界**：统一使用当前 `task`、文件、命令和用户输入工具；明确子 Agent 共享工作区、只读任务可并行、重叠写入必须串行，且最终整合与验证由主 Agent 负责。
+- **降低上下文成本**：8 个通用工作流从约 1,618 行收紧到约 308 行，保留决策边界、执行闭环、失败处理和验收要求；`document-design` 同步压缩重复色板表格，所有 `SKILL.md` 均低于 500 行。
+- **修正打包验证器**：`quick_validate.py` 现在允许显式调用型 Skill 省略 `keywords`，并新增目录/名称一致性、Code 工具白名单、500 行上限、资源链接存在性和路径越界检查。
+- **结构回归固化**：新增 4 类内置 Skill 结构测试，确保工作流声明工具、不引用未安装 Skill、相对链接可读且全部可通过打包验证。
+- **验证结果**：定向结构回归 `10 passed, 123 subtests passed`，最终全量回归 `574 passed, 148 subtests passed`。
+
+**涉及文件**：`data/skills/brainstorming/SKILL.md`、`data/skills/dispatching-parallel-agents/SKILL.md`、`data/skills/executing-plans/SKILL.md`、`data/skills/receiving-code-review/SKILL.md`、`data/skills/requesting-code-review/SKILL.md`、`data/skills/subagent-driven-development/SKILL.md`、`data/skills/test-driven-development/SKILL.md`、`data/skills/writing-plans/SKILL.md`、`data/skills/document-design/SKILL.md`、`data/skills/skill-creator/SKILL.md`、`data/skills/skill-creator/scripts/quick_validate.py`、`tests/test_builtin_skills.py`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-19 03:14 · Codex
 
 ### 收紧内置 Skills 自动匹配，建立可重复的路由测试基线

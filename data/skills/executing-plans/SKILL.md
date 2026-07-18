@@ -1,70 +1,34 @@
 ---
 name: executing-plans
-description: Use when you have a written implementation plan to execute in a separate session with review checkpoints
+description: 当用户已有一份可执行的实施计划，并希望 Code 按阶段实现、测试、验证和记录时使用。
+tools: list_files, read_file, search_files, glob_files, propose_edit, write_file, run_command, request_user_input
 ---
 
-# Executing Plans
+# 执行已有计划
 
-## Overview
+## 1. 读取与审核
 
-Load plan, review critically, execute all tasks, report when complete.
+1. 读完整份计划和相关项目约定。
+2. 核对计划中的文件、接口、命令和前置条件是否仍然存在。
+3. 只在计划有会导致错误实现的缺口时停下说明；普通细节用合理假设处理。
+4. 把计划映射为少量可验收阶段，每次只有一个阶段处于进行中。
 
-**Announce at start:** "I'm using the executing-plans skill to implement this plan."
+## 2. 按阶段实施
 
-**Note:** Tell your human partner that Superpowers works much better with access to subagents. The quality of its work will be significantly higher if run on a platform with subagent support (Claude Code, Codex CLI, Codex App, and Copilot CLI all qualify; see the per-platform tool refs in `../using-superpowers/references/`). If subagents are available, use superpowers:subagent-driven-development instead of this skill.
+每个阶段按以下闭环执行：
 
-## The Process
+1. 确认本阶段的行为目标和不改变项。
+2. 先写或更新能够证明目标的测试，需要时观察预期失败。
+3. 实施最小且连贯的改动，不夹带无关重构。
+4. 运行定向测试、相关回归和必要的静态检查。
+5. 如果需要人工观察 UI、交互、设备或真实服务，给出精确测试步骤并等待结果。
+6. 验证通过后更新计划、日志和待办；用户要求分阶段提交时，只提交本阶段文件。
 
-### Step 1: Load and Review Plan
-1. Read plan file
-2. Review critically - identify any questions or concerns about the plan
-3. If concerns: Raise them with your human partner before starting
-4. If no concerns: Create todos for the plan items and proceed
+## 3. 异常处理
 
-### Step 2: Execute Tasks
+- 测试失败时先判断是实现问题、计划过期还是环境问题，不通过删除断言让测试变绿。
+- 实际仓库与计划冲突时，以用户当前目标和可验证的代码现状为准，并记录偏差。
+- 需要新权限、破坏性操作或范围扩展时，停止并请求用户决定。
+- 不要改动与当前阶段无关的未提交用户文件。
 
-For each task:
-1. Mark as in_progress
-2. Follow each step exactly (plan has bite-sized steps)
-3. Run verifications as specified
-4. Mark as completed
-
-### Step 3: Complete Development
-
-After all tasks complete and verified:
-- Announce: "I'm using the finishing-a-development-branch skill to complete this work."
-- **REQUIRED SUB-SKILL:** Use superpowers:finishing-a-development-branch
-- Follow that skill to verify tests, present options, execute choice
-
-## When to Stop and Ask for Help
-
-**STOP executing immediately when:**
-- Hit a blocker (missing dependency, test fails, instruction unclear)
-- Plan has critical gaps preventing starting
-- You don't understand an instruction
-- Verification fails repeatedly
-
-**Ask for clarification rather than guessing.**
-
-## When to Revisit Earlier Steps
-
-**Return to Review (Step 1) when:**
-- Partner updates the plan based on your feedback
-- Fundamental approach needs rethinking
-
-**Don't force through blockers** - stop and ask.
-
-## Remember
-- Review plan critically first
-- Follow plan steps exactly
-- Don't skip verifications
-- Reference skills when plan says to
-- Stop when blocked, don't guess
-- Never start implementation on main/master branch without explicit user consent
-
-## Integration
-
-**Required workflow skills:**
-- **superpowers:using-git-worktrees** - Ensures isolated workspace (creates one or verifies existing)
-- **superpowers:writing-plans** - Creates the plan this skill executes
-- **superpowers:finishing-a-development-branch** - Complete development after all tasks
+全部阶段完成后，运行全量或与风险相称的回归，再给出完成结论。

@@ -91,14 +91,49 @@ def validate_skill(skill_path):
             return False, f"Description is too long ({len(description)} characters). Maximum is 1024 characters."
 
     for field in ('keywords', 'tools'):
-        value = frontmatter.get(field, '')
+        if field not in frontmatter:
+            continue
+        value = frontmatter.get(field)
         if not isinstance(value, str):
             return False, f"{field.capitalize()} must be a comma-separated string, got {type(value).__name__}"
         value = value.strip()
         if not value:
-            return False, f"{field.capitalize()} cannot be empty"
+            return False, f"{field.capitalize()} must be omitted instead of left empty"
         if 'TODO' in value.upper():
             return False, f"{field.capitalize()} still contains a TODO placeholder"
+
+    if name != skill_path.name:
+        return False, f"Skill name '{name}' must match directory name '{skill_path.name}'"
+
+    known_tools = {
+        'request_user_input', 'list_files', 'read_file', 'search_files',
+        'glob_files', 'web_fetch', 'use_skill', 'read_skill_resource',
+        'save_memory', 'write_file', 'delete_file', 'task', 'run_command',
+        'propose_edit',
+    }
+    declared_tools = {
+        item.strip() for item in str(frontmatter.get('tools') or '').split(',')
+        if item.strip()
+    }
+    unknown_tools = declared_tools - known_tools
+    if unknown_tools:
+        return False, f"Unknown Code tool(s): {', '.join(sorted(unknown_tools))}"
+
+    if len(content.splitlines()) >= 500:
+        return False, "SKILL.md must stay below 500 lines; move details into packaged resources"
+
+    body_without_fences = re.sub(r'```.*?```', '', content, flags=re.DOTALL)
+    for target in re.findall(r'\[[^\]]*\]\(([^)]+)\)', body_without_fences):
+        if '://' in target or target.startswith('#'):
+            continue
+        relative = target.split('#', 1)[0]
+        referenced = (skill_path / relative).resolve()
+        try:
+            referenced.relative_to(skill_path.resolve())
+        except ValueError:
+            return False, f"Resource link escapes skill directory: {target}"
+        if not referenced.is_file():
+            return False, f"Referenced resource does not exist: {target}"
 
     if '[TODO' in content.upper():
         return False, "SKILL.md body still contains TODO placeholders"

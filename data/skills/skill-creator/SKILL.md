@@ -307,15 +307,15 @@ Any example files and directories not needed for the skill should be deleted. Th
 
 ##### Frontmatter
 
-Write the YAML frontmatter with `name`, `description`, `keywords`, and `tools`:
+Write YAML frontmatter with required `name` and `description` fields. Add `keywords` and `tools` when the Skill needs automatic matching or Code tools:
 
 - `name`: The skill name
 - `description`: This is the primary triggering mechanism for your skill, and helps Code understand when to use the skill.
   - Include both what the Skill does and specific triggers/contexts for when to use it.
   - Include all "when to use" information here - Not in the body. The body is only loaded after triggering, so "When to Use This Skill" sections in the body are not helpful to Code.
   - Example description for a `docx` skill: "Comprehensive document creation, editing, and analysis with support for tracked changes, comments, formatting preservation, and text extraction. Use when Code needs to work with professional documents (.docx files) for: (1) Creating new documents, (2) Modifying or editing content, (3) Working with tracked changes, (4) Adding comments, or any other document tasks"
-- `keywords`: Add concise, comma-separated Chinese and English phrases that users are likely to type. Prefer specific task phrases over generic words. Use `term1+term2` when both terms must appear but may be separated in the request, such as `创建+skill`.
-- `tools`: Add comma-separated Code tool names that the workflow may require, such as `read_file`, `search_files`, `propose_edit`, or `run_command`.
+- `keywords` (optional): Add concise, comma-separated Chinese and English phrases that users are likely to type when the Skill should load automatically. Prefer specific task phrases over generic words. Use `term1+term2` when both terms must appear but may be separated in the request, such as `创建+skill`. Omit this field for explicit slash-command-only workflows.
+- `tools` (optional): Add comma-separated Code tool names that the workflow may require, such as `read_file`, `search_files`, `propose_edit`, or `run_command`. Omit it only when the Skill is instruction-only and needs no tool.
 
 Optional compatibility fields such as `license`, `allowed-tools`, and `metadata` may be retained when importing an external Skill. Code's runtime directly consumes the four fields above.
 

@@ -1,6 +1,30 @@
+import importlib.util
+import re
 import unittest
+from pathlib import Path
 
 import server as server_mod
+
+
+SKILLS_ROOT = Path(server_mod.SKILLS_DIR)
+WORKFLOW_SKILLS = {
+    "brainstorming",
+    "dispatching-parallel-agents",
+    "executing-plans",
+    "receiving-code-review",
+    "requesting-code-review",
+    "subagent-driven-development",
+    "test-driven-development",
+    "writing-plans",
+}
+
+
+def load_skill_validator():
+    path = SKILLS_ROOT / "skill-creator" / "scripts" / "quick_validate.py"
+    spec = importlib.util.spec_from_file_location("code_skill_validator", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.validate_skill
 
 
 class TestBuiltInSkillRouting(unittest.TestCase):
@@ -51,6 +75,42 @@ class TestBuiltInSkillMetadata(unittest.TestCase):
         for skill in server_mod.list_skills(brief=True):
             with self.subTest(skill=skill["name"]):
                 self.assertEqual(skill["name"], skill["dir"])
+
+    def test_workflow_skills_declare_the_code_tools_they_may_use(self):
+        skills = {skill["name"]: skill for skill in server_mod.list_skills(brief=True)}
+        for name in WORKFLOW_SKILLS:
+            with self.subTest(skill=name):
+                self.assertTrue(skills[name].get("tools"))
+
+    def test_workflow_skills_do_not_reference_uninstalled_superpowers(self):
+        for name in WORKFLOW_SKILLS:
+            text = (SKILLS_ROOT / name / "SKILL.md").read_text(encoding="utf-8-sig")
+            with self.subTest(skill=name):
+                self.assertNotIn("superpowers:", text.lower())
+
+    def test_relative_markdown_links_resolve_inside_the_skill(self):
+        for skill_md in sorted(SKILLS_ROOT.glob("*/SKILL.md")):
+            text = skill_md.read_text(encoding="utf-8-sig")
+            text_without_fences = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+            for target in re.findall(r"\[[^\]]*\]\(([^)]+)\)", text_without_fences):
+                if "://" in target or target.startswith("#"):
+                    continue
+                relative = target.split("#", 1)[0]
+                with self.subTest(skill=skill_md.parent.name, target=target):
+                    self.assertTrue((skill_md.parent / relative).is_file())
+
+    def test_skill_instructions_stay_below_500_lines(self):
+        for skill_md in sorted(SKILLS_ROOT.glob("*/SKILL.md")):
+            line_count = len(skill_md.read_text(encoding="utf-8-sig").splitlines())
+            with self.subTest(skill=skill_md.parent.name):
+                self.assertLess(line_count, 500)
+
+    def test_every_bundled_skill_passes_the_packaging_validator(self):
+        validate_skill = load_skill_validator()
+        for skill_dir in sorted(path for path in SKILLS_ROOT.iterdir() if path.is_dir()):
+            valid, message = validate_skill(skill_dir)
+            with self.subTest(skill=skill_dir.name, message=message):
+                self.assertTrue(valid, message)
 
 
 if __name__ == "__main__":

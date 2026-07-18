@@ -14,6 +14,21 @@
 
 ---
 
+## 2026-07-18 23:04 · Codex
+
+### 抽离 Diff 与编辑建议卡片模块，完成前端拆分阶段 3 的第二项
+
+- **Diff 能力独立**：新增 `src/ui/diff.js`，集中承接代码围栏与前导文本清洗、增删行统计、文件扩展名识别、Hunk/上下文行号计算、语法高亮接入和长 Diff 折叠 HTML 生成。
+- **编辑建议投影收口**：编辑建议消息识别、文件目标、增删统计、待确认/排队/处理中/仅建议/已应用/已拒绝状态及卡片 HTML 迁入新模块；普通 Markdown 建议仍通过注入的 Markdown 渲染器展示。
+- **交互与授权边界保持**：应用、拒绝、展开/收起、复制和路径打开事件仍由 `app.js` 绑定，文件写入审批、授权队列、已应用状态及消息顺序不变；Markdown 代码围栏继续通过显式注入调用同一 Diff 渲染器。
+- **旧实现退场**：`app.js` 删除 Diff 清洗、统计、渲染和编辑卡片实现，净减少约 133 行；`index.html` 在 Markdown 模块前加载 Diff 模块，确保应用装配时依赖可用。
+- **回归保护**：补充模块存在与加载顺序、公开导出、围栏清洗、文件头统计排除、Hunk 行号、语言识别、危险 HTML 转义、长 Diff 折叠，以及待确认/排队/已应用/无变化卡片测试，并禁止旧定义重新进入 `app.js`。
+- **验证结果**：`src/ui/diff.js`、`src/ui/markdown.js` 与 `app.js` JavaScript 语法、`git diff --check` 通过；定向回归 `30 passed` 与 `116 passed, 19 subtests passed`，最终全量回归 `556 passed, 25 subtests passed`。人工在计划模式生成 45 行编辑建议，确认统计、折叠、展开/收起、复制、路径预览、刷新恢复及无实际写入均正常。
+
+**涉及文件**：`src/ui/diff.js`、`app.js`、`index.html`、`tests/test_frontend_modules.py`、`docs/APP_JS_SPLIT_PLAN.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 22:44 · Codex
 
 ### 抽离 Markdown、代码块与 ANSI 渲染模块，进入前端拆分阶段 3

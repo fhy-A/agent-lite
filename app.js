@@ -9,6 +9,7 @@ const {
 const { createI18nRuntime } = window.Code.core.i18n;
 const { showToast, notify: _notify } = window.Code.services.notifications;
 const { apiJson } = window.Code.services.apiClient;
+const { createDiffFeature } = window.Code.ui.diff;
 const {
   createMarkdownFeature,
   resolveSyntaxPatterns: _resolveSyntaxPatterns,
@@ -755,6 +756,25 @@ const els = {
   userInputPanel: document.getElementById("userInputPanel"),
 
 };
+
+const diffFeature = createDiffFeature({
+  escapeHtml,
+  highlightSyntax: (...args) => markdownFeature.highlightSyntax(...args),
+  renderMarkdown: (...args) => markdownFeature.renderMarkdownLite(...args),
+  renderCopyButton: renderCopyBtn,
+  t,
+  getMessageText: getMsgText,
+  getPendingEdits: () => state.pendingEdits,
+  getAuthorizationRequests: () => state.authorizationRequests,
+  getPermissionProfile,
+});
+const {
+  getDiffStats,
+  isEditSuggestionMessage,
+  normalizeDiffText,
+  renderDiff,
+  renderEditSuggestionProjection,
+} = diffFeature;
 
 const markdownFeature = createMarkdownFeature({
   escapeHtml,
@@ -2253,97 +2273,6 @@ function splitThoughtContent(text = "") {
 
 
 
-// ── Diff rendering ──
-
-
-
-function normalizeDiffText(text = "") {
-  const source = String(text).replace(/\r\n/g, "\n");
-  const fenced = source.match(/```(?:diff)?\s*\n([\s\S]*?)\n?```/i);
-  if (fenced) return fenced[1].trimEnd();
-
-  const lines = source.split("\n");
-  const firstHeader = lines.findIndex((line) => line.startsWith("--- "));
-  const normalized = firstHeader >= 0 ? lines.slice(firstHeader) : lines;
-  while (normalized.length && /^```(?:diff)?\s*$/i.test(normalized[0].trim())) normalized.shift();
-  while (normalized.length && /^```\s*$/.test(normalized.at(-1).trim())) normalized.pop();
-  return normalized.join("\n").trimEnd();
-}
-
-function getDiffStats(text = "") {
-  const lines = normalizeDiffText(text).split("\n");
-  return {
-    additions: lines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length,
-    removals: lines.filter((line) => line.startsWith("-") && !line.startsWith("---")).length,
-    lineCount: lines.length,
-  };
-}
-
-function renderDiff(text) {
-
-  const lines = normalizeDiffText(text).split("\n");
-
-  // Detect language from diff header
-  let lang = null;
-  for (const line of lines) {
-    const m = line.match(/^(---|\+\+\+) [ab]\/(.+)/);
-    if (m) {
-      const ext = m[2].split(".").pop().toLowerCase();
-      if (ext) lang = ext;
-      break;
-    }
-  }
-
-  let oldLine = 0, newLine = 0;
-
-  const gutter = (g) => `<span class="diff-gutter">${g}</span>`;
-  const num = (n) => `<span class="diff-num">${n}</span>`;
-
-  const html = lines.map((line) => {
-
-    // File headers — empty placeholder columns for alignment
-    if (line.startsWith("+++") || line.startsWith("---")) {
-      return `<span class="diff-line diff-header">${gutter("")}${num("")}<span class="diff-code">${escapeHtml(line)}</span></span>`;
-    }
-
-    // Hunk header — empty line number placeholders
-    if (line.startsWith("@@")) {
-      const m = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-      if (m) { oldLine = parseInt(m[1]) - 1; newLine = parseInt(m[2]) - 1; }
-      return `<span class="diff-line diff-hunk">${gutter("")}${num("")}<span class="diff-code">${escapeHtml(line)}</span></span>`;
-    }
-
-    // Content lines
-    let lineNum = "";
-    let cls, g, content;
-
-    if (line.startsWith("+")) {
-      newLine++;
-      lineNum = newLine;
-      cls = "diff-add"; g = "+"; content = line.slice(1);
-    } else if (line.startsWith("-")) {
-      oldLine++;
-      lineNum = oldLine;
-      cls = "diff-remove"; g = "-"; content = line.slice(1);
-    } else {
-      oldLine++; newLine++;
-      lineNum = newLine;
-      cls = "diff-context"; g = " ";
-      content = line.startsWith(" ") ? line.slice(1) : line;
-    }
-
-    const highlighted = lang ? highlightSyntax(content, lang) : escapeHtml(content);
-    return `<span class="diff-line ${cls}">${gutter(g)}${num(lineNum)}<span class="diff-code">${highlighted}</span></span>`;
-
-  }).join("");
-
-  const isLong = lines.length > 40;
-  return `<div class="code-block diff-block${isLong ? " is-collapsed" : ""}"><div class="diff-lines">${html}</div>${isLong ? `<button class="diff-expand-btn" type="button" aria-expanded="false">展开全部 ${lines.length} 行</button>` : ""}</div>`;
-
-}
-
-
-
 function bindCopyButtons() {
 
   document.querySelectorAll(".copy-code").forEach((btn) => {
@@ -2970,68 +2899,6 @@ function renderThinkingProjection(items, serial) {
     <article class="msg assistant thinking-process${streamingItem ? " is-streaming" : ""}" data-thinking-block="${serial}"${streamAttrs}>
       <div class="thinking-summary-list">
         ${summaries.map((item) => `<div class="thinking-summary-item${item.streaming ? " is-streaming" : ""}"${item.streaming ? ' data-stream-part="summary"' : ""}>${item.text ? renderMarkdownLite(item.text) : ""}</div>`).join("")}
-      </div>
-    </article>
-  `;
-}
-
-function isEditSuggestionMessage(msg) {
-  if (!msg || msg.role !== "tool-result") return false;
-  const meta = msg.meta || {};
-  const action = meta.action || meta.tool?.action || "";
-  return !!meta.pendingEditId && (["propose_edit", "apply_edit", "write_file", "delete_file"].includes(action) || !!meta.newContent);
-}
-
-function renderEditSuggestionProjection(msg, index) {
-  const meta = msg.meta || {};
-  const pendingId = meta.pendingEditId;
-  const action = meta.action || meta.tool?.action || "propose_edit";
-  const target = meta.path || meta.tool?.path || "";
-  const content = (getMsgText(msg) || "").trim();
-  if (!pendingId || !content) return "";
-
-  const editState = state.pendingEdits[pendingId] || {};
-  const applied = !!(meta.applied || editState.applied);
-  const rejected = !!(meta.rejected || editState.rejected || editState.resolved && !editState.applied);
-  const serverExecuting = Boolean(meta.serverManaged && meta.authorizationDecision === "approved" && !applied && !rejected);
-  const queued = state.authorizationRequests.some((item) => item.status === "pending" && item.editId === pendingId)
-    || Boolean(meta.serverManaged && !serverExecuting && !applied && !rejected);
-  const proposalOnly = getPermissionProfile() === "plan" || !!meta.proposalOnly;
-  const diffText = normalizeDiffText(content);
-  if (/^\(no changes\)$/i.test(diffText.trim())) return "";
-  const isDiff = /(^|\n)(--- |\+\+\+ |@@ )/.test(diffText);
-  const body = isDiff ? renderDiff(diffText) : `<div class="tool-edit-markdown">${renderMarkdownLite(content)}</div>`;
-  const stats = isDiff ? getDiffStats(diffText) : { additions: 0, removals: 0 };
-  const canReject = getPermissionProfile() !== "bypass";
-  const status = applied ? t("appliedLabel") : (rejected ? t("rejectedLabel") : (proposalOnly ? t("proposalOnly") : (serverExecuting ? t("processingLabel") : (queued ? t("waitingApproval") : t("pendingConfirmation")))));
-  const statusClass = applied ? "is-applied" : (rejected ? "is-rejected" : "is-review");
-
-  let actions = "";
-  if (!applied && !rejected && !queued && !proposalOnly && !meta.serverManaged) {
-    actions = `
-      <div class="apply-edit-bar">
-        <button class="apply-edit-btn" type="button" data-edit-id="${escapeHtml(pendingId)}">${t("applyEdit")}</button>
-        ${canReject ? `<button class="reject-edit-btn" type="button" data-edit-id="${escapeHtml(pendingId)}">${t("rejectEdit")}</button>` : ""}
-      </div>
-    `;
-  }
-
-  return `
-    <article class="msg assistant edit-suggestion" data-msg-index="${index}" data-edit-id="${escapeHtml(pendingId)}">
-      <div class="tool-edit-card">
-        <div class="tool-edit-head">
-          <div class="tool-edit-heading">
-            ${target ? `<button class="tool-edit-target clickable-path" type="button" data-path="${escapeHtml(target)}" title="${t("openInPreview")}">${escapeHtml(target)}</button>` : `<span class="tool-edit-target">${t("unnamedFile")}</span>`}
-            <span class="tool-edit-title">${action === "write_file" ? t("fileWriteProposal") : t("editProposal")}</span>
-          </div>
-          <div class="tool-edit-summary">
-            ${isDiff ? `<span class="diff-stat diff-stat-add">+${stats.additions}</span><span class="diff-stat diff-stat-remove">−${stats.removals}</span>` : ""}
-            ${isDiff ? renderCopyBtn(diffText) : ""}
-            <span class="tool-edit-status ${statusClass}">${escapeHtml(status)}</span>
-          </div>
-        </div>
-        <div class="tool-edit-diff">${body}</div>
-        ${actions}
       </div>
     </article>
   `;

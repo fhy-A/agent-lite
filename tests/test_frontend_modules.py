@@ -12,6 +12,7 @@ RUNTIME_SOURCE = (ROOT / "agent-runtime.js").read_text(encoding="utf-8")
 I18N_SOURCE = (ROOT / "src" / "core" / "i18n.js").read_text(encoding="utf-8")
 API_CLIENT_SOURCE = (ROOT / "src" / "services" / "api-client.js").read_text(encoding="utf-8")
 SETTINGS_SOURCE = (ROOT / "src" / "features" / "settings.js").read_text(encoding="utf-8")
+DIFF_SOURCE = (ROOT / "src" / "ui" / "diff.js").read_text(encoding="utf-8")
 MARKDOWN_SOURCE = (ROOT / "src" / "ui" / "markdown.js").read_text(encoding="utf-8")
 PREVIEW_SOURCE = (ROOT / "src" / "features" / "preview.js").read_text(encoding="utf-8")
 FILES_SOURCE = (ROOT / "src" / "features" / "files.js").read_text(encoding="utf-8")
@@ -140,10 +141,13 @@ eval(source);
             "authorizationRequest: serializeAuthorizationRequest(request)",
             "restoreAuthorizationRequest(session.id, session.runState?.authorizationRequest)",
             "ensureServerAuthorizationProjection(ctx, pendingAuthorization)",
-            "Boolean(meta.serverManaged && !serverExecuting && !applied && !rejected)",
             "resumePersistedSessionRun(summary).catch",
         ):
             self.assertIn(expected, APP_SOURCE)
+        self.assertIn(
+            "Boolean(meta.serverManaged && !serverExecuting && !applied && !rejected)",
+            DIFF_SOURCE,
+        )
         self.assertIn("executionOwner: executionOwnerForPermissionProfile(permissionProfile)", APP_SOURCE)
         self.assertIn('return ["read", "plan", "accept", "bypass"].includes(permissionProfile) ? "server-agent" : "browser"', APP_SOURCE)
         self.assertIn("action: authorizationAction", APP_SOURCE)
@@ -209,7 +213,7 @@ eval(source);
 
     def test_partial_think_blocks_never_leak_into_visible_content(self):
         parser_start = APP_SOURCE.index("function splitThoughtContent")
-        parser_end = APP_SOURCE.index("// ── Diff rendering", parser_start)
+        parser_end = APP_SOURCE.index("function bindCopyButtons", parser_start)
         parser_source = APP_SOURCE[parser_start:parser_end]
         cases = (
             "<thi",
@@ -251,6 +255,7 @@ eval(source);
             "src/core/i18n.js",
             "src/services/notifications.js",
             "src/services/api-client.js",
+            "src/ui/diff.js",
             "src/ui/markdown.js",
             "src/features/settings.js",
             "src/features/preview.js",
@@ -267,6 +272,7 @@ eval(source);
             "./src/core/i18n.js",
             "./src/services/notifications.js",
             "./src/services/api-client.js",
+            "./src/ui/diff.js",
             "./src/ui/markdown.js",
             "./src/features/settings.js",
             "./src/features/skills-memory.js",
@@ -682,6 +688,112 @@ process.stdout.write(JSON.stringify({
         self.assertTrue(data["breaks"])
         self.assertTrue(data["gfm"])
 
+    def test_diff_ui_owns_normalization_stats_rendering_and_edit_cards(self):
+        self.assertIn("Code.ui.diff = Object.freeze", DIFF_SOURCE)
+        script = r"""
+global.window = {Code: {ui: {}}};
+require("./src/ui/diff.js");
+const {createDiffFeature, isEditSuggestionMessage} = window.Code.ui.diff;
+const escapeHtml = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+let pendingEdits = {};
+let authorizationRequests = [];
+let permissionProfile = "accept";
+const feature = createDiffFeature({
+  escapeHtml,
+  highlightSyntax: (value, lang) => `<hl data-lang="${lang}">${escapeHtml(value)}</hl>`,
+  renderMarkdown: (value) => `<md>${escapeHtml(value)}</md>`,
+  renderCopyButton: (value) => `<copy>${escapeHtml(value)}</copy>`,
+  t: (key) => key,
+  getMessageText: (msg) => String(msg.content || ""),
+  getPendingEdits: () => pendingEdits,
+  getAuthorizationRequests: () => authorizationRequests,
+  getPermissionProfile: () => permissionProfile,
+});
+const raw = `Preamble that must be removed
+\`\`\`diff
+--- a/src/demo.js
++++ b/src/demo.js
+@@ -1,2 +1,2 @@
+-const oldValue = "<old>";
++const newValue = "<new>";
+ context
+\`\`\`
+Trailing prose`;
+const normalized = feature.normalizeDiffText(raw);
+const stats = feature.getDiffStats(raw);
+const rendered = feature.renderDiff(raw);
+const longDiff = [
+  "--- a/src/long.js",
+  "+++ b/src/long.js",
+  "@@ -1,41 +1,41 @@",
+  ...Array.from({length: 41}, (_, index) => ` line-${index + 1}`),
+].join("\n");
+const message = {
+  role: "tool-result",
+  content: raw,
+  meta: {pendingEditId: "edit-1", action: "propose_edit", path: "src/<demo>.js"},
+};
+const pendingCard = feature.renderEditSuggestionProjection(message, 7);
+authorizationRequests = [{status: "pending", editId: "edit-1"}];
+const queuedCard = feature.renderEditSuggestionProjection(message, 7);
+authorizationRequests = [];
+pendingEdits = {"edit-1": {applied: true}};
+const appliedCard = feature.renderEditSuggestionProjection(message, 7);
+const noChangesCard = feature.renderEditSuggestionProjection({
+  role: "tool-result",
+  content: "(no changes)",
+  meta: {pendingEditId: "edit-2", action: "propose_edit"},
+}, 8);
+process.stdout.write(JSON.stringify({
+  normalized,
+  stats,
+  rendered,
+  longRendered: feature.renderDiff(longDiff),
+  pendingCard,
+  queuedCard,
+  appliedCard,
+  noChangesCard,
+  isEdit: isEditSuggestionMessage(message),
+  isNotEdit: isEditSuggestionMessage({role: "assistant", meta: {pendingEditId: "edit-1"}}),
+}));
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertTrue(data["normalized"].startswith("--- a/src/demo.js"))
+        self.assertNotIn("Preamble", data["normalized"])
+        self.assertNotIn("Trailing prose", data["normalized"])
+        self.assertEqual(data["stats"], {"additions": 1, "removals": 1, "lineCount": 6})
+        self.assertIn('class="diff-line diff-header"', data["rendered"])
+        self.assertIn('class="diff-line diff-hunk"', data["rendered"])
+        self.assertIn('class="diff-line diff-remove"', data["rendered"])
+        self.assertIn('class="diff-line diff-add"', data["rendered"])
+        self.assertIn('data-lang="js"', data["rendered"])
+        self.assertIn("&lt;new&gt;", data["rendered"])
+        self.assertNotIn("<new>", data["rendered"])
+        self.assertIn("is-collapsed", data["longRendered"])
+        self.assertIn("展开全部 44 行", data["longRendered"])
+        self.assertIn("src/&lt;demo&gt;.js", data["pendingCard"])
+        self.assertIn('class="diff-stat diff-stat-add">+1', data["pendingCard"])
+        self.assertIn('class="diff-stat diff-stat-remove">−1', data["pendingCard"])
+        self.assertIn('class="apply-edit-btn"', data["pendingCard"])
+        self.assertIn('class="reject-edit-btn"', data["pendingCard"])
+        self.assertIn("pendingConfirmation", data["pendingCard"])
+        self.assertIn("waitingApproval", data["queuedCard"])
+        self.assertNotIn('class="apply-edit-btn"', data["queuedCard"])
+        self.assertIn("is-applied", data["appliedCard"])
+        self.assertIn("appliedLabel", data["appliedCard"])
+        self.assertNotIn('class="apply-edit-btn"', data["appliedCard"])
+        self.assertEqual(data["noChangesCard"], "")
+        self.assertTrue(data["isEdit"])
+        self.assertFalse(data["isNotEdit"])
+
     def test_preview_feature_exports_parsing_urls_and_width_rules(self):
         self.assertIn("features.preview = Object.freeze", PREVIEW_SOURCE)
         script = """
@@ -742,6 +854,8 @@ process.stdout.write(JSON.stringify({
         self.assertIn("const { createI18nRuntime } = window.Code.core.i18n", APP_SOURCE)
         self.assertIn("const { t, setLang, applyI18n } = createI18nRuntime", APP_SOURCE)
         self.assertIn("const { apiJson } = window.Code.services.apiClient", APP_SOURCE)
+        self.assertIn("const { createDiffFeature } = window.Code.ui.diff", APP_SOURCE)
+        self.assertIn("const diffFeature = createDiffFeature", APP_SOURCE)
         self.assertIn("const { createPreviewFeature } = window.Code.features.preview", APP_SOURCE)
         self.assertIn("const previewFeature = createPreviewFeature", APP_SOURCE)
         self.assertIn("const { createFilesFeature, shortPath } = window.Code.features.files", APP_SOURCE)
@@ -764,6 +878,11 @@ process.stdout.write(JSON.stringify({
             "function formatNumber(",
             "function formatElapsed(",
             "function estimateTokens(",
+            "function normalizeDiffText(",
+            "function getDiffStats(",
+            "function renderDiff(",
+            "function isEditSuggestionMessage(",
+            "function renderEditSuggestionProjection(",
             "const LANG =",
             "const I18N =",
             "function t(key",
@@ -954,7 +1073,7 @@ process.stdout.write(JSON.stringify({
             assistant_block.index("pendingThoughts.push"),
         )
         projection_start = APP_SOURCE.index("function renderThinkingProjection")
-        projection_end = APP_SOURCE.index("function isEditSuggestionMessage", projection_start)
+        projection_end = APP_SOURCE.index("function renderAssistantResponseInfo", projection_start)
         projection = APP_SOURCE[projection_start:projection_end]
         self.assertIn('data-stream-kind="thinking"', projection)
         self.assertIn('data-stream-part="summary"', projection)

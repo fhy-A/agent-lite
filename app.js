@@ -5706,7 +5706,7 @@ async function continueAgentRun() {
   await saveSessionState(sessionId, ctx.messages, ctx.stats);
   setStreaming(true, sessionId);
   try {
-    await runAgentLoop(ctx);
+    await executeRunContext(ctx);
   } catch (err) {
     if (err.name === "AbortError") {
       ctx.messages.forEach((msg) => { msg.streaming = false; });
@@ -8857,6 +8857,22 @@ function buildRecoveredRunContext(session, runState) {
   return ctx;
 }
 
+const LEGACY_BROWSER_RUN_ERROR = "该任务由旧版浏览器 Agent 循环持有。升级后不会自动重试，以避免重复执行可能已经发生的写入或命令；请发送一条新消息重新开始。";
+
+function finalizeLegacyBrowserRunMessages(messages) {
+  const finalized = (Array.isArray(messages) ? messages : []).map((message) => {
+    if (!message?.streaming) return message;
+    return { ...message, streaming: false };
+  });
+  finalized.push({
+    role: "assistant",
+    content: LEGACY_BROWSER_RUN_ERROR,
+    meta: { _system: true, kind: "legacy-browser-run-retired" },
+    _time: new Date().toISOString(),
+  });
+  return finalized;
+}
+
 async function resumePersistedSessionRun(summary) {
   const runState = summary?.runState || {};
   if (!summary?.id || !["running", "waiting-network", "resuming"].includes(runState.status)) return;
@@ -8866,10 +8882,19 @@ async function resumePersistedSessionRun(summary) {
     const latestRunState = session.runState || runState;
     if (!["running", "waiting-network", "resuming"].includes(latestRunState.status)) return;
 
-    const updatedAt = Date.parse(latestRunState.updatedAt || latestRunState.startedAt || 0);
-    if (latestRunState.executionOwner !== "server-agent" && Number.isFinite(updatedAt) && updatedAt > 0 && Date.now() - updatedAt > 6 * 60 * 60 * 1000) {
-      setSessionRunState(summary.id, { ...latestRunState, status: "failed", lastError: "Saved task recovery expired" });
-      await saveSessionState(summary.id, session.messages || [], session.stats || {}, session.title);
+    if (latestRunState.executionOwner !== "server-agent") {
+      const messages = finalizeLegacyBrowserRunMessages(session.messages);
+      setSessionMessages(summary.id, messages);
+      setSessionRunState(summary.id, {
+        ...latestRunState,
+        status: "failed",
+        phase: "legacy-browser-retired",
+        lastError: LEGACY_BROWSER_RUN_ERROR,
+        updatedAt: new Date().toISOString(),
+      });
+      await saveSessionState(summary.id, messages, session.stats || {}, session.title, { persistMessages: true });
+      if (summary.id === state.sessionId) renderSessionMessages(summary.id);
+      renderSessions();
       return;
     }
 
@@ -11557,8 +11582,8 @@ async function runServerAgentLoop(ctx) {
 }
 
 async function executeRunContext(ctx) {
-  if (isServerOwnedRun(ctx)) return runServerAgentLoop(ctx);
-  return runAgentLoop(ctx);
+  if (!isServerOwnedRun(ctx)) throw new Error(LEGACY_BROWSER_RUN_ERROR);
+  return runServerAgentLoop(ctx);
 }
 
 async function runAgentLoop(ctx = null) {

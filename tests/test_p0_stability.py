@@ -119,13 +119,39 @@ class TestFrontendRefreshRecovery(unittest.TestCase):
         self.assertIn('return ["read", "plan", "accept", "bypass"].includes(permissionProfile) ? "server-agent" : "browser"', APP_SOURCE)
         self.assertIn("executionOwner: executionOwnerForPermissionProfile(permissionProfile)", APP_SOURCE)
         self.assertIn("ctx.executionOwner = runState.executionOwner || executionOwnerForPermissionProfile(ctx.permissionProfile)", APP_SOURCE)
-        self.assertIn('if (isServerOwnedRun(ctx)) return runServerAgentLoop(ctx)', APP_SOURCE)
+        self.assertIn('if (!isServerOwnedRun(ctx)) throw new Error(LEGACY_BROWSER_RUN_ERROR)', APP_SOURCE)
+        self.assertIn('return runServerAgentLoop(ctx)', APP_SOURCE)
         self.assertIn('await _callModelOnceAttempt(assistantIndex, true, ctx)', APP_SOURCE)
         server_projection = APP_SOURCE[
             APP_SOURCE.index("async function projectAgentModelStarted"):
             APP_SOURCE.index("function projectAgentModelCompleted")
         ]
         self.assertNotIn("callModelOnce(", server_projection)
+
+    def test_legacy_browser_checkpoint_fails_explicitly_without_replay(self):
+        recovery_start = APP_SOURCE.index("async function resumePersistedSessionRun(summary)")
+        recovery_end = APP_SOURCE.index("async function resumePersistedRuns()", recovery_start)
+        recovery = APP_SOURCE[recovery_start:recovery_end]
+        legacy_branch_start = recovery.index('if (latestRunState.executionOwner !== "server-agent")')
+        legacy_branch_end = recovery.index("const ctx = buildRecoveredRunContext", legacy_branch_start)
+        legacy_branch = recovery[legacy_branch_start:legacy_branch_end]
+
+        self.assertIn("finalizeLegacyBrowserRunMessages(session.messages)", legacy_branch)
+        self.assertIn('status: "failed"', legacy_branch)
+        self.assertIn('phase: "legacy-browser-retired"', legacy_branch)
+        self.assertIn("lastError: LEGACY_BROWSER_RUN_ERROR", legacy_branch)
+        self.assertIn("await saveSessionState", legacy_branch)
+        self.assertIn("{ persistMessages: true }", legacy_branch)
+        self.assertIn("return;", legacy_branch)
+        self.assertNotIn("executeRunContext", legacy_branch)
+        self.assertIn('kind: "legacy-browser-run-retired"', APP_SOURCE)
+
+    def test_continue_action_cannot_reenter_legacy_browser_loop(self):
+        continue_start = APP_SOURCE.index("async function continueAgentRun()")
+        continue_end = APP_SOURCE.index("function serializeSessionMessages", continue_start)
+        continue_action = APP_SOURCE[continue_start:continue_end]
+        self.assertIn("await executeRunContext(ctx)", continue_action)
+        self.assertNotIn("runAgentLoop(ctx)", continue_action)
 
     def test_server_agent_cancellation_covers_parent_and_child_runs(self):
         cancel_start = APP_SOURCE.index("function cancelSessionRun(run)")

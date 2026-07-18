@@ -523,7 +523,19 @@ def _agent_selected_tools(payload, allowed_tools=None, permission_profile="read"
             and spec.get("background")
             and permission_profile in {"accept", "bypass"}
         )
-        if not (safe_read or safe_interaction or safe_proposal or gated_command):
+        durable_memory = (
+            spec.get("effect") == "memory_write"
+            and spec.get("idempotent")
+            and spec.get("background")
+            and permission_profile in {"accept", "bypass"}
+        )
+        if not (
+            safe_read
+            or safe_interaction
+            or safe_proposal
+            or gated_command
+            or durable_memory
+        ):
             continue
         definition = _agent_registry_tool_definition(name)
         if definition:
@@ -1545,7 +1557,7 @@ def _execute_agent_pending_tools(run):
                         process_callback=set_process,
                     )
                 elif (
-                    spec.get("effect") != "read"
+                    spec.get("effect") not in {"read", "memory_write"}
                     or not spec.get("idempotent")
                     or not spec.get("background")
                 ):
@@ -1578,7 +1590,7 @@ def _execute_agent_pending_tools(run):
             "toolCallId": call_id,
             "name": name,
             "result": result,
-            "replayed": reused_execution,
+            "replayed": reused_execution or bool(result.get("replayed")),
         })
     return True
 
@@ -3022,6 +3034,59 @@ def write_memory(name, meta, body):
     return {"name": safe, "meta": meta, "body": body}
 
 
+def execute_save_memory_tool(payload):
+    """Persist project-scoped model memory with crash-safe idempotent replay."""
+    payload = dict(payload or {})
+    name = str(payload.get("name") or "").strip()
+    description = " ".join(
+        str(payload.get("description") or "").splitlines()
+    ).strip()
+    body = str(payload.get("body") or "").strip()
+    if not name or not body:
+        raise ValueError(
+            "name and body are required; use an English kebab-case name and concise memory body"
+        )
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "", name)[:32]
+    if not safe:
+        raise ValueError("invalid memory name")
+
+    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+    path = MEMORY_DIR / f"{safe}.md"
+    project = str(load_config().get("projectRoot") or "")
+    if path.is_file():
+        existing_meta, existing_body = parse_memory_frontmatter(
+            path.read_text(encoding="utf-8-sig")
+        )
+        if (
+            existing_meta.get("name", safe) == safe
+            and existing_meta.get("description", "") == description
+            and existing_meta.get("project", "") == project
+            and existing_body.strip() == body
+        ):
+            return {
+                "ok": True,
+                "action": "save_memory",
+                "name": safe,
+                "path": str(path),
+                "replayed": True,
+            }
+
+    content = build_memory_file({
+        "name": safe,
+        "description": description,
+        "project": project,
+        "created": dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+    }, body)
+    _atomic_write_edit_text(path, content)
+    return {
+        "ok": True,
+        "action": "save_memory",
+        "name": safe,
+        "path": str(path),
+        "replayed": False,
+    }
+
+
 def delete_memory(name):
     """Delete a memory file."""
     safe = safe_memory_name(name)
@@ -3961,6 +4026,32 @@ _SERVER_TOOL_DEFINITIONS = {
             },
         },
     },
+    "save_memory": {
+        "type": "function",
+        "function": {
+            "name": "save_memory",
+            "description": "Save a concise, reusable fact or convention for the current project. Use only for durable knowledge that will help future tasks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Short English kebab-case memory name.",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "One-line summary shown in the memory index.",
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Concise durable knowledge in Markdown.",
+                    },
+                },
+                "required": ["name", "body"],
+                "additionalProperties": False,
+            },
+        },
+    },
     "run_command": {
         "type": "function",
         "function": {
@@ -4053,6 +4144,13 @@ SERVER_TOOL_REGISTRY = {
         "execute": execute_read_skill_resource_tool,
         "definition": _SERVER_TOOL_DEFINITIONS["read_skill_resource"],
         "effect": "read",
+        "idempotent": True,
+        "background": True,
+    },
+    "save_memory": {
+        "execute": execute_save_memory_tool,
+        "definition": _SERVER_TOOL_DEFINITIONS["save_memory"],
+        "effect": "memory_write",
         "idempotent": True,
         "background": True,
     },
@@ -5764,21 +5862,8 @@ class CodeHandler(BaseHTTPRequestHandler):
         self.send_json(result, 200 if result.get("ok") else 400)
 
     def tool_save_memory(self):
-        body = self.read_body_json()
-        name = (body.get("name") or "").strip()
-        description = (body.get("description") or "").strip()
-        content = (body.get("body") or "").strip()
-        if not name or not content:
-            raise ValueError("name 和 body 参数不能为空。name 用英文 kebab-case，body 写记忆内容。")
-        safe = re.sub(r"[^a-zA-Z0-9_-]", "", name)[:32]
-        if not safe:
-            raise ValueError("invalid memory name")
-        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
-        project = load_config().get("projectRoot", "")
-        ts = dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-        md = f"---\nname: {safe}\ndescription: {description}\nproject: {project}\ncreated: {ts}\n---\n\n{content}"
-        (MEMORY_DIR / f"{safe}.md").write_text(md, encoding="utf-8")
-        self.send_json({"ok": True, "name": safe, "path": str(MEMORY_DIR / f"{safe}.md")}, 201)
+        result = execute_registered_tool("save_memory", self.read_body_json())
+        self.send_json(result, 201)
 
     def create_directory(self):
         body = self.read_body_json()

@@ -158,7 +158,8 @@ class TestFileTools(TestServerFixture):
     def test_registry_declares_read_interaction_and_proposal_effects(self):
         self.assertEqual(set(server_mod.SERVER_TOOL_REGISTRY), {
             "request_user_input", "list_files", "read_file", "search_files", "glob_files",
-            "web_fetch", "use_skill", "read_skill_resource", "run_command", "propose_edit",
+            "web_fetch", "use_skill", "read_skill_resource", "save_memory", "run_command",
+            "propose_edit",
         })
         interaction = server_mod.SERVER_TOOL_REGISTRY["request_user_input"]
         self.assertEqual(interaction["effect"], "interaction")
@@ -180,6 +181,10 @@ class TestFileTools(TestServerFixture):
         self.assertEqual(command["effect"], "command")
         self.assertFalse(command["idempotent"])
         self.assertTrue(command["background"])
+        memory = server_mod.SERVER_TOOL_REGISTRY["save_memory"]
+        self.assertEqual(memory["effect"], "memory_write")
+        self.assertTrue(memory["idempotent"])
+        self.assertTrue(memory["background"])
 
     def test_http_read_only_tools_share_registry_results(self):
         cases = [
@@ -236,6 +241,27 @@ class TestFileTools(TestServerFixture):
             )
         self.assertEqual(status, 200)
         self.assertEqual(routed, web_result)
+
+    def test_http_save_memory_uses_shared_idempotent_registry_service(self):
+        payload = {
+            "name": "registry-memory",
+            "description": "Remember the shared service",
+            "body": "Use one durable implementation for HTTP and AgentRun.",
+        }
+        path = server_mod.MEMORY_DIR / "registry-memory.md"
+        path.unlink(missing_ok=True)
+        direct = server_mod.execute_registered_tool("save_memory", payload)
+        before = path.read_bytes()
+        before_mtime = path.stat().st_mtime_ns
+
+        status, routed = _req("POST", "/api/tools/save_memory", json=payload)
+
+        self.assertEqual(status, 201)
+        self.assertFalse(direct["replayed"])
+        self.assertTrue(routed["replayed"])
+        self.assertEqual(routed["action"], "save_memory")
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(path.stat().st_mtime_ns, before_mtime)
 
     # ── list_files ──
     def test_list_files_root(self):

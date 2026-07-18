@@ -69,8 +69,45 @@ class _AgentUpstream(BaseHTTPRequestHandler):
             message.get("role") == "user" and message.get("content") == "run slow command"
             for message in messages
         )
+        saves_memory = any(
+            message.get("role") == "user" and message.get("content") == "remember convention"
+            for message in messages
+        )
         should_call_tool = tool_result_count == 0 or (repeat_id and tool_result_count < 2)
-        if runs_command and tool_result_count == 0:
+        if saves_memory and tool_result_count == 0:
+            frames = [{
+                "choices": [{
+                    "delta": {"tool_calls": [{
+                        "index": 0,
+                        "id": "agent-memory-1",
+                        "type": "function",
+                        "function": {
+                            "name": "save_memory",
+                            "arguments": json.dumps({
+                                "name": "runtime-convention",
+                                "description": "Runtime convention",
+                                "body": "AgentRun owns durable memory writes.",
+                            }),
+                        },
+                    }]},
+                    "finish_reason": "tool_calls",
+                }],
+            }]
+        elif saves_memory:
+            frames = [
+                {
+                    "choices": [{
+                        "delta": {"content": "memory task complete"},
+                        "finish_reason": "stop",
+                    }],
+                },
+                {"choices": [], "usage": {
+                    "prompt_tokens": 8,
+                    "completion_tokens": 3,
+                    "total_tokens": 11,
+                }},
+            ]
+        elif runs_command and tool_result_count == 0:
             command = (
                 'python -c "import time; print(\'command-started\', flush=True); time.sleep(20)"'
                 if runs_slow_command
@@ -283,6 +320,7 @@ class TestDurableAgentRuntime(unittest.TestCase):
             mock.patch.object(server_mod, "CONFIG_PATH", self.config_path),
             mock.patch.object(server_mod, "FILE_BACKUP_DIR", self.data_dir / "file-backups"),
             mock.patch.object(server_mod, "SKILLS_DIR", self.data_dir / "skills"),
+            mock.patch.object(server_mod, "MEMORY_DIR", self.data_dir / "memory"),
         ]
         for patcher in self.patchers:
             patcher.start()
@@ -393,6 +431,55 @@ class TestDurableAgentRuntime(unittest.TestCase):
                     [item["function"]["name"] for item in selected],
                     ["run_command"],
                 )
+
+    def test_memory_tool_requires_accept_or_bypass_permission(self):
+        payload = {"tools": [server_mod._SERVER_TOOL_DEFINITIONS["save_memory"]]}
+        for profile in ("read", "plan"):
+            with self.subTest(profile=profile):
+                self.assertEqual(
+                    server_mod._agent_selected_tools(payload, ["save_memory"], profile),
+                    [],
+                )
+        for profile in ("accept", "bypass"):
+            with self.subTest(profile=profile):
+                selected = server_mod._agent_selected_tools(
+                    payload, ["save_memory"], profile,
+                )
+                self.assertEqual(
+                    [item["function"]["name"] for item in selected],
+                    ["save_memory"],
+                )
+
+    def test_agent_saves_memory_without_browser_relay_or_authorization_pause(self):
+        run = server_mod._create_agent_run(
+            "memory-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "remember convention"}],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["save_memory"]],
+            },
+            self.base_url,
+            ["memory-secret-key"],
+            allowed_tools=["save_memory"],
+            permission_profile="accept",
+        )
+        self._wait_terminal(run)
+
+        snapshot = server_mod._agent_snapshot(run, 0)
+        self.assertEqual(snapshot["status"], "completed")
+        self.assertEqual(snapshot["result"]["content"], "memory task complete")
+        self.assertIsNone(snapshot["pendingAuthorization"])
+        self.assertEqual(len(snapshot["toolExecutions"]), 1)
+        result = snapshot["toolExecutions"][0]["result"]
+        self.assertEqual(result["action"], "save_memory")
+        self.assertFalse(result["replayed"])
+        memory_path = self.data_dir / "memory" / "runtime-convention.md"
+        self.assertIn(
+            "AgentRun owns durable memory writes.",
+            memory_path.read_text(encoding="utf-8"),
+        )
+        persisted = server_mod._agent_run_path(run["id"]).read_text(encoding="utf-8")
+        self.assertNotIn("memory-secret-key", persisted)
 
     def test_agent_executes_network_and_skill_tools_without_browser_polling(self):
         skill_dir = self.data_dir / "skills" / "runtime-skill"
@@ -642,6 +729,100 @@ class TestDurableAgentRuntime(unittest.TestCase):
         self.assertEqual(snapshot["status"], "completed")
         self.assertEqual(snapshot["result"]["content"], "command task complete")
         self.assertTrue(snapshot["toolExecutions"][0]["result"]["notReplayed"])
+
+    def test_restart_replays_running_memory_write_without_rewriting_file(self):
+        payload = {
+            "name": "runtime-convention",
+            "description": "Runtime convention",
+            "body": "AgentRun owns durable memory writes.",
+        }
+        first = server_mod.execute_registered_tool("save_memory", payload)
+        self.assertFalse(first["replayed"])
+        memory_path = self.data_dir / "memory" / "runtime-convention.md"
+        before = memory_path.read_bytes()
+        before_mtime = memory_path.stat().st_mtime_ns
+
+        run_id = uuid.uuid4().hex
+        arguments = json.dumps(payload, separators=(",", ":"))
+        fingerprint = hashlib.sha256(f"save_memory\0{arguments}".encode()).hexdigest()
+        timestamp = server_mod.now_iso()
+        record = {
+            "version": 1,
+            "id": run_id,
+            "sessionId": "memory-restart-session",
+            "status": "tools",
+            "resumeStatus": "",
+            "permissionProfile": "accept",
+            "error": "",
+            "baseUrl": self.base_url,
+            "request": {"model": "test-model", "tool_choice": "auto"},
+            "messages": [
+                {"role": "user", "content": "remember convention"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "agent-memory-1",
+                        "type": "function",
+                        "function": {"name": "save_memory", "arguments": arguments},
+                    }],
+                },
+            ],
+            "tools": [server_mod._SERVER_TOOL_DEFINITIONS["save_memory"]],
+            "rounds": [{"round": 1, "toolCalls": [], "usage": {"total_tokens": 5}}],
+            "pendingToolCalls": [{
+                "index": 0,
+                "id": "agent-memory-1",
+                "type": "function",
+                "function": {"name": "save_memory", "arguments": arguments},
+                "arguments": payload,
+                "parseError": "",
+                "fingerprint": fingerprint,
+            }],
+            "toolExecutions": {
+                "agent-memory-1": {
+                    "name": "save_memory",
+                    "arguments": arguments,
+                    "fingerprint": fingerprint,
+                    "status": "running",
+                    "result": None,
+                    "error": "",
+                    "startedAt": timestamp,
+                    "completedAt": "",
+                },
+            },
+            "usage": {"total_tokens": 5},
+            "result": {},
+            "events": [],
+            "nextSeq": 1,
+            "maxRounds": 4,
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+        }
+        server_mod.write_json(server_mod._agent_run_path(run_id), record)
+
+        loaded = server_mod._get_agent_run(run_id)
+        self.assertEqual(loaded["status"], "waiting_credentials")
+        original_execute = server_mod.execute_registered_tool
+        with mock.patch.object(
+            server_mod, "execute_registered_tool", wraps=original_execute,
+        ) as execute_mock:
+            server_mod._resume_agent_run(loaded, ["memory-restart-key"])
+            self._wait_terminal(loaded)
+            self.assertEqual(execute_mock.call_count, 1)
+
+        snapshot = server_mod._agent_snapshot(loaded, 0)
+        self.assertEqual(snapshot["status"], "completed")
+        result = snapshot["toolExecutions"][0]["result"]
+        self.assertTrue(result["replayed"])
+        self.assertEqual(memory_path.read_bytes(), before)
+        self.assertEqual(memory_path.stat().st_mtime_ns, before_mtime)
+        self.assertTrue(any(
+            event["type"] == "tool_completed" and event["data"].get("replayed")
+            for event in snapshot["events"]
+        ))
+        persisted = server_mod._agent_run_path(run_id).read_text(encoding="utf-8")
+        self.assertNotIn("memory-restart-key", persisted)
 
     def test_agent_questionnaire_waits_durably_and_continues_after_valid_answer(self):
         run = server_mod._create_agent_run(

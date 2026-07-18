@@ -14,6 +14,20 @@
 
 ---
 
+## 2026-07-18 15:46 · Codex
+
+### 将项目记忆写入迁入持久 AgentRun，建立可安全恢复的幂等语义
+
+- **共享记忆服务**：将原 `/api/tools/save_memory` 处理器内的独立写文件逻辑抽成 `execute_save_memory_tool`，并加入 `SERVER_TOOL_REGISTRY`，声明为 `effect=memory_write`、`idempotent=true`、`background=true`。HTTP 路由和 AgentRun 现在使用同一校验、项目绑定与写入实现。
+- **原子写入与幂等重放**：记忆文件先写入同目录临时文件，再原子替换目标；目标的名称、描述、项目和正文与本次请求一致时，直接返回 `replayed=true`，不重写文件或刷新修改时间。这覆盖了“文件已替换、工具完成状态尚未落盘”的崩溃窗口。
+- **AgentRun 权限与恢复**：`read` / `plan` 不获得项目记忆写入工具，`accept` / `bypass` 可由后台直接执行；工具参数、状态、结果和重放事件随 AgentRun 持久化，API Key 仍仅存内存。服务重启遇到 `running` 记忆写入时可按原参数恢复，已产生的相同文件被识别为原执行结果。
+- **迁移边界**：本阶段未切换正式前端的 `plan` / `accept` 执行所有权，也未改动项目文件直接写入/删除和子任务协议；下一阶段聚焦直接写入/删除。
+- **验证结果**：新增注册表权限筛选、真实 HTTP 共享服务、无浏览器 AgentRun 写入、崩溃后幂等重放、文件修改时间不变及凭据不落盘回归；记忆/HTTP/AgentRun 定向回归 `266 passed, 16 subtests passed`，最终全量回归 `524 passed, 18 subtests passed`，Python 编译通过。
+
+**涉及文件**：`server.py`、`tests/test_agent_runtime.py`、`tests/test_routes.py`、`README.md`、`docs/SERVER_AGENT_LOOP_PLAN.md`、`data/memory/code-architecture.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 15:34 · Codex
 
 ### 建立 AgentRun 命令授权、增量输出、取消和不可重放协议

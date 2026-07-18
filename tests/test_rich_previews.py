@@ -114,7 +114,7 @@ class TestRichPreviews(unittest.TestCase):
 
     def test_frontend_contains_all_four_rich_preview_renderers(self):
         app_dir = Path(__file__).resolve().parent.parent
-        script = (app_dir / "app.js").read_text(encoding="utf-8")
+        script = (app_dir / "src" / "features" / "preview.js").read_text(encoding="utf-8")
         markup = (app_dir / "index.html").read_text(encoding="utf-8")
         styles = (app_dir / "styles.css").read_text(encoding="utf-8")
 

@@ -11,6 +11,7 @@ APP_SOURCE = (ROOT / "app.js").read_text(encoding="utf-8")
 RUNTIME_SOURCE = (ROOT / "agent-runtime.js").read_text(encoding="utf-8")
 I18N_SOURCE = (ROOT / "src" / "core" / "i18n.js").read_text(encoding="utf-8")
 API_CLIENT_SOURCE = (ROOT / "src" / "services" / "api-client.js").read_text(encoding="utf-8")
+PREVIEW_SOURCE = (ROOT / "src" / "features" / "preview.js").read_text(encoding="utf-8")
 FILES_SOURCE = (ROOT / "src" / "features" / "files.js").read_text(encoding="utf-8")
 INDEX_SOURCE = (ROOT / "index.html").read_text(encoding="utf-8")
 BUILD_SOURCE = (ROOT / "build_exe.py").read_text(encoding="utf-8")
@@ -247,6 +248,7 @@ eval(source);
             "src/core/i18n.js",
             "src/services/notifications.js",
             "src/services/api-client.js",
+            "src/features/preview.js",
             "src/features/files.js",
         ):
             self.assertTrue((ROOT / relative_path).is_file(), relative_path)
@@ -259,6 +261,7 @@ eval(source);
             "./src/core/i18n.js",
             "./src/services/notifications.js",
             "./src/services/api-client.js",
+            "./src/features/preview.js",
             "./src/features/files.js",
             "./agent-runtime.js",
             "./app.js",
@@ -466,12 +469,68 @@ const feature = createFilesFeature({
             {"name": "demo.txt", "contentBase64": "aGk="},
         )
 
+    def test_preview_feature_exports_parsing_urls_and_width_rules(self):
+        self.assertIn("features.preview = Object.freeze", PREVIEW_SOURCE)
+        script = """
+global.window = {Code: {features: {}}, innerWidth: 1000};
+require("./src/features/preview.js");
+const {createPreviewFeature, parseDelimitedText, previewRawUrl} = window.Code.features.preview;
+const styles = [];
+const storage = [];
+const feature = createPreviewFeature({
+  state: {previewWidth: 420},
+  elements: {},
+  apiJson: async () => ({}),
+  renderMarkdown: (value) => value,
+  document: {documentElement: {style: {setProperty: (...args) => styles.push(args)}}},
+  storage: {setItem: (...args) => storage.push(args)},
+});
+const parsed = parseDelimitedText('name,note\\nAlice,"hello, world"\\nBob,"two\\nlines"\\n');
+const limited = parseDelimitedText("a\\nb\\nc\\n", ",", 2);
+const wide = feature.applyPreviewWidth(600, false);
+const narrow = feature.applyPreviewWidth(100, true);
+process.stdout.write(JSON.stringify({
+  parsed,
+  limited,
+  wide,
+  narrow,
+  styles,
+  storage,
+  raw: previewRawUrl("folder/a b.pdf", "version 1"),
+}));
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertEqual(
+            data["parsed"]["rows"],
+            [["name", "note"], ["Alice", "hello, world"], ["Bob", "two\nlines"]],
+        )
+        self.assertFalse(data["parsed"]["limited"])
+        self.assertEqual(data["limited"]["rows"], [["a"], ["b"]])
+        self.assertTrue(data["limited"]["limited"])
+        self.assertEqual(data["wide"], 480)
+        self.assertEqual(data["narrow"], 250)
+        self.assertEqual(data["styles"][-1], ["--preview-width", "250px"])
+        self.assertEqual(data["storage"], [["code-preview-width", "250"]])
+        self.assertEqual(
+            data["raw"],
+            "/api/file?path=folder%2Fa%20b.pdf&raw=1&v=version%201",
+        )
+
     def test_app_uses_extracted_modules_without_duplicate_definitions(self):
         self.assertIn("const { uiIcon } = window.Code.core.icons", APP_SOURCE)
         self.assertIn("} = window.Code.core.utils", APP_SOURCE)
         self.assertIn("const { createI18nRuntime } = window.Code.core.i18n", APP_SOURCE)
         self.assertIn("const { t, setLang, applyI18n } = createI18nRuntime", APP_SOURCE)
         self.assertIn("const { apiJson } = window.Code.services.apiClient", APP_SOURCE)
+        self.assertIn("const { createPreviewFeature } = window.Code.features.preview", APP_SOURCE)
+        self.assertIn("const previewFeature = createPreviewFeature", APP_SOURCE)
         self.assertIn("const { createFilesFeature, shortPath } = window.Code.features.files", APP_SOURCE)
         self.assertIn("const filesFeature = createFilesFeature", APP_SOURCE)
         self.assertIn(
@@ -492,6 +551,24 @@ const feature = createFilesFeature({
             "function setLang(",
             "function applyI18n(",
             "async function apiJson(",
+            "function applyPreviewWidth(",
+            "function renderPreviewNotice(",
+            "function renderCodePreview(",
+            "function renderPreviewModeActions(",
+            "function sanitizePreviewHtml(",
+            "function renderMarkdownPreview(",
+            "function parseDelimitedText(",
+            "function renderDelimitedTablePage(",
+            "function renderDelimitedPreview(",
+            "function currentImageFitScale(",
+            "function applyImagePreviewScale(",
+            "function renderImagePreviewActions(",
+            "function renderImagePreview(",
+            "function renderPdfPreview(",
+            "function markActiveFile(",
+            "function formatPreviewMeta(",
+            "async function loadFile(",
+            "function startPreviewAutoRefresh(",
             "function shortPath(",
             "function arrayBufferToBase64(",
             "async function uploadAttachment(",

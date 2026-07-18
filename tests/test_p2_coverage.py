@@ -341,7 +341,7 @@ class TestPreviewLineWrapping(unittest.TestCase):
     def setUpClass(cls):
         root = Path(__file__).resolve().parent.parent
         cls.styles = (root / "styles.css").read_text(encoding="utf-8")
-        cls.script = (root / "app.js").read_text(encoding="utf-8")
+        cls.script = (root / "src" / "features" / "preview.js").read_text(encoding="utf-8")
 
     def test_code_preview_wraps_inside_narrow_pane(self):
         self.assertIn("grid-template-columns: 52px minmax(0, 1fr);", self.styles)
@@ -351,11 +351,11 @@ class TestPreviewLineWrapping(unittest.TestCase):
     def test_drag_temporarily_disables_expensive_wrapping(self):
         self.assertIn(".resizing-preview .code-preview .line-code", self.styles)
         self.assertIn("requestAnimationFrame(() =>", self.script)
-        self.assertIn("applyPreviewWidth(previewPendingWidth, false);", self.script)
+        self.assertIn("applyPreviewWidth(pendingWidth, false);", self.script)
 
     def test_large_preview_uses_lightweight_rendering(self):
         self.assertIn("normalized.length <= 350000 && lines.length <= 8000", self.script)
-        self.assertIn("formatPreviewMeta(data)", self.script)
+        self.assertIn("formatMeta(data)", self.script)
         self.assertIn(r'join(" \u00b7 ")', self.script)
 
 

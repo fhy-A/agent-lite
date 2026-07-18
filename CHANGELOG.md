@@ -14,6 +14,20 @@
 
 ---
 
+## 2026-07-18 21:21 · Codex
+
+### 抽离多格式预览模块，完成前端拆分阶段 2 的第二项
+
+- **预览功能独立**：新增 `src/features/preview.js`，集中承接文本/代码、Markdown、CSV/TSV、图片和 PDF 预览，以及预览模式切换、表格分页、图片缩放拖拽、宽度调整、自动刷新和页面刷新后的预览恢复。
+- **依赖边界收口**：文件树继续只通过 `openFile` 回调请求打开文件；Markdown 渲染、语法高亮、通用复制、格式化和 API 请求由 `app.js` 在装配时显式注入，预览模块不反向读取其他功能模块的内部变量。
+- **旧实现退场**：`app.js` 删除预览渲染器、CSV 解析器、轮询计时器、宽度拖拽状态和重复事件绑定，只保留预览模块创建、公开方法接线与启动恢复调用；`index.html` 在文件模块和应用脚本前加载预览模块。
+- **回归保护**：补充模块存在与加载顺序、公开导出、CSV 引号及跨行字段解析、最大行数限制、原始文件 URL、预览宽度约束和旧定义禁入测试；富预览与窄栏性能测试改为直接验证新模块所有者。
+- **验证结果**：`src/features/preview.js` 与 `app.js` JavaScript 语法、`git diff --check` 通过；定向回归 `72 passed, 6 subtests passed`，全量回归 `552 passed, 25 subtests passed`。人工确认代码、Markdown、GBK CSV、图片缩放、预览宽度、刷新恢复和关闭后重新打开均正常。
+
+**涉及文件**：`src/features/preview.js`、`app.js`、`index.html`、`tests/test_frontend_modules.py`、`tests/test_p2_coverage.py`、`tests/test_rich_previews.py`、`docs/APP_JS_SPLIT_PLAN.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 20:53 · Codex
 
 ### 抽离文件树与普通附件模块，进入前端拆分阶段 2

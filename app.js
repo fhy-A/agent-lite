@@ -9,6 +9,7 @@ const {
 const { createI18nRuntime } = window.Code.core.i18n;
 const { showToast, notify: _notify } = window.Code.services.notifications;
 const { apiJson } = window.Code.services.apiClient;
+const { createPreviewFeature } = window.Code.features.preview;
 const { createFilesFeature, shortPath } = window.Code.features.files;
 
 function upgradeStaticIcons() {
@@ -748,6 +749,24 @@ const els = {
   userInputPanel: document.getElementById("userInputPanel"),
 
 };
+
+const previewFeature = createPreviewFeature({
+  state,
+  elements: els,
+  t,
+  escapeHtml,
+  apiJson,
+  renderMarkdown: renderMarkdownLite,
+  resolveSyntaxPatterns: _resolveSyntaxPatterns,
+  highlightSyntax,
+  languageFromPath,
+  formatSize,
+  copyText,
+  showCopyFeedback: showIconCopyFeedback,
+  showToast,
+});
+const { loadFile, applyPreviewWidth } = previewFeature;
+previewFeature.bind();
 
 const filesFeature = createFilesFeature({
   state,
@@ -6123,23 +6142,6 @@ function isAutoSessionTitle(title = "") {
 
 
 
-function applyPreviewWidth(width = state.previewWidth, persist = true) {
-
-  const viewportLimit = Math.max(320, window.innerWidth - 520);
-
-  // Min 250px = title(~60) + gap + language(88) + refresh(28) + copy(28) + padding
-  const next = Math.min(Math.max(Number(width) || 420, 250), viewportLimit);
-
-  state.previewWidth = next;
-
-  document.documentElement.style.setProperty("--preview-width", `${next}px`);
-
-  if (persist) localStorage.setItem("code-preview-width", String(next));
-
-}
-
-
-
 function applySidebarWidth(width = state.sidebarWidth) {
 
   const next = Math.min(Math.max(Number(width) || 264, 220), 480);
@@ -6173,345 +6175,6 @@ function applySidebarSessionHeight(height = state.sidebarSessionHeight) {
   document.documentElement.style.setProperty("--explorer-height", `${next}px`);
 
   localStorage.setItem("code-session-height", String(next));
-
-}
-
-
-
-function renderPreviewNotice(title, body = "") {
-
-  els.filePreview.className = "file-preview empty";
-
-  document.getElementById("previewTitle").textContent = title;
-
-  document.getElementById("previewMeta").textContent = body || "";
-
-  els.previewLanguage.textContent = "";
-
-  renderPreviewModeActions([]);
-
-  els.refreshPreview.disabled = true;
-
-  els.copyPreview.disabled = true;
-
-  els.filePreview.innerHTML = `
-
-    <div class="preview-notice">
-
-      <strong>${escapeHtml(title)}</strong>
-
-      ${body ? `<span>${escapeHtml(body)}</span>` : ""}
-
-    </div>
-
-  `;
-
-}
-
-
-
-function renderCodePreview(content = "") {
-
-  const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-
-  const lines = normalized.length ? normalized.split("\n") : [""];
-
-  const lang = languageFromPath(state.previewPath || "");
-
-  // Large previews favor responsive scrolling/resizing over syntax coloring.
-  // The source remains exact and line-addressable in this mode.
-  const doHighlight = normalized.length <= 350000 && lines.length <= 8000
-    ? _resolveSyntaxPatterns(lang)
-    : null;
-
-  els.filePreview.className = "file-preview code-preview";
-
-  els.filePreview.innerHTML = lines
-
-    .map((line, index) => {
-
-      const highlighted = doHighlight ? highlightSyntax(line, lang) : escapeHtml(line);
-
-      return `
-
-      <div class="code-line" data-line="${index + 1}">
-
-        <span class="line-no">${index + 1}</span>
-
-        <span class="line-code">${highlighted || " "}</span>
-
-      </div>
-
-    `;})
-
-    .join("");
-
-  // One delegated handler is substantially cheaper than one listener per line
-  // for large source files.
-  els.filePreview.onclick = (event) => {
-    const line = event.target.closest(".code-line");
-    if (!line || !els.filePreview.contains(line)) return;
-    els.filePreview.querySelector(".code-line.active-line")?.classList.remove("active-line");
-    line.classList.add("active-line");
-    copyText(`${state.previewPath}:${line.dataset.line}`);
-  };
-
-}
-
-
-
-function previewRawUrl(path = state.previewPath, version = state._previewMtime || "") {
-  const query = `/api/file?path=${encodeURIComponent(path || "")}&raw=1`;
-  return version ? `${query}&v=${encodeURIComponent(version)}` : query;
-}
-
-
-function renderPreviewModeActions(actions = []) {
-  if (!els.previewModeActions) return;
-  els.previewModeActions.replaceChildren();
-  actions.forEach((action) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `preview-mode-btn${action.active ? " active" : ""}${action.iconOnly ? " icon-only" : ""}`;
-    button.textContent = action.label;
-    button.title = action.title || action.label;
-    button.setAttribute("aria-label", action.title || action.label);
-    if (action.disabled) button.disabled = true;
-    button.addEventListener("click", action.onClick);
-    els.previewModeActions.appendChild(button);
-  });
-}
-
-
-function sanitizePreviewHtml(html = "") {
-  const documentNode = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
-  documentNode.querySelectorAll("script, style, iframe, object, embed, form, input, button, textarea, select").forEach((node) => node.remove());
-  documentNode.querySelectorAll("*").forEach((node) => {
-    [...node.attributes].forEach((attribute) => {
-      const name = attribute.name.toLowerCase();
-      const value = attribute.value.trim().toLowerCase();
-      if (name.startsWith("on") || ((name === "href" || name === "src") && value.startsWith("javascript:"))) {
-        node.removeAttribute(attribute.name);
-      }
-    });
-  });
-  return documentNode.body.firstElementChild?.innerHTML || "";
-}
-
-
-function renderMarkdownPreview(content = "", mode = state.previewMode) {
-  state.previewMode = mode === "source" ? "source" : "rendered";
-  renderPreviewModeActions([
-    { label: t("previewRendered"), active: state.previewMode === "rendered", onClick: () => renderMarkdownPreview(content, "rendered") },
-    { label: t("previewSource"), active: state.previewMode === "source", onClick: () => renderMarkdownPreview(content, "source") },
-  ]);
-  if (state.previewMode === "source") {
-    renderCodePreview(content);
-    return;
-  }
-  els.filePreview.onclick = null;
-  els.filePreview.className = "file-preview markdown-preview";
-  els.filePreview.innerHTML = `<article class="preview-markdown-body">${sanitizePreviewHtml(renderMarkdownLite(content))}</article>`;
-}
-
-
-function parseDelimitedText(text = "", delimiter = ",", maxRows = 10001) {
-  const rows = [];
-  let row = [];
-  let field = "";
-  let quoted = false;
-  let limited = false;
-
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    if (quoted) {
-      if (char === '"' && text[index + 1] === '"') {
-        field += '"';
-        index += 1;
-      } else if (char === '"') {
-        quoted = false;
-      } else {
-        field += char;
-      }
-      continue;
-    }
-    if (char === '"' && field.length === 0) {
-      quoted = true;
-    } else if (char === delimiter) {
-      row.push(field);
-      field = "";
-    } else if (char === "\n" || char === "\r") {
-      if (char === "\r" && text[index + 1] === "\n") index += 1;
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = "";
-      if (rows.length >= maxRows) {
-        limited = index < text.length - 1;
-        break;
-      }
-    } else {
-      field += char;
-    }
-  }
-  if (!limited && (field.length || row.length)) {
-    row.push(field);
-    rows.push(row);
-  }
-  while (rows.length && rows[rows.length - 1].every((cell) => cell === "")) rows.pop();
-  return { rows, limited };
-}
-
-
-function renderDelimitedTablePage() {
-  const tableState = state.previewTable;
-  if (!tableState) return;
-  const rows = tableState.rows;
-  if (!rows.length) {
-    els.filePreview.innerHTML = `<div class="preview-notice"><span>${escapeHtml(t("previewNoRows"))}</span></div>`;
-    return;
-  }
-  const headers = rows[0];
-  const dataRows = rows.slice(1);
-  const pageSize = tableState.pageSize;
-  const totalPages = Math.max(1, Math.ceil(dataRows.length / pageSize));
-  tableState.page = Math.min(Math.max(0, tableState.page), totalPages - 1);
-  const start = tableState.page * pageSize;
-  const visibleRows = dataRows.slice(start, start + pageSize);
-  const columnCount = Math.max(1, ...rows.map((row) => row.length));
-  const visibleColumnCount = Math.min(columnCount, 60);
-  const normalizedHeaders = Array.from({ length: visibleColumnCount }, (_, index) => headers[index] || `#${index + 1}`);
-  const headHtml = normalizedHeaders.map((header) => `<th>${escapeHtml(header)}</th>`).join("");
-  const bodyHtml = visibleRows.map((row, rowIndex) => {
-    const cells = Array.from({ length: visibleColumnCount }, (_, columnIndex) => `<td>${escapeHtml(row[columnIndex] || "")}</td>`).join("");
-    return `<tr><th class="table-row-number">${start + rowIndex + 2}</th>${cells}</tr>`;
-  }).join("");
-  const limitNotice = tableState.limited ? `<span class="table-limit-notice">${escapeHtml(t("previewTableLimited", { count: rows.length }))}</span>` : "";
-  els.filePreview.innerHTML = `
-    <div class="preview-table-scroll">
-      <table class="preview-data-table"><thead><tr><th class="table-row-number">#</th>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table>
-    </div>
-    <footer class="preview-table-footer">
-      <span>${escapeHtml(t("previewRows", { count: dataRows.length }))} · ${escapeHtml(t("previewColumns", { count: columnCount }))}</span>
-      ${limitNotice}
-      <div class="preview-table-pager">
-        <button type="button" class="mini-btn" data-table-page="previous" ${tableState.page === 0 ? "disabled" : ""} title="${escapeHtml(t("previewPreviousPage"))}">‹</button>
-        <span>${escapeHtml(t("previewPageOf", { page: tableState.page + 1, total: totalPages }))}</span>
-        <button type="button" class="mini-btn" data-table-page="next" ${tableState.page >= totalPages - 1 ? "disabled" : ""} title="${escapeHtml(t("previewNextPage"))}">›</button>
-      </div>
-    </footer>`;
-  els.filePreview.querySelector('[data-table-page="previous"]')?.addEventListener("click", () => {
-    tableState.page -= 1;
-    renderDelimitedTablePage();
-  });
-  els.filePreview.querySelector('[data-table-page="next"]')?.addEventListener("click", () => {
-    tableState.page += 1;
-    renderDelimitedTablePage();
-  });
-}
-
-
-function renderDelimitedPreview(content = "", delimiter = ",", mode = state.previewMode) {
-  state.previewMode = mode === "source" ? "source" : "table";
-  renderPreviewModeActions([
-    { label: t("previewTable"), active: state.previewMode === "table", onClick: () => renderDelimitedPreview(content, delimiter, "table") },
-    { label: t("previewSource"), active: state.previewMode === "source", onClick: () => renderDelimitedPreview(content, delimiter, "source") },
-  ]);
-  if (state.previewMode === "source") {
-    renderCodePreview(content);
-    return;
-  }
-  if (!state.previewTable || state.previewTable.content !== content || state.previewTable.delimiter !== delimiter) {
-    const parsed = parseDelimitedText(content, delimiter);
-    state.previewTable = { content, delimiter, rows: parsed.rows, limited: parsed.limited, page: 0, pageSize: 100 };
-  }
-  els.filePreview.onclick = null;
-  els.filePreview.className = "file-preview table-preview";
-  renderDelimitedTablePage();
-}
-
-
-function currentImageFitScale() {
-  const viewport = els.filePreview.querySelector(".image-preview-viewport");
-  const image = viewport?.querySelector("img");
-  if (!viewport || !image?.naturalWidth || !image?.naturalHeight) return 1;
-  return Math.min((viewport.clientWidth - 32) / image.naturalWidth, (viewport.clientHeight - 32) / image.naturalHeight, 1);
-}
-
-
-function applyImagePreviewScale(scale = null) {
-  const viewport = els.filePreview.querySelector(".image-preview-viewport");
-  const image = viewport?.querySelector("img");
-  if (!viewport || !image) return;
-  state.previewImageScale = scale === null ? null : Math.min(5, Math.max(0.1, scale));
-  viewport.classList.toggle("fit", state.previewImageScale === null);
-  if (state.previewImageScale === null) {
-    image.style.width = "";
-    image.style.height = "";
-  } else {
-    image.style.width = `${Math.round(image.naturalWidth * state.previewImageScale)}px`;
-    image.style.height = `${Math.round(image.naturalHeight * state.previewImageScale)}px`;
-  }
-  renderImagePreviewActions();
-}
-
-
-function renderImagePreviewActions() {
-  const displayScale = state.previewImageScale === null ? currentImageFitScale() : state.previewImageScale;
-  renderPreviewModeActions([
-    { label: "−", iconOnly: true, title: t("previewZoomOut"), onClick: () => applyImagePreviewScale(displayScale / 1.25) },
-    { label: state.previewImageScale === null ? t("previewFit") : `${Math.round(displayScale * 100)}%`, active: state.previewImageScale === null, title: t("previewFit"), onClick: () => applyImagePreviewScale(null) },
-    { label: "+", iconOnly: true, title: t("previewZoomIn"), onClick: () => applyImagePreviewScale(displayScale * 1.25) },
-    { label: "1:1", title: t("previewActualSize"), active: state.previewImageScale === 1, onClick: () => applyImagePreviewScale(1) },
-  ]);
-}
-
-
-function renderImagePreview(path = state.previewPath) {
-  state.previewImageScale = null;
-  els.filePreview.onclick = null;
-  els.filePreview.className = "file-preview image-preview";
-  els.filePreview.innerHTML = `<div class="image-preview-viewport fit"><img src="${previewRawUrl(path)}" alt="${escapeHtml(path.split(/[\\/]/).pop() || "preview")}" draggable="false" /></div>`;
-  const viewport = els.filePreview.querySelector(".image-preview-viewport");
-  const image = viewport.querySelector("img");
-  image.addEventListener("load", renderImagePreviewActions, { once: true });
-  image.addEventListener("error", () => renderPreviewNotice(t("loadFailed"), t("imageReadFailed")), { once: true });
-  let drag = null;
-  viewport.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 || state.previewImageScale === null) return;
-    drag = { x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop };
-    viewport.classList.add("dragging");
-    viewport.setPointerCapture(event.pointerId);
-  });
-  viewport.addEventListener("pointermove", (event) => {
-    if (!drag) return;
-    viewport.scrollLeft = drag.left - (event.clientX - drag.x);
-    viewport.scrollTop = drag.top - (event.clientY - drag.y);
-  });
-  const endDrag = () => { drag = null; viewport.classList.remove("dragging"); };
-  viewport.addEventListener("pointerup", endDrag);
-  viewport.addEventListener("pointercancel", endDrag);
-  renderImagePreviewActions();
-}
-
-
-function renderPdfPreview(path = state.previewPath) {
-  els.filePreview.onclick = null;
-  els.filePreview.className = "file-preview pdf-preview";
-  renderPreviewModeActions([]);
-  els.filePreview.innerHTML = `<iframe class="preview-pdf-frame" src="${previewRawUrl(path)}#view=FitH&toolbar=1&navpanes=0" title="${escapeHtml(path.split(/[\\/]/).pop() || t("previewPdf"))}"></iframe>`;
-}
-
-
-
-
-function markActiveFile() {
-
-  document.querySelectorAll(".file-item").forEach((btn) => {
-
-    btn.classList.toggle("active", btn.dataset.path === state.previewPath);
-
-  });
 
 }
 
@@ -6569,176 +6232,6 @@ function insertPromptText(text) {
   resolveAtImages();
 
   updateSendButtonState();
-
-}
-
-
-
-function formatPreviewMeta(data, suffix = "") {
-
-  const parts = [data.path || state.previewPath || "", formatSize(data.size || 0)];
-
-  const encoding = String(data.encoding || "").toLowerCase();
-
-  if (encoding && encoding !== "utf-8" && encoding !== "utf-8-sig") {
-
-    parts.push(encoding);
-
-  }
-
-  if (data.truncated) parts.push(t("fmtTruncatedContent"));
-
-  if (suffix) parts.push(suffix);
-
-  return parts.filter(Boolean).join(" \u00b7 ");
-
-}
-
-
-
-async function loadFile(path, mtime) {
-
-  const data = await apiJson(`/api/file?path=${encodeURIComponent(path)}`);
-
-  const previousPath = state.previewPath;
-
-  els.workbench.classList.add("preview-open");
-
-  localStorage.setItem("code-preview-open", "1");
-
-  localStorage.setItem("code-preview-path", path);
-
-  state.previewPath = data.path || path;
-
-  if (previousPath !== state.previewPath) {
-    state.previewTable = null;
-    state.previewImageScale = null;
-  }
-
-  state._previewMtime = data.updatedAt || "";
-
-  const language = languageFromPath(state.previewPath);
-
-  markActiveFile();
-
-  els.previewTitle.textContent = data.name || "File";
-
-  els.previewMeta.textContent = formatPreviewMeta(data);
-
-  els.previewLanguage.textContent = language;
-
-  els.refreshPreview.disabled = false;
-
-  const ext = (data.name || "").split(".").pop()?.toLowerCase();
-
-  if (ext && /^(png|jpg|jpeg|gif|webp|svg|bmp|ico)$/i.test(ext)) {
-    state.previewKind = "image";
-    state.previewContent = "";
-    els.previewLanguage.textContent = ext;
-    renderImagePreview(state.previewPath);
-    els.copyPreview.disabled = true;
-    startPreviewAutoRefresh();
-    return;
-
-  }
-
-  if (ext === "pdf") {
-    state.previewKind = "pdf";
-    state.previewContent = "";
-    els.previewLanguage.textContent = "pdf";
-    renderPdfPreview(state.previewPath);
-    els.copyPreview.disabled = true;
-    startPreviewAutoRefresh();
-    return;
-  }
-
-  if (data.binary) {
-
-    state.previewContent = "";
-
-    renderPreviewNotice(t("binaryFile"), t("previewUnsupported"));
-
-    els.copyPreview.disabled = true;
-
-    return;
-
-  }
-
-  state.previewContent = data.content || "";
-
-  if (state.previewContent) {
-
-    if (ext === "md" || ext === "markdown" || ext === "mdown") {
-      state.previewKind = "markdown";
-      if (previousPath !== state.previewPath) state.previewMode = "rendered";
-      renderMarkdownPreview(state.previewContent, state.previewMode);
-    } else if (ext === "csv" || ext === "tsv") {
-      state.previewKind = "delimited";
-      if (previousPath !== state.previewPath) state.previewMode = "table";
-      renderDelimitedPreview(state.previewContent, ext === "tsv" ? "\t" : ",", state.previewMode);
-    } else {
-      state.previewKind = "text";
-      state.previewMode = "source";
-      renderPreviewModeActions([]);
-      renderCodePreview(state.previewContent);
-    }
-
-  } else {
-
-    renderPreviewNotice(t("emptyFile"), t("noTextContent"));
-
-  }
-
-  els.copyPreview.disabled = false;
-
-  // Start auto-refresh polling
-
-  startPreviewAutoRefresh();
-
-}
-
-
-
-let _previewPollTimer = null;
-
-function startPreviewAutoRefresh() {
-
-  clearInterval(_previewPollTimer);
-
-  _previewPollTimer = setInterval(async () => {
-
-    if (!state.previewPath || !els.workbench.classList.contains("preview-open")) return;
-
-    try {
-
-      const data = await apiJson(`/api/file?path=${encodeURIComponent(state.previewPath)}`);
-
-      if (data.updatedAt && data.updatedAt !== state._previewMtime) {
-
-        state._previewMtime = data.updatedAt;
-        els.previewMeta.textContent = formatPreviewMeta(data, t("autoUpdated"));
-        if (state.previewKind === "image") {
-          renderImagePreview(state.previewPath);
-        } else if (state.previewKind === "pdf") {
-          renderPdfPreview(state.previewPath);
-        } else if (!data.binary) {
-          state.previewContent = data.content || "";
-          if (state.previewKind === "markdown") {
-            renderMarkdownPreview(state.previewContent, state.previewMode);
-          } else if (state.previewKind === "delimited") {
-            const ext = state.previewPath.split(".").pop()?.toLowerCase();
-            state.previewTable = null;
-            renderDelimitedPreview(state.previewContent, ext === "tsv" ? "\t" : ",", state.previewMode);
-          } else {
-            renderCodePreview(state.previewContent);
-          }
-        }
-
-      }
-
-    } catch (_) { /* file deleted or renamed, stop polling */ }
-
-  }, 3000);
 
 }
 
@@ -11564,37 +11057,9 @@ async function saveMemorySubmit() {
 
 
 
-let previewDragState = null;
-let previewResizeFrame = 0;
-let previewPendingWidth = null;
-
 let sidebarDragState = null;
 
 let sidebarMainDragState = null;
-
-
-
-function finishPreviewDrag(event) {
-
-  if (!previewDragState) return;
-
-  if (event?.pointerId !== undefined && els.previewResizer.hasPointerCapture(event.pointerId)) {
-
-    els.previewResizer.releasePointerCapture(event.pointerId);
-
-  }
-
-  if (previewResizeFrame) {
-    cancelAnimationFrame(previewResizeFrame);
-    previewResizeFrame = 0;
-  }
-  applyPreviewWidth(previewPendingWidth ?? state.previewWidth, true);
-  previewPendingWidth = null;
-  previewDragState = null;
-
-  document.body.classList.remove("resizing-preview");
-
-}
 
 
 
@@ -11926,21 +11391,6 @@ els.resetSystemPrompt.addEventListener("click", () => {
 
 });
 
-els.refreshPreview.addEventListener("click", () => {
-
-  if (!state.previewPath) return;
-
-  loadFile(state.previewPath).catch((err) => showToast(err.message, "error"));
-
-});
-
-els.copyPreview.addEventListener("click", async (event) => {
-  event.preventDefault();
-  event.stopImmediatePropagation();
-  const ok = await copyText(state.previewContent || "");
-  showIconCopyFeedback(els.copyPreview, ok);
-}, true);
-
 els.copySessionPath.addEventListener("click", async () => {
   const ok = await copyText(sessionFilePath());
   els.copySessionPath.textContent = ok ? t("copiedBtn") : t("failedBtn");
@@ -11980,53 +11430,6 @@ const hidePeek = (e) => {
 
 els.sidebarPeekZone.addEventListener("mouseleave", hidePeek);
 document.getElementById("sidebar").addEventListener("mouseleave", hidePeek);
-
-els.togglePreview.addEventListener("click", () => {
-
-  els.workbench.classList.toggle("preview-open");
-
-  if (!els.workbench.classList.contains("preview-open")) {
-
-    clearInterval(_previewPollTimer);
-
-    state.previewPath = ""; state.previewContent = "";
-
-    localStorage.removeItem("code-preview-open");
-
-    localStorage.removeItem("code-preview-path");
-
-  }
-
-});
-
-els.previewResizer.addEventListener("pointerdown", (event) => {
-
-  if (!els.workbench.classList.contains("preview-open")) return;
-
-  previewDragState = { startX: event.clientX, startWidth: state.previewWidth };
-
-  els.previewResizer.setPointerCapture(event.pointerId);
-
-  document.body.classList.add("resizing-preview");
-
-});
-
-els.previewResizer.addEventListener("pointermove", (event) => {
-
-  if (!previewDragState) return;
-
-  previewPendingWidth = previewDragState.startWidth - (event.clientX - previewDragState.startX);
-  if (previewResizeFrame) return;
-  previewResizeFrame = requestAnimationFrame(() => {
-    applyPreviewWidth(previewPendingWidth, false);
-    previewResizeFrame = 0;
-  });
-
-});
-
-els.previewResizer.addEventListener("pointerup", finishPreviewDrag);
-
-els.previewResizer.addEventListener("pointercancel", finishPreviewDrag);
 
 els.sidebarSplitter.addEventListener("pointerdown", (event) => {
 
@@ -12099,8 +11502,6 @@ els.sidebarResizer.addEventListener("pointercancel", finishSidebarMainDrag);
 
 
 window.addEventListener("resize", () => {
-
-  applyPreviewWidth(state.previewWidth);
 
   applySidebarSessionHeight(state.sidebarSessionHeight);
 
@@ -13749,26 +13150,8 @@ async function init() {
     console.error("Failed to resume persisted background runs:", error);
   });
 
-  // Restore preview state
-
-  // Restore preview pane state — must be after config/session load
-  if (localStorage.getItem("code-preview-open") === "1") {
-
-    const savedPath = localStorage.getItem("code-preview-path");
-
-    if (savedPath) {
-
-      try {
-        await loadFile(savedPath);
-      } catch (_) {
-        // File may no longer exist or path changed — clean up
-        localStorage.removeItem("code-preview-open");
-        localStorage.removeItem("code-preview-path");
-      }
-
-    }
-
-  }
+  // Restore preview pane state after config/session load.
+  await previewFeature.restore();
 
   updateSendButtonState();
 

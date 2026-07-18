@@ -14,6 +14,19 @@
 
 ---
 
+## 2026-07-18 17:42 · Codex
+
+### 将自动模式切换到服务端 AgentRun，完成全部新任务的单一所有权迁移
+
+- **自动模式所有权**：界面现有“自动”入口现在与只读、计划和接受编辑一致，为新任务创建服务端 AgentRun；自动模式仍按原产品语义直接执行允许的编辑、写入、删除和命令，不增加授权弹窗，但继续经过服务端安全检查、幂等与取消协议。
+- **历史兼容边界**：恢复任务时继续优先采用检查点已保存的 `executionOwner`。迁移前明确记录为 `browser` 的活动任务仍走旧链路，不会在中途切换所有者；新任务的四种有效权限全部选择 `server-agent`。
+- **人工端到端验证**：已确认自动模式直接写入与删除无需授权、长命令在页面刷新后继续并返回结果、停止中的命令不会在刷新后自行恢复，测试文件完成清理。
+- **自动化验证**：JavaScript 语法检查、`git diff --check`、AgentRun/前端定向回归 `74 passed, 13 subtests passed` 通过；最终全量回归 `537 passed, 25 subtests passed`。
+
+**涉及文件**：`app.js`、`tests/test_frontend_modules.py`、`tests/test_p0_stability.py`、`README.md`、`docs/SERVER_AGENT_LOOP_PLAN.md`、`data/memory/code-architecture.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 17:24 · Codex
 
 ### 将计划与接受编辑正式切换到服务端 AgentRun 单一执行所有权

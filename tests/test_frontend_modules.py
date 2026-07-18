@@ -102,7 +102,7 @@ const order = [];
         ):
             self.assertIn(expected, APP_SOURCE)
         self.assertIn("executionOwner: executionOwnerForPermissionProfile(permissionProfile)", APP_SOURCE)
-        self.assertIn('return ["read", "plan", "accept"].includes(permissionProfile) ? "server-agent" : "browser"', APP_SOURCE)
+        self.assertIn('return ["read", "plan", "accept", "bypass"].includes(permissionProfile) ? "server-agent" : "browser"', APP_SOURCE)
         self.assertIn("action: authorizationAction", APP_SOURCE)
         self.assertIn("pendingAuthorization.path || pendingAuthorization.command", APP_SOURCE)
 

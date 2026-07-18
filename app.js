@@ -8214,7 +8214,7 @@ function getPermissionProfile() {
 
 function executionOwnerForPermissionProfile(permissionProfile) {
 
-  return ["read", "plan", "accept"].includes(permissionProfile) ? "server-agent" : "browser";
+  return ["read", "plan", "accept", "bypass"].includes(permissionProfile) ? "server-agent" : "browser";
 
 }
 

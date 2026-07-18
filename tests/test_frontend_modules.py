@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parent.parent
 APP_SOURCE = (ROOT / "app.js").read_text(encoding="utf-8")
 RUNTIME_SOURCE = (ROOT / "agent-runtime.js").read_text(encoding="utf-8")
 I18N_SOURCE = (ROOT / "src" / "core" / "i18n.js").read_text(encoding="utf-8")
+API_CLIENT_SOURCE = (ROOT / "src" / "services" / "api-client.js").read_text(encoding="utf-8")
 INDEX_SOURCE = (ROOT / "index.html").read_text(encoding="utf-8")
 BUILD_SOURCE = (ROOT / "build_exe.py").read_text(encoding="utf-8")
 STYLE_SOURCE = (ROOT / "styles.css").read_text(encoding="utf-8")
@@ -244,6 +245,7 @@ eval(source);
             "src/core/utils.js",
             "src/core/i18n.js",
             "src/services/notifications.js",
+            "src/services/api-client.js",
         ):
             self.assertTrue((ROOT / relative_path).is_file(), relative_path)
 
@@ -254,6 +256,7 @@ eval(source);
             "./src/core/utils.js",
             "./src/core/i18n.js",
             "./src/services/notifications.js",
+            "./src/services/api-client.js",
             "./agent-runtime.js",
             "./app.js",
         )
@@ -336,11 +339,62 @@ process.stdout.write(JSON.stringify({zh, en, persisted, changed, missingKeys}));
         self.assertIn("showToast", source)
         self.assertIn("notify", source)
 
+    def test_api_client_exports_and_preserves_json_request_behavior(self):
+        self.assertIn("services.apiClient = Object.freeze", API_CLIENT_SOURCE)
+        script = """
+global.window = {Code: {services: {}}};
+const calls = [];
+const responses = [
+  {ok: true, status: 200, statusText: "OK", json: async () => ({value: 42})},
+  {ok: false, status: 400, statusText: "Bad Request", json: async () => ({error: "broken"})},
+  {ok: false, status: 502, statusText: "Bad Gateway", json: async () => { throw new Error("invalid json"); }},
+  {ok: true, status: 204, statusText: "No Content", json: async () => { throw new Error("empty"); }},
+];
+window.fetch = async (url, options) => {
+  calls.push({url, options});
+  return responses.shift();
+};
+require("./src/services/api-client.js");
+const {apiJson} = window.Code.services.apiClient;
+(async () => {
+  const success = await apiJson("/success", {
+    method: "POST",
+    headers: {"X-Trace": "trace-1"},
+    body: JSON.stringify({hello: "world"}),
+  });
+  let serverError = "";
+  let invalidError = "";
+  try { await apiJson("/server-error"); } catch (error) { serverError = error.message; }
+  try { await apiJson("/invalid-error"); } catch (error) { invalidError = error.message; }
+  const emptySuccess = await apiJson("/empty-success");
+  process.stdout.write(JSON.stringify({success, serverError, invalidError, emptySuccess, calls}));
+})().catch((error) => { console.error(error); process.exit(1); });
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertEqual(data["success"], {"value": 42})
+        self.assertEqual(data["serverError"], "broken")
+        self.assertEqual(data["invalidError"], "HTTP 502: Bad Gateway")
+        self.assertEqual(data["emptySuccess"], {})
+        self.assertEqual(data["calls"][0]["url"], "/success")
+        self.assertEqual(data["calls"][0]["options"]["method"], "POST")
+        self.assertEqual(
+            data["calls"][0]["options"]["headers"],
+            {"Content-Type": "application/json", "X-Trace": "trace-1"},
+        )
+
     def test_app_uses_extracted_modules_without_duplicate_definitions(self):
         self.assertIn("const { uiIcon } = window.Code.core.icons", APP_SOURCE)
         self.assertIn("} = window.Code.core.utils", APP_SOURCE)
         self.assertIn("const { createI18nRuntime } = window.Code.core.i18n", APP_SOURCE)
         self.assertIn("const { t, setLang, applyI18n } = createI18nRuntime", APP_SOURCE)
+        self.assertIn("const { apiJson } = window.Code.services.apiClient", APP_SOURCE)
         self.assertIn(
             "const { showToast, notify: _notify } = window.Code.services.notifications",
             APP_SOURCE,
@@ -358,6 +412,7 @@ process.stdout.write(JSON.stringify({zh, en, persisted, changed, missingKeys}));
             "function t(key",
             "function setLang(",
             "function applyI18n(",
+            "async function apiJson(",
             "function showToast(",
             "function _notify(",
         ):

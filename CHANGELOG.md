@@ -14,6 +14,19 @@
 
 ---
 
+## 2026-07-18 20:33 · Codex
+
+### 抽离通用 API 客户端，完成前端拆分阶段 1
+
+- **请求层独立**：新增 `src/services/api-client.js`，通过 `window.Code.services.apiClient` 提供 `apiJson()`；统一保留 JSON 请求头合并、响应解析、服务端错误和非 JSON 错误处理，现有业务调用签名无需调整。
+- **边界保持**：`app.js` 删除重复请求实现并改为导入服务模块；模型 `/proxy/chat`、SSE、AgentRun、后台任务、模型列表和其他专用请求继续留在原所有者中，本阶段不改变执行链或界面行为。
+- **加载与回归保护**：`index.html` 在 `app.js` 前加载 API 客户端；模块存在性、脚本顺序、公开导出和重复定义禁入测试同步更新，并实际覆盖成功 JSON、服务端错误、非 JSON 错误、空成功响应及自定义请求头。
+- **验证结果**：JavaScript 语法与 `git diff --check` 通过，前端模块定向回归 `24 passed`；最终全量回归为 `550 passed, 25 subtests passed`。
+
+**涉及文件**：`src/services/api-client.js`、`app.js`、`index.html`、`tests/test_frontend_modules.py`、`docs/APP_JS_SPLIT_PLAN.md`、`CHANGELOG.md`、`TODO.md`
+
+---
+
 ## 2026-07-18 20:20 · Codex
 
 ### 固化界面文案与 i18n 维护检查约定

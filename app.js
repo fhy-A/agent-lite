@@ -8,6 +8,7 @@ const {
 } = window.Code.core.utils;
 const { createI18nRuntime } = window.Code.core.i18n;
 const { showToast, notify: _notify } = window.Code.services.notifications;
+const { apiJson } = window.Code.services.apiClient;
 
 function upgradeStaticIcons() {
   const iconOnly = (id, name) => {
@@ -3049,39 +3050,6 @@ async function switchToBranch(sessionId) {
   await loadSession(sessionId);
   if (state.branchPanelOpen) renderBranchTree();
 }
-
-
-async function apiJson(url, options = {}) {
-
-  const res = await fetch(url, {
-
-    ...options,
-
-    headers: {
-
-      "Content-Type": "application/json",
-
-      ...(options.headers || {}),
-
-    },
-
-  });
-
-  let data;
-  try {
-    data = await res.json();
-  } catch (e) {
-    // response body is not valid JSON — likely a server error page
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-    data = {};
-  }
-
-  if (!res.ok) throw new Error(data.error || data?.error?.message || `HTTP ${res.status}`);
-
-  return data;
-
-}
-
 
 
 function sessionFilePath(session) {

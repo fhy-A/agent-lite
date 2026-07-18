@@ -170,7 +170,7 @@ code/
 - [x] 增加模块存在、依赖顺序、重复定义和打包资源回归测试。
 - [x] 抽离语言字典、参数插值、DOM 翻译和语言切换运行时到 `src/core/i18n.js`；`app.js` 仅注入业务重绘回调。
 - [x] 抽离 Toast 与系统通知到 `src/services/notifications.js`，业务触发条件仍保留在 `app.js`。
-- [ ] 抽离不涉及 Agent 循环的通用 API 请求。
+- [x] 抽离 `apiJson()` 到 `src/services/api-client.js`，保留模型流、AgentRun 和专用请求的原有所有权。
 
 #### 拆分内容
 

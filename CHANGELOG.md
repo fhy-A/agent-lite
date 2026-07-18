@@ -14,7 +14,7 @@
 
 ---
 
-## 2026-07-19 05:44 · Codex
+## 2026-07-19 05:52 · Codex
 
 ### 完成内置 Skills 专项审查，并为 Agent 增加运行时工具边界
 
@@ -24,10 +24,11 @@
 - **探索预算持久化**：`brainstorming` 默认将搜索/枚举限制为 3 次、定向读取限制为 4 次；预算随服务端 Agent 任务持久化，达到上限后相关工具从后续模型轮次移除，同轮超额调用返回可恢复的预算错误。明确要求深度审计时不套用默认预算。
 - **修复工具结果 Token 放大**：Agent 原先只截断工具结果的 `content` 字段，宽泛搜索的 `results` 数组可把数十万字符完整带入模型上下文；现在整条模型工具消息统一限制为 12,000 字符，完整结果仍保留给界面和会话记录。
 - **会话信息改显消息记录**：会话创建、保存、加载和分支接口同时返回元数据 JSON 与消息 JSONL 的绝对路径；会话信息面板及复制按钮改为使用 `.jsonl` 消息记录地址，元数据 `.json` 仍保留给内部状态、用量和分支持久化。
+- **固化分阶段协作模式**：`AGENTS.md` 与 `CLAUDE.md` 统一补充单阶段推进、自动/人工验收分流、测试失败不提交、人工确认后收口、日志与 TODO 同步、精确暂存及可核验交付要求，后续 Codex 与 Claude Code 使用同一套开发节奏。
 - **真实会话验证**：专项评估目录新增可重复的人工测试题；`brainstorming` 复测中无 `task`，发现类工具仅执行预算内 3 次。工具结果总量修复后，同一测试累计输入从 `861,440` 降至 `41,998`，非缓存新增输入从约 `286,336` 降至 `17,294`，最大单轮 prompt 从约 `282,338` 降至 `13,625`。
 - **验证结果**：Agent 预算、任务白名单、Skill 路由/结构、资源读取、根目录 glob、正则提示、完整工具消息截断和 JSONL 会话地址均有自动化覆盖；会话路径定向回归 `112 passed, 6 subtests passed`，最终全量回归 `583 passed, 148 subtests passed`。性能类最终回答偶尔仍会把未测量数字标作假设，已作为结构化输出校验的后续事项保留在 `TODO.md`。
 
-**涉及文件**：`agent-runtime.js`、`app.js`、`server.py`、`src/features/skills-memory.js`、`src/ui/panels.js`、`data/skills/brainstorming/SKILL.md`、`data/skills/code-review/SKILL.md`、`data/skills/find-skills/SKILL.md`、`data/skills/hyperframes/SKILL.md`、`data/skills/image-generation/SKILL.md`、`data/skills/office-files/SKILL.md`、`data/skills/python-testing/SKILL.md`、`tests/skill-evaluation.md`、`tests/test_agent_runtime.py`、`tests/test_branch.py`、`tests/test_builtin_skills.py`、`tests/test_frontend_modules.py`、`tests/test_p2_coverage.py`、`tests/test_routes.py`、`CHANGELOG.md`、`TODO.md`
+**涉及文件**：`AGENTS.md`、`CLAUDE.md`、`agent-runtime.js`、`app.js`、`server.py`、`src/features/skills-memory.js`、`src/ui/panels.js`、`data/skills/brainstorming/SKILL.md`、`data/skills/code-review/SKILL.md`、`data/skills/find-skills/SKILL.md`、`data/skills/hyperframes/SKILL.md`、`data/skills/image-generation/SKILL.md`、`data/skills/office-files/SKILL.md`、`data/skills/python-testing/SKILL.md`、`tests/skill-evaluation.md`、`tests/test_agent_runtime.py`、`tests/test_branch.py`、`tests/test_builtin_skills.py`、`tests/test_frontend_modules.py`、`tests/test_p2_coverage.py`、`tests/test_routes.py`、`CHANGELOG.md`、`TODO.md`
 
 ---
 

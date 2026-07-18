@@ -1,6 +1,7 @@
 """Regression guards for the transitional frontend module split."""
 
 import json
+import re
 import subprocess
 import unittest
 from pathlib import Path
@@ -15,6 +16,7 @@ SETTINGS_SOURCE = (ROOT / "src" / "features" / "settings.js").read_text(encoding
 DIFF_SOURCE = (ROOT / "src" / "ui" / "diff.js").read_text(encoding="utf-8")
 MARKDOWN_SOURCE = (ROOT / "src" / "ui" / "markdown.js").read_text(encoding="utf-8")
 MESSAGES_SOURCE = (ROOT / "src" / "ui" / "messages.js").read_text(encoding="utf-8")
+TIMELINE_SOURCE = (ROOT / "src" / "ui" / "timeline.js").read_text(encoding="utf-8")
 PREVIEW_SOURCE = (ROOT / "src" / "features" / "preview.js").read_text(encoding="utf-8")
 FILES_SOURCE = (ROOT / "src" / "features" / "files.js").read_text(encoding="utf-8")
 SKILLS_MEMORY_SOURCE = (ROOT / "src" / "features" / "skills-memory.js").read_text(encoding="utf-8")
@@ -26,6 +28,17 @@ LOGO_EXPORT_SOURCE = (ROOT / "design" / "logo-concepts" / "export_selected_logo.
 
 
 class TestFrontendCoreModules(unittest.TestCase):
+    def test_composer_controls_do_not_implicitly_submit_prompt(self):
+        form_start = INDEX_SOURCE.index('<form id="chatForm"')
+        form_end = INDEX_SOURCE.index("</form>", form_start)
+        buttons = re.findall(r"<button\b[^>]*>", INDEX_SOURCE[form_start:form_end])
+        self.assertTrue(buttons)
+        for button in buttons:
+            if 'id="sendBtn"' in button:
+                self.assertIn('type="submit"', button)
+            else:
+                self.assertIn('type="button"', button)
+
     def test_agent_runtime_client_exposes_durable_run_protocol(self):
         for expected in (
             "createAgentRun",
@@ -258,6 +271,7 @@ eval(source);
             "src/services/api-client.js",
             "src/ui/diff.js",
             "src/ui/markdown.js",
+            "src/ui/timeline.js",
             "src/ui/messages.js",
             "src/features/settings.js",
             "src/features/preview.js",
@@ -276,6 +290,7 @@ eval(source);
             "./src/services/api-client.js",
             "./src/ui/diff.js",
             "./src/ui/markdown.js",
+            "./src/ui/timeline.js",
             "./src/ui/messages.js",
             "./src/features/settings.js",
             "./src/features/skills-memory.js",
@@ -879,6 +894,117 @@ process.stdout.write(JSON.stringify({html, streaming, usageOnly}));
         self.assertIn("<recovery></recovery>", data["streaming"])
         self.assertNotIn("0s", data["usageOnly"])
 
+    def test_timeline_ui_owns_markers_nodes_and_click_navigation(self):
+        self.assertIn("Code.ui.timeline = Object.freeze", TIMELINE_SOURCE)
+        for obsolete in (
+            "function getCompactSummaryStats(",
+            "function renderCompactSummaryProjection(",
+            "function getBranchFlowMarker(",
+            "function renderBranchFlowProjection(",
+            "function renderTimeline(",
+        ):
+            self.assertNotIn(obsolete, APP_SOURCE)
+        script = r"""
+global.window = {Code: {ui: {}}};
+require("./src/ui/timeline.js");
+const {createTimelineFeature, getCompactSummaryStats, syncSessionBranchMetadata} = window.Code.ui.timeline;
+const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+let messages = [
+  {role: "user", content: "first task"},
+  {role: "assistant", content: "answer"},
+  {role: "user", content: "hidden", meta: {_system: true}},
+  {role: "user", content: "second task " + "x".repeat(90)},
+];
+const sessions = [
+  {id: "parent", title: "Parent <one>", _branches: ["child"]},
+  {id: "child", _parentId: "parent", _branchMsgCount: null},
+];
+const loadedBranch = {id: "child", _parentId: "parent", _branchDepth: 1, _branches: [], _branchMsgCount: 3.8};
+const visible = new Set();
+const listeners = [];
+const dots = [
+  {dataset: {index: "0"}, addEventListener: (_type, callback) => listeners.push(callback)},
+  {dataset: {index: "3"}, addEventListener: (_type, callback) => listeners.push(callback)},
+];
+const timeline = {
+  innerHTML: "",
+  classList: {
+    add: (name) => visible.add(name),
+    remove: (name) => visible.delete(name),
+  },
+  querySelectorAll: () => dots,
+};
+let scrolled = null;
+const messageContainer = {
+  querySelector: (selector) => ({scrollIntoView: (options) => { scrolled = {selector, options}; }}),
+};
+const t = (key, params = {}) => `${key}:${Object.values(params).join("|")}`;
+const feature = createTimelineFeature({
+  escapeHtml,
+  formatCompact: (value) => `${value}t`,
+  t,
+  getMessageText: (msg) => String(msg?.content || ""),
+  getMessages: () => messages,
+  getSessions: () => sessions,
+  getSessionId: () => "child",
+  getTimelineElement: () => timeline,
+  getMessageContainer: () => messageContainer,
+});
+const metaStats = feature.getCompactSummaryStats({meta: {compressed: 5, estimatedSaved: 9000}});
+const legacyStats = getCompactSummaryStats({content: "自动压缩 4 条，节省 ~1.5k"});
+const compact = feature.renderCompactSummaryProjection({meta: {compressed: 5, estimatedSaved: 9000}}, 7);
+const syncedBranch = syncSessionBranchMetadata(sessions, loadedBranch);
+const branchMarker = feature.getBranchFlowMarker();
+const branch = feature.renderBranchFlowProjection(branchMarker.parentTitle);
+const nodes = feature.projectTimelineNodes(messages);
+feature.renderTimeline();
+const timelineHtml = timeline.innerHTML;
+const wasVisible = visible.has("visible");
+listeners[1]();
+messages = [{role: "user", content: "only one"}];
+feature.renderTimeline();
+process.stdout.write(JSON.stringify({
+  metaStats,
+  legacyStats,
+  compact,
+  syncedBranch,
+  branchMarker,
+  branch,
+  nodes,
+  timelineHtml,
+  wasVisible,
+  scrolled,
+  clearedHtml: timeline.innerHTML,
+  visibleAfterClear: visible.has("visible"),
+}));
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertEqual(data["metaStats"], {"compressed": 5, "estimatedSaved": 9000})
+        self.assertEqual(data["legacyStats"], {"compressed": 4, "estimatedSaved": 1500})
+        self.assertIn('class="msg branch-indicator compact-indicator"', data["compact"])
+        self.assertIn("compactMarkerMessages:5", data["compact"])
+        self.assertIn("compactMarkerSaved:9000t", data["compact"])
+        self.assertEqual(data["syncedBranch"]["_branchMsgCount"], 3.8)
+        self.assertEqual(data["branchMarker"], {"messageCount": 3, "parentTitle": "Parent <one>"})
+        self.assertIn("Parent &lt;one&gt;", data["branch"])
+        self.assertEqual([node["index"] for node in data["nodes"]], [0, 3])
+        self.assertTrue(data["nodes"][1]["label"].endswith("..."))
+        self.assertIn('data-index="0"', data["timelineHtml"])
+        self.assertIn('data-index="3"', data["timelineHtml"])
+        self.assertTrue(data["wasVisible"])
+        self.assertEqual(data["scrolled"]["selector"], '[data-msg-index="3"]')
+        self.assertEqual(data["scrolled"]["options"], {"behavior": "smooth", "block": "start"})
+        self.assertEqual(data["clearedHtml"], "")
+        self.assertFalse(data["visibleAfterClear"])
+
     def test_preview_feature_exports_parsing_urls_and_width_rules(self):
         self.assertIn("features.preview = Object.freeze", PREVIEW_SOURCE)
         script = """
@@ -1117,7 +1243,7 @@ process.stdout.write(JSON.stringify({
         self.assertIn('viewBox="0 0 130 54"', APP_SOURCE)
 
         welcome_start = APP_SOURCE.index('<div class="welcome-screen">')
-        welcome_end = APP_SOURCE.index("const timeline", welcome_start)
+        welcome_end = APP_SOURCE.index("clearTimeline();", welcome_start)
         welcome = APP_SOURCE[welcome_start:welcome_end]
         self.assertIn('class="welcome-wordmark welcome-brand-lockup"', welcome)
         self.assertIn('class="welcome-command-line"', welcome)

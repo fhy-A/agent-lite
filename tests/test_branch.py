@@ -97,7 +97,10 @@ class TestSessionBranching(unittest.TestCase):
             {"role": "assistant", "content": "Hi there!"},
         ]
         _req("PUT", f"/api/sessions/{self._parent_id}", json={
-            "title": "Parent Session", "messages": messages,
+            "title": "Parent Session",
+            "messages": messages,
+            "stats": {"input": 1200, "output": 80, "cache": 256, "cost": 0.2},
+            "lastUsage": {"prompt_tokens": 900, "completion_tokens": 40},
         })
         # Branch from parent
         status, data = _req("POST", f"/api/sessions/{self._parent_id}/branch", json={
@@ -109,6 +112,8 @@ class TestSessionBranching(unittest.TestCase):
         self.assertEqual(data.get("_branchDepth"), 1)
         self.assertEqual(len(data.get("messages", [])), 2)
         self.assertEqual(data["messages"][0]["content"], "Hello")
+        self.assertEqual(data.get("stats"), {"input": 1200, "output": 80, "cache": 256, "cost": 0.2})
+        self.assertEqual(data.get("lastUsage"), {"prompt_tokens": 900, "completion_tokens": 40})
         TestSessionBranching._branch_id = data["id"]
 
     def test_02_parent_tracks_branch(self):

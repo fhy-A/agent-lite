@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 APP_SOURCE = (ROOT / "app.js").read_text(encoding="utf-8")
 RUNTIME_SOURCE = (ROOT / "agent-runtime.js").read_text(encoding="utf-8")
 MESSAGES_SOURCE = (ROOT / "src" / "ui" / "messages.js").read_text(encoding="utf-8")
+TIMELINE_SOURCE = (ROOT / "src" / "ui" / "timeline.js").read_text(encoding="utf-8")
 
 
 class TestFrontendNetworkRecovery(unittest.TestCase):
@@ -70,11 +71,11 @@ class TestFrontendRefreshRecovery(unittest.TestCase):
         ]
         self.assertEqual(load_session.count("scheduleMessagesScrollToBottom("), 2)
 
-        timeline = APP_SOURCE[
-            APP_SOURCE.index("function renderTimeline()"):
-            APP_SOURCE.index("function getToolLogDetail", APP_SOURCE.index("function renderTimeline()"))
+        timeline = TIMELINE_SOURCE[
+            TIMELINE_SOURCE.index("function renderTimeline()"):
+            TIMELINE_SOURCE.index("return Object.freeze", TIMELINE_SOURCE.index("function renderTimeline()"))
         ]
-        self.assertNotIn("els.messages.scrollTop", timeline)
+        self.assertNotIn("scrollTop", timeline)
 
     def test_recovery_is_locked_per_session(self):
         self.assertIn("async function withSessionRecoveryLock(sessionId, worker)", APP_SOURCE)

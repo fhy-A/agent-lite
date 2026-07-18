@@ -15,6 +15,7 @@ const {
   resolveSyntaxPatterns: _resolveSyntaxPatterns,
 } = window.Code.ui.markdown;
 const { createMessagesFeature } = window.Code.ui.messages;
+const { createTimelineFeature, syncSessionBranchMetadata } = window.Code.ui.timeline;
 const { createSettingsFeature } = window.Code.features.settings;
 const { createSkillsMemoryFeature } = window.Code.features.skillsMemory;
 const { createPreviewFeature } = window.Code.features.preview;
@@ -790,6 +791,25 @@ const {
   highlightSyntax,
   renderMarkdownLite,
 } = markdownFeature;
+
+const timelineFeature = createTimelineFeature({
+  escapeHtml,
+  formatCompact,
+  t,
+  getMessageText: getMsgText,
+  getMessages: () => state.messages,
+  getSessions: () => state.sessions,
+  getSessionId: () => state.sessionId,
+  getTimelineElement: () => document.getElementById("chatTimeline"),
+  getMessageContainer: () => els.messages,
+});
+const {
+  clearTimeline,
+  getBranchFlowMarker,
+  renderBranchFlowProjection,
+  renderCompactSummaryProjection,
+  renderTimeline,
+} = timelineFeature;
 
 messagesFeature = createMessagesFeature({
   escapeHtml,
@@ -2089,6 +2109,9 @@ function renderBranchTree() {
 async function createBranch(title) {
   if (!state.sessionId) { showToast(t("createSessionFirst"), "warning"); return; }
   if (state.isStreaming) { showToast(t("stopBeforeBranch"), "warning"); return; }
+  const parentSessionId = state.sessionId;
+  const parentStats = { ...(getSessionStats(parentSessionId) || {}) };
+  const parentLastUsage = getSessionLastUsage(parentSessionId);
   if (!title) {
     var cur = state.sessions.find(function(s) { return s.id === state.sessionId; });
     title = t("branchTitleTemplate", { title: (cur && cur.title) || "" });
@@ -2097,6 +2120,11 @@ async function createBranch(title) {
     var resp = await apiJson("/api/sessions/" + encodeURIComponent(state.sessionId) + "/branch", {
       method: "POST", body: JSON.stringify({ title: title }),
     });
+    const inheritedStats = resp.stats && Object.keys(resp.stats).length
+      ? { ...resp.stats }
+      : parentStats;
+    setSessionStats(resp.id, inheritedStats);
+    setSessionLastUsage(resp.id, resp.lastUsage || parentLastUsage);
     await refreshSessions();
     state._keepBranchOpen = true;
     await loadSession(resp.id);
@@ -2758,59 +2786,6 @@ function createCompactSummaryMessage(result) {
   };
 }
 
-function getCompactSummaryStats(msg) {
-  const meta = msg?.meta || {};
-  let compressed = Math.max(0, Number(meta.compressed) || 0);
-  let estimatedSaved = Math.max(0, Number(meta.estimatedSaved) || 0);
-  const text = getMsgText(msg) || "";
-  if (!compressed) {
-    const countMatch = text.match(/(?:压缩摘要|自动压缩)[^\d]*(\d+)\s*条/);
-    if (countMatch) compressed = Number(countMatch[1]) || 0;
-  }
-  if (!estimatedSaved) {
-    const savedMatch = text.match(/(?:节省|saved)[^\d~]*~?\s*([\d.]+)\s*([kKmM]?)/i);
-    if (savedMatch) {
-      const base = Number(savedMatch[1]) || 0;
-      const unit = String(savedMatch[2] || "").toLowerCase();
-      estimatedSaved = Math.round(base * (unit === "m" ? 1000000 : unit === "k" ? 1000 : 1));
-    }
-  }
-  return { compressed, estimatedSaved };
-}
-
-function renderCompactSummaryProjection(msg, index) {
-  const { compressed, estimatedSaved } = getCompactSummaryStats(msg);
-  const details = [];
-  if (compressed) details.push(t("compactMarkerMessages", { count: compressed }));
-  if (estimatedSaved) details.push(t("compactMarkerSaved", { tokens: formatCompact(estimatedSaved) }));
-  const label = details.length
-    ? t("compactMarkerWithDetails", { details: details.join(" · ") })
-    : t("compactMarker");
-  return `<article class="msg branch-indicator compact-indicator" data-msg-index="${index}"><div class="branch-indicator-bar"><span class="branch-indicator-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M7 12h10M9 17h6"/><path d="M3 3h18v18H3z"/></svg></span><span>${escapeHtml(label)}</span></div></article>`;
-}
-
-function getBranchFlowMarker() {
-  const current = state.sessions.find((session) => session.id === state.sessionId);
-  if (!current || current._branchMsgCount == null) return null;
-
-  const rawCount = Number(current?._branchMsgCount);
-  if (!Number.isFinite(rawCount) || rawCount < 0) return null;
-
-  const parent = state.sessions.find((session) => session.id === current._parentId)
-    || state.sessions.find((session) => Array.isArray(session._branches) && session._branches.includes(state.sessionId));
-  if (!parent) return null;
-
-  return {
-    messageCount: Math.max(0, Math.trunc(rawCount)),
-    parentTitle: parent?.title || "",
-  };
-}
-
-function renderBranchFlowProjection(parentTitle) {
-  const label = t("branchedFromHere", { title: parentTitle || "" });
-  return `<article class="msg branch-indicator"><div class="branch-indicator-bar"><span class="branch-indicator-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span><span>${escapeHtml(label)}</span></div></article>`;
-}
-
 const streamingRenderQueue = new Map();
 let streamingRenderFrame = 0;
 let messageRestoreScrollFrame = 0;
@@ -3162,11 +3137,7 @@ function renderMessages() {
       if (sloganText) sloganText.textContent = t("welcomeHeadline");
     }
 
-    const timeline = document.getElementById("chatTimeline");
-    if (timeline) {
-      timeline.innerHTML = "";
-      timeline.classList.remove("visible");
-    }
+    clearTimeline();
 
     updateStatsPanel();
 
@@ -3243,76 +3214,6 @@ function isProcessMessage(msg) {
   return /^准备调用\s*\d*\s*个?工具/.test(content) || /^准备调用工具/.test(content);
 
 }
-
-
-function renderTimeline() {
-
-  const tl = document.getElementById("chatTimeline");
-
-  if (!tl) return;
-
-
-
-  // Find timeline nodes: user messages + compact summaries
-
-  const nodes = [];
-
-  for (let i = 0; i < state.messages.length; i++) {
-
-    const msg = state.messages[i];
-    if (!msg) continue;
-
-    if (msg.role === "user") {
-
-      if (msg.meta?._system) continue; // skip hidden system messages
-
-      const rawLabel = getMsgText(msg).replace(/\n/g, " ").trim();
-      const label = rawLabel.length > 80 ? `${rawLabel.slice(0, 80)}...` : rawLabel;
-      nodes.push({ index: i, label, type: "user" });
-
-    }
-
-  }
-
-  if (nodes.length < 2) {
-    tl.innerHTML = "";
-    tl.classList.remove("visible");
-    return;
-  }
-
-
-
-  const dots = nodes.map((n) => {
-
-    return `<div class="tl-dot-wrap" data-index="${n.index}"><div class="tl-dot ${n.type}"></div><span class="tl-bubble">${escapeHtml(n.label)}</span></div>`;
-
-  }).join("");
-
-
-
-  tl.innerHTML = `<div class="tl-track">${dots}</div>`;
-  tl.classList.add("visible");
-
-  tl.querySelectorAll(".tl-dot-wrap").forEach((dot) => {
-
-    dot.addEventListener("click", () => {
-
-      const idx = dot.dataset.index;
-
-      const target = els.messages.querySelector(`[data-msg-index="${idx}"]`);
-
-      if (target) {
-
-        target.scrollIntoView({ behavior: "smooth", block: "start" });
-
-      }
-
-    });
-
-  });
-
-}
-
 
 
 function getToolLogDetail(msg) {
@@ -3980,7 +3881,7 @@ async function loadSession(sessionId) {
     if (prev) prev._seenCount = Math.max(prev._seenCount || 0, prevMsgs.length);
     if (prev && prevMsgs.length > (prev._seenCount || 0)) prev._unread = true;
   }
-  const loaded = state.sessions.find((s) => s.id === session.id);
+  const loaded = syncSessionBranchMetadata(state.sessions, session);
   if (loaded) { loaded._unread = false; }
 
   // Switch session — prefer cache (has in-flight streaming content) over server

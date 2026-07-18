@@ -281,12 +281,13 @@ class TestCompactSummaryMarker(unittest.TestCase):
         root = Path(__file__).resolve().parent.parent
         cls.source = (root / "app.js").read_text(encoding="utf-8")
         cls.messages_source = (root / "src" / "ui" / "messages.js").read_text(encoding="utf-8")
+        cls.timeline_source = (root / "src" / "ui" / "timeline.js").read_text(encoding="utf-8")
         cls.i18n_source = (root / "src" / "core" / "i18n.js").read_text(encoding="utf-8")
 
     def test_compact_summary_has_message_flow_projection(self):
         self.assertIn('msg.meta?.kind === "compact-summary"', self.messages_source)
         self.assertIn("renderCompactSummary(msg, index)", self.messages_source)
-        self.assertIn('class="msg branch-indicator compact-indicator"', self.source)
+        self.assertIn('class="msg branch-indicator compact-indicator"', self.timeline_source)
 
     def test_manual_compaction_uses_summary_message_factory(self):
         self.assertEqual(self.source.count("const summaryMsg = createCompactSummaryMessage(result)"), 1)
@@ -320,17 +321,30 @@ class TestBranchFlowMarker(unittest.TestCase):
         root = Path(__file__).resolve().parent.parent
         cls.source = (root / "app.js").read_text(encoding="utf-8")
         cls.messages_source = (root / "src" / "ui" / "messages.js").read_text(encoding="utf-8")
+        cls.timeline_source = (root / "src" / "ui" / "timeline.js").read_text(encoding="utf-8")
 
     def test_branch_marker_uses_raw_message_boundary(self):
         self.assertIn("const branchMarker = getBranchFlowMarker();", self.source)
         self.assertIn("if (index === branchBoundary) insertBranchMarker();", self.messages_source)
 
+    def test_loaded_branch_metadata_hydrates_session_summary(self):
+        self.assertIn("syncSessionBranchMetadata(state.sessions, session)", self.source)
+        self.assertIn("function syncSessionBranchMetadata(", self.timeline_source)
+
+    def test_new_branch_inherits_usage_baseline_before_loading(self):
+        create_start = self.source.index("async function createBranch(title)")
+        create_end = self.source.index("async function switchToBranch", create_start)
+        create_branch = self.source[create_start:create_end]
+        self.assertIn("const parentStats = { ...(getSessionStats(parentSessionId) || {}) };", create_branch)
+        self.assertIn("setSessionStats(resp.id, inheritedStats);", create_branch)
+        self.assertIn("setSessionLastUsage(resp.id, resp.lastUsage || parentLastUsage);", create_branch)
+
     def test_branch_marker_does_not_splice_projected_rows(self):
         self.assertNotIn("rows.splice(insertAt", self.messages_source)
 
     def test_plain_session_is_not_treated_as_branch(self):
-        self.assertIn("if (!current || current._branchMsgCount == null) return null;", self.source)
-        self.assertIn("if (!parent) return null;", self.source)
+        self.assertIn("if (!current || current._branchMsgCount == null) return null;", self.timeline_source)
+        self.assertIn("if (!parent) return null;", self.timeline_source)
 
 
 # ═══════════════════════════════════════════════════════════════════

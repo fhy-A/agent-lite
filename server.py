@@ -6517,6 +6517,7 @@ class CodeHandler(BaseHTTPRequestHandler):
             "createdAt": now_iso(),
             "updatedAt": now_iso(),
             "stats": parent.get("stats") or {},
+            "lastUsage": parent.get("lastUsage"),
             "lastMessageTime": parent.get("lastMessageTime") or "",
             "messageCount": parent_msg_count,
             "_parentId": parent_id,

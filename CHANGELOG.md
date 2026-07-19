@@ -14,6 +14,43 @@
 
 ---
 
+## 2026-07-19 22:28 · Claude Code
+
+### New API：Epay 支付链路审查、Mock 搭建与端到端跑通
+
+- **Epay Mock Server 搭建**：用纯 Python `http.server` 编写完整的易支付 Mock（`epay-mock/server.py`），包含 `submit.php`（创建订单）、`pay.php`（支付页面）、`notify.php`（回调通知）三个端点，支持标准 Epay MD5 签名算法。
+- **支付全链路审查**：逐段追踪 `RequestEpay` → go-epay `Purchase` → Epay submit → 支付页面 → 回调 `EpayNotify` → 验签 → 订单状态更新 → 额度到账，发现并修复三个阻塞问题。
+- **端口跳转修复**：`ServerAddress` 硬编码为 `http://localhost:3000`（生产网关），导致回调发到错误容器。通过数据库设置 `CustomCallbackAddress = http://localhost:3001` 解决，与 dev 环境对齐。
+- **签名算法实现**：Mock 实现标准 Epay MD5 签名（`sort(params) → key1=val1&key2=val2... + EpayKey → MD5`），回调验签通过并成功触发订单完成与额度增加。
+
+**支付链路（生产部署参考）**：
+```
+用户选金额/方式 → RequestEpay 创建订单(trade_no)
+                → go-epay.Purchase() 生成签名
+                → Epay submit.php 保存订单并返回支付页 URL
+                → 用户扫码/支付
+                → Epay notify.php 回调 New API /api/user/epay/notify
+                → EpayNotify 验签(MD5) → 查订单 → 改状态 → IncreaseUserQuota
+```
+
+**关键配置项**：
+| 配置 | 说明 | 值（dev） |
+|---|---|---|
+| `PayAddress` | Epay 网关地址 | `http://10.1.2.229:8081` |
+| `EpayId` | 商户 ID | `1` |
+| `EpayKey` | 商户密钥（用于 MD5 签名） | `test` |
+| `CustomCallbackAddress` | 回调地址（优先于 ServerAddress） | `http://localhost:3001` |
+| `ComplianceConfirmed` | 支付合规确认 | 必须 `true` |
+
+**待办**：
+- [ ] `ServerAddress` 应从环境变量读取，当前硬编码 `localhost:3000`
+- [ ] 支付订单超时自动作废（`expired` 状态码已存在，缺定时检测逻辑）
+- [ ] 部署前替换为真实 Epay 或直接对接支付宝个人商户
+
+**涉及文件**：`controller/topup.go`、`controller/payment_webhook_availability.go`、`setting/system_setting/system_setting_old.go`、`setting/operation_setting/payment_setting_old.go`、`epay-mock/server.py`
+
+---
+
 ## 2026-07-19 20:55 · Claude Code
 
 ### New API：SMTP 配置、邮件模板更新、删除用户级联清理

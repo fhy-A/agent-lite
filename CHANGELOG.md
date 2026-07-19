@@ -14,6 +14,26 @@
 
 ---
 
+## 2026-07-19 20:55 · Claude Code
+
+### New API：SMTP 配置、邮件模板更新、删除用户级联清理
+
+- **SMTP 配置**：New API 开发环境接入 Gmail SMTP（smtp.gmail.com:587 / STARTTLS），使用应用专用密码认证。SMTP 参数不通过 .env 设置，而是在后台「系统设置 → 集成 → SMTP Email」中配置后写入数据库。
+- **邮件模板重写**：`new-api-source/controller/misc.go` 中邮箱验证码和密码重置两封邮件改用统一 HTML 模板，品牌名自动随 `SystemName` 变化，验证码独立高亮、重置按钮替代文字链接。
+- **删除用户 Key 残留修复**：发现管理员删用户和用户自注销后 API Key 残留，SQLite 环境下新注册用户因 ID 复用继承旧 Key。修复 `model/user.go` 中 `Delete()`、`HardDelete()` 和 `HardDeleteUserById()` 三条路径，在事务中增加 `DELETE FROM tokens WHERE user_id = ?`。自注销实测零孤儿 token。
+- **开发环境构建切换**：dev 容器镜像从 `Dockerfile.dev`（后端占位前端）切换为 `Dockerfile.local`（Bun 构建完整前端嵌入 Go 二进制），避免 :3001 访问出现 "use frontend dev server" 占位页。
+- **数据库清理**：删除旧测试账号遗留的孤儿 token（user_id=3 及已删 user_id=2）和无关消费日志，保证测试环境数据干净。
+
+**关键发现**：
+- 原 root 账号已被重命名为 `fhy`（id=1, role=100），密码改为自定义值
+- `users.access_token` 同时用于「个人 API 认证」和「code 客户端授权」，两者会互相覆盖
+- 用户注销（`DeleteSelf`）调用 `DeleteUserById` → `User.Delete()`，仅软删除；`CheckUserExistOrDeleted` 使用 `Unscoped()` 导致注销后邮箱仍不可复用
+- 管理员删用户走 `HardDeleteUserById`，独立于 `User.HardDelete()`，修复时需覆盖全部三条路径
+
+**涉及文件**：`new-api-source/controller/misc.go`、`new-api-source/model/user.go`、`new-api-source-runtime/docker-compose.yml`、`new-api-source/Dockerfile.local`
+
+---
+
 ## 2026-07-19 05:52 · Codex
 
 ### 完成内置 Skills 专项审查，并为 Agent 增加运行时工具边界

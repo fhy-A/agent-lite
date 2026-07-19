@@ -14,6 +14,26 @@
 
 ---
 
+## 2026-07-20 02:00 · Claude Code
+
+### New API：支付FM 集成、支付页面设计、ngrok 回调就绪
+
+- **支付FM 正式集成**：注册支付FM 个人商户（`673047478874292224`），获取接入密钥，在 dev 环境写入数据库验证。`PayAddress` 从 Mock Epay 切换为支付FM 真实网关（`https://api-5433f3im1bsw.zhifu.fm.it88168.com/api`），支付流程走到真实 QR 码。
+- **ngrok 回调隧道**：因支付FM 拒绝 `localhost` 回调地址，使用 ngrok 将 `localhost:3001` 暴露为 `https://lived-abrasive-width.ngrok-free.dev`，`CustomCallbackAddress` 同步更新。支付创建成功，回调路径就绪（待他人扫码验证）。
+- **支付页面专业设计**：`epay-mock/server.py` 完整重构支付页面——官方支付宝/微信彩色 SVG Logo、中英双语自动适配（`Accept-Language` 头检测）、实时倒计时（JS 秒级刷新）、自动轮询支付状态（`/status.php` 每 3 秒检测 → 支付成功自动跳转）、移除 Mock 标记和手动按钮。
+- **支付超时对齐**：新增 `topUpExpireHandler` 系统任务（5 分钟扫描，与支付FM 默认 5 分钟一致），`EpayNotify` 增加 expired/异常状态订单拒绝回调逻辑。
+- **支付渠道调研**：比较支付宝当面付（需营业执照+门头照）、自建 Epay（需 PHP+商户资质）、第三方 Epay（支付FM / ZPay / 码支付），确定短期走支付FM 免签、中长期走支付宝官方 API 路线。支付FM 费率约 0.5%（平台）+ 0.6%（支付宝）= 1.1%。
+- **Mock 支付页面保留**：作为直接对接支付宝方案的 UI 模板，后续替换 QR 码来源即可上线。
+
+**待办**：
+- [ ] 找人扫码 1 元实测 ngrok 回调闭环
+- [ ] 支付FM 后台修改商户名称为品牌名（当前为手机号）
+- [ ] 获取营业执照后切签约模式或直接支付宝 API
+
+**涉及文件**：`controller/topup.go`、`controller/system_task_handlers.go`、`model/system_task.go`、`epay-mock/server.py`
+
+---
+
 ## 2026-07-19 22:28 · Claude Code
 
 ### New API：Epay 支付链路审查、Mock 搭建与端到端跑通

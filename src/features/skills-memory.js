@@ -353,9 +353,19 @@
         return;
       }
       const partial = value.slice(1).toLowerCase();
-      const matches = (state.skills || [])
+      const skillMatches = (state.skills || [])
         .filter((skill) => !state.disabledSkills.has(skill.name))
         .filter((skill) => skill.name.startsWith(partial));
+
+      // Built-in UI commands that run locally without involving the model
+      const UI_COMMANDS = [
+        { name: "export", desc: "导出对话为 Markdown 文件" },
+        { name: "clear",  desc: "清空当前会话，开始新对话" },
+        { name: "branch", desc: "从当前位置创建会话分支" },
+      ];
+      const cmdMatches = UI_COMMANDS.filter((cmd) => cmd.name.startsWith(partial));
+
+      const matches = [...skillMatches, ...cmdMatches.map((cmd) => ({ name: cmd.name, description: cmd.desc }))];
       if (!matches.length) {
         existing?.remove();
         return;

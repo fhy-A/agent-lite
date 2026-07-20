@@ -9057,6 +9057,34 @@ function saveLocalSettings() {
 
 
 
+function handleUiSlashCommand(text) {
+  const cmd = text.trim();
+  if (cmd === "/export") { exportMarkdown(); return true; }
+  if (cmd === "/clear")  { clearCurrentSession(); return true; }
+  if (cmd === "/branch") { createBranch(); return true; }
+  return false;
+}
+
+function clearCurrentSession() {
+  cacheActiveSessionState();
+  invalidateForegroundSessionNavigation();
+  state._followOutput = false;
+  state.explicitSkill = null;
+  state._lastRenderedHtml = null;
+  if (state._pendingThoughtRender) { cancelAnimationFrame(state._pendingThoughtRender); state._pendingThoughtRender = null; }
+  if (state._revealMessageFrame)   { cancelAnimationFrame(state._revealMessageFrame);   state._revealMessageFrame = null; }
+  state.sessionId = null;
+  state.messages = [];
+  state.stats = { input: 0, output: 0, cache: 0 };
+  state.pendingEdits = {};
+  els.sessionTitle.value = "";
+  els.chatPane.classList.add("empty-chat");
+  renderMessages();
+  renderSessions();
+  updateStatsPanel();
+  showToast(t("newSession"), "info");
+}
+
 function exportMarkdown() {
 
   const text = state.messages
@@ -9696,6 +9724,9 @@ els.chatForm.addEventListener("submit", async (event) => {
     });
     return;
   }
+
+  // Slash commands that don't need the model — handle and exit early
+  if (handleUiSlashCommand(text)) { els.prompt.value = ""; els.prompt.rows = 2; updateSendButtonState(); return; }
 
   els.prompt.value = "";
 

@@ -248,7 +248,7 @@
               : "";
             return `<div class="file-item-row ${item.path === state.previewPath ? "active" : ""}">
               <button class="file-item ${item.type}${extensionClass}" type="button" data-path="${escapeHtml(item.path)}" data-type="${item.type}">
-                <span class="file-name">${item.type === "dir" ? "📁 " : ""}${escapeHtml(item.name)}</span>
+                <span class="file-name" title="${escapeHtml(item.name)}">${item.type === "dir" ? "📁 " : ""}${escapeHtml(item.name)}</span>
                 ${timestampHtml}
               </button>
               <button class="file-at-btn" type="button" data-path="${escapeHtml(item.path)}" title="${t("fileAtTitle")}">@</button>
@@ -287,10 +287,66 @@
       );
     }
 
+    function renderPathBar(dir) {
+      if (!dir) {
+        elements.filePathBar.style.display = "none";
+        elements.filePathBar.innerHTML = "";
+        return;
+      }
+      const parts = dir.split("/").filter(Boolean);
+      if (!parts.length) {
+        elements.filePathBar.style.display = "none";
+        elements.filePathBar.innerHTML = "";
+        return;
+      }
+
+      function buildHtml(partsToShow, collapseIndex) {
+        // collapseIndex: first visible index (0 = no collapse), -1 = show all
+        let html2 = "";
+        if (collapseIndex > 0) {
+          // collapsed segments are represented by a single "…" linked to the deepest collapsed path
+          const collapsedPath = parts.slice(0, collapseIndex).join("/");
+          html2 += `<span class="path-seg" data-path="${escapeHtml(collapsedPath)}">…</span>`;
+          html2 += '<span class="path-sep">▸</span>';
+        }
+        for (let i = Math.max(0, collapseIndex); i < partsToShow.length; i++) {
+          if (i > Math.max(0, collapseIndex)) html2 += '<span class="path-sep">▸</span>';
+          const pathUpTo = partsToShow.slice(0, i + 1).join("/");
+          if (i === partsToShow.length - 1) {
+            html2 += `<span class="path-seg current">${escapeHtml(partsToShow[i])}</span>`;
+          } else {
+            html2 += `<span class="path-seg" data-path="${escapeHtml(pathUpTo)}">${escapeHtml(partsToShow[i])}</span>`;
+          }
+        }
+        return html2;
+      }
+
+      // start with all segments visible
+      let collapseIndex = 0;
+      elements.filePathBar.innerHTML = buildHtml(parts, collapseIndex);
+      elements.filePathBar.style.display = "";
+
+      // if overflowing, progressively collapse from the left, keeping at least the last 2 segments
+      if (parts.length > 2 && elements.filePathBar.scrollWidth > elements.filePathBar.clientWidth) {
+        for (let ci = 1; ci <= parts.length - 2; ci++) {
+          elements.filePathBar.innerHTML = buildHtml(parts, ci);
+          if (elements.filePathBar.scrollWidth <= elements.filePathBar.clientWidth) {
+            collapseIndex = ci;
+            break;
+          }
+          collapseIndex = ci;
+        }
+      }
+
+      elements.filePathBar.querySelectorAll(".path-seg[data-path]").forEach((seg) => {
+        seg.addEventListener("click", () => loadFiles(seg.dataset.path));
+      });
+    }
+
     async function loadFiles(path = state.currentDir) {
       const data = await apiJson(`/api/files?path=${encodeURIComponent(path || "")}`);
       state.currentDir = data.path || "";
-      elements.filePathBar.textContent = state.currentDir ? `/${state.currentDir}` : "/";
+      renderPathBar(state.currentDir);
       elements.cwdPathText.textContent = shortPath(data.root || "");
       elements.fileSearch.value = "";
       state._fileItems = data.items || [];

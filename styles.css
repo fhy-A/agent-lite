@@ -448,12 +448,8 @@ input:focus, select:focus, textarea:focus {
 }
 
 .sidebar-splitter {
-  flex: 0 0 6px;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  background:
-    linear-gradient(to right, transparent, var(--line-strong), transparent) center / 48px 1px no-repeat,
-    var(--panel-2);
+  flex: 0 0 4px;
+  background: var(--line);
   cursor: row-resize;
 }
 
@@ -462,7 +458,7 @@ input:focus, select:focus, textarea:focus {
   min-height: 36px;
   overflow: hidden;
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
 }
 
 .explorer.collapsed {
@@ -514,15 +510,36 @@ input:focus, select:focus, textarea:focus {
 
 .path-line {
   margin: 0 10px 4px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: var(--panel-2);
+  padding: 3px 6px;
+  min-height: 22px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--panel-2) 70%, transparent);
   color: var(--muted);
-  font-family: Consolas, "Cascadia Mono", monospace;
   font-size: 11px;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+.path-seg {
+  padding: 3px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: background .12s, color .12s;
+}
+.path-seg:hover { background: var(--panel-2); color: var(--text); }
+.path-seg.current {
+  cursor: default;
+  color: var(--text);
+  font-weight: 600;
+}
+.path-sep {
+  color: var(--faint);
+  font-size: 10px;
+  flex-shrink: 0;
 }
 
 .file-search {
@@ -4826,10 +4843,7 @@ button:focus-visible,
 }
 
 .sidebar-splitter {
-  flex-basis: 5px;
-  border-top-color: transparent;
-  border-bottom-color: transparent;
-  background: var(--line);
+  flex-basis: 3px;
 }
 
 .section-head {
@@ -4844,8 +4858,6 @@ button:focus-visible,
 
 .path-line {
   margin-bottom: 5px;
-  padding: 7px 9px;
-  background: color-mix(in srgb, var(--panel-2) 76%, transparent);
 }
 
 .file-search-row {

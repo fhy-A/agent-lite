@@ -4393,7 +4393,10 @@ function applySidebarSessionHeight(height = state.sidebarSessionHeight) {
 
   const sidebar = document.querySelector(".pi-sidebar");
 
-  const min = 60;
+  // minimum = section-head + cwd-inline so the project root selector stays visible
+  const headEl = explorerEl?.querySelector(".section-head");
+  const cwdEl = explorerEl?.querySelector(".cwd-inline");
+  const min = (headEl?.offsetHeight || 36) + (cwdEl?.offsetHeight || 44);
 
   const max = Math.max(120, sidebar.clientHeight - 260);
 

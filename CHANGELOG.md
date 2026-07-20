@@ -14,6 +14,31 @@
 
 ---
 
+## 2026-07-21 · Claude Code
+
+### code：UI 细节优化 + 已知问题记录
+
+- **面包屑溢出截断**：深层路径自动从左侧折叠为 `… ▸ parent ▸ current`，保留最后 2 段可见。
+- **文件树 tooltip**：`.file-name` 添加 `title` 属性，悬停 ~1s 显示完整文件名。
+- **侧边栏 splitter 简化**：移除双线 + 渐变背景，改为单条 4px `var(--line)` 分隔线。
+- **explorer 最小高度动态计算**：收缩下限由硬编码 `60px` 改为 `section-head + cwd-inline` 实际高度，刚好露出项目根目录选择器。
+- **已知问题记录**：流式思考块首帧闪现左侧（疑似浏览器 flex 布局 bug，已尝试 6 种方案未根治），详见 `TODO.md`。
+
+**涉及文件**：`index.html`、`styles.css`、`src/features/files.js`、`app.js`、`CHANGELOG.md`、`TODO.md`
+
+---
+
+## 2026-07-20 14:00 · Claude Code
+
+### code：文件浏览器面包屑导航
+
+- **面包屑路径栏**：隐藏的 `#filePathBar` 改为可点击面包屑，显示当前位置相对项目根的路径。每段目录可点击直接跳转，末段为当前位置不可点击。根目录时自动隐藏。
+- **视觉设计**：小字号（11px）+ 低调色（muted），`▸` 分隔符，hover 高亮，不抢文件列表注意力。explorer 收起时同步隐藏。
+
+**涉及文件**：`index.html`、`styles.css`、`src/features/files.js`
+
+---
+
 ## 2026-07-20 10:00 · Claude Code
 
 ### code：多主题系统完成

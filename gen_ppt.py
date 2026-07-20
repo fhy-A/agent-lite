@@ -220,10 +220,10 @@ def add_table_slide(title, headers, rows):
             p.space_after = Pt(6)
 
 # 第1页：封面
-add_cover('Agent Lite', '本地运行的 AI 编程助手\n直接操作项目文件，数据不离开电脑', 'github.com/fhy-A/agent-lite')
+add_cover('Code', '本地运行的 AI 编程助手\n直接操作项目文件，数据不离开电脑', 'github.com/fhy-A/code')
 
 # 第2页：定位
-add_simple_slide('Agent Lite 是什么？', [
+add_simple_slide('Code 是什么？', [
     {'type': 'heading', 'text': '目标用户'},
     {'type': 'bullet', 'text': '独立开发者 / 小团队 / 重视数据隐私的程序员'},
     {'type': 'space'},
@@ -248,7 +248,7 @@ add_comparison('痛点 vs 解法', '通用 AI 的 6 个痛点',
      '多任务只能串行 → 一个等一个',
      '试了新方案想回退 → 只能新建聊天重来',
      '数据经过第三方服务器 → 公司代码不敢贴'],
-    'Agent Lite 的 6 个解法',
+    'Code 的 6 个解法',
     ['直接在项目目录里读写、搜索、执行命令',
      '生成 diff → 你审批 → 自动写入，原件备份',
      '超 95% 自动压缩为摘要，保留关键信息',
@@ -265,7 +265,7 @@ add_flow_chart('场景一：代码重构', '📋 "帮我把 app.js 里超过 200
 # 第5页：场景二 - 数据分析
 add_flow_chart('场景二：数据分析', '📋 "分析 sales.xlsx 各产品线季度趋势，生成 Word 报告"',
     ['openpyxl\n读取', 'pandas\n透视', 'python-docx\n生成报告', 'output/\n保存', '文件树\n预览'],
-    ['💡 Excel → 分析 → 报告，全程不离开 Agent Lite',
+    ['💡 Excel → 分析 → 报告，全程不离开 Code',
      '不像 Chat：上传 → 输出 Markdown 表格 → 你手动排版',
      '支持 docx / xlsx / pptx / pdf / csv 读 + 写 + 创建'])
 
@@ -336,7 +336,7 @@ add_simple_slide('你的代码安全吗？', [
 ])
 
 # 第12页：产品对比
-add_simple_slide('Agent Lite 的差异化优势', [
+add_simple_slide('Code 的差异化优势', [
     {'type': 'heading', 'text': '4 个"唯一"'},
     {'type': 'space'},
     {'type': 'bullet', 'text': '✓ 唯一无需安装任何运行时（浏览器即用）'},
@@ -372,7 +372,7 @@ add_simple_slide('路线图', [
 ])
 
 # 第15页：结尾
-add_cover('开始使用', 'cd 到项目目录 → 运行 agent-lite\n浏览器打开 127.0.0.1:3010\n用自然语言驱动代码', 'github.com/fhy-A/agent-lite')
+add_cover('开始使用', 'cd 到项目目录 → 运行 code\n浏览器打开 127.0.0.1:3010\n用自然语言驱动代码', 'github.com/fhy-A/code')
 
-prs.save('Agent-Lite-产品介绍-完整版.pptx')
+prs.save('Code-产品介绍-完整版.pptx')
 print('PPT final: 15 slides with flow charts')

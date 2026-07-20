@@ -6,19 +6,33 @@
   --panel-3: #ffffff;
   --line: #e1e3e7;
   --line-strong: #c9ced6;
-  --text: #20242a;
+  --text: #0d0d0d;
   --brand-mark: #000000;
   --muted: #7b8493;
   --faint: #a3abb7;
-  --accent: #2f78ff;
-  --accent-bg: #eaf2ff;
-  --green: #15915f;
-  --green-bg: #e9f7ef;
-  --red: #c54242;
-  --red-bg: #fff0f0;
+  --accent: #0169cc;
+  --accent-bg: #e6f2fc;
+  --green: #00a240;
+  --green-bg: #e6f7ec;
+  --red: #e02e2a;
+  --red-bg: #fdecea;
   --yellow: #b7791f;
   --code-bg: #f7f8fa;
-  --shadow: 0 12px 30px rgba(30, 36, 48, 0.08);
+  --user-bubble-bg: #f0f0f1;
+  --shadow: 0 14px 34px rgba(31, 40, 55, .10);
+  --file-js: #8a5a00;
+  --file-py: #0969da;
+  --file-css: #6639ba;
+  --file-html: #cf222e;
+  --file-json: #735c0f;
+  --file-md: #0550ae;
+  --file-image: #bf3989;
+  --file-pdf: #a40e26;
+  --file-yaml: #8250df;
+  --file-powershell: #006f9c;
+  --file-shell: #1a7f37;
+  --sidebar-scroll-thumb: rgba(92, 105, 124, .20);
+  --sidebar-scroll-thumb-hover: rgba(72, 86, 108, .38);
   font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
 }
 
@@ -42,7 +56,21 @@ body.theme-dark {
   --red-bg: #3a1d1d;
   --yellow: #f6c453;
   --code-bg: #111111;
-  --shadow: none;
+  --user-bubble-bg: #1f2125;
+  --shadow: 0 18px 42px rgba(0, 0, 0, .28);
+  --file-js: #e5c07b;
+  --file-py: #61afef;
+  --file-css: #c678dd;
+  --file-html: #ff7b72;
+  --file-json: #d7ba7d;
+  --file-md: #79b8ff;
+  --file-image: #e77dbb;
+  --file-pdf: #ff9492;
+  --file-yaml: #d2a8ff;
+  --file-powershell: #56d4dd;
+  --file-shell: #7ee787;
+  --sidebar-scroll-thumb: rgba(230, 235, 244, .22);
+  --sidebar-scroll-thumb-hover: rgba(230, 235, 244, .44);
 }
 
 * { box-sizing: border-box; }
@@ -1205,14 +1233,6 @@ input:focus, select:focus, textarea:focus {
   padding: 4px 12px;
   border-left: 3px solid var(--line-strong);
   color: var(--muted);
-}
-
-.user .bubble {
-  max-width: 620px;
-  padding: 10px 14px;
-  border-radius: 11px;
-  background: var(--accent-bg);
-  color: var(--text);
 }
 
 .thought {
@@ -3648,7 +3668,18 @@ body.theme-dark .syn-fn { color: #61afef; }
 }
 .theme-opt:hover { background: var(--panel-2); }
 .theme-opt.active { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }
-}
+
+/* ── Theme picker panel ── */
+.tp-section { margin-bottom: 16px; }
+.tp-mode-row { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 0; font-size: 13px; }
+.tp-mode-row input[type="radio"] { accent-color: var(--accent); }
+.tp-variants { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px; margin: 4px 0 0 24px; max-height: 280px; overflow-y: auto; }
+.tp-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: background .1s; }
+.tp-row:hover { background: var(--panel-2); }
+.tp-row--sel { background: var(--accent-bg); }
+.tp-swatch { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; font-size: 11px; font-weight: 700; border: 1px solid var(--line); flex-shrink: 0; }
+.tp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.tp-select { padding: 4px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel-3); color: var(--text); font-size: 12px; }
 
 .model-list-header {
   display: flex;
@@ -4656,68 +4687,6 @@ body.theme-dark .syn-fn { color: #61afef; }
 .ext-ps1 .file-name { color: var(--file-powershell); }
 .ext-bat .file-name, .ext-sh .file-name, .ext-cmd .file-name { color: var(--file-shell); }
 
-/* --------------------------------------------------------------------------
-   Workspace visual refinement
-   Presentation-only overrides: keep existing markup and interaction logic.
-   -------------------------------------------------------------------------- */
-
-:root {
-  --bg: #f8f9fb;
-  --panel: #f1f3f6;
-  --panel-2: #e8ebef;
-  --panel-3: #ffffff;
-  --line: #dfe3e8;
-  --line-strong: #c5cbd4;
-  --text: #1d232c;
-  --muted: #6f7988;
-  --faint: #98a1af;
-  --accent: #286fe8;
-  --accent-bg: #e9f1ff;
-  --code-bg: #f1f3f6;
-  --shadow: 0 14px 34px rgba(31, 40, 55, .10);
-  --file-js: #8a5a00;
-  --file-py: #0969da;
-  --file-css: #6639ba;
-  --file-html: #cf222e;
-  --file-json: #735c0f;
-  --file-md: #0550ae;
-  --file-image: #bf3989;
-  --file-pdf: #a40e26;
-  --file-yaml: #8250df;
-  --file-powershell: #006f9c;
-  --file-shell: #1a7f37;
-  --sidebar-scroll-thumb: rgba(92, 105, 124, .20);
-  --sidebar-scroll-thumb-hover: rgba(72, 86, 108, .38);
-}
-
-body.theme-dark {
-  --bg: #181818;
-  --panel: #202020;
-  --panel-2: #292929;
-  --panel-3: #1c1c1c;
-  --line: #343434;
-  --line-strong: #4b4b4b;
-  --text: #f2f3f5;
-  --muted: #a1a8b3;
-  --faint: #747d89;
-  --accent: #74a9ff;
-  --file-js: #e5c07b;
-  --file-py: #61afef;
-  --file-css: #c678dd;
-  --file-html: #ff7b72;
-  --file-json: #d7ba7d;
-  --file-md: #79b8ff;
-  --file-image: #e77dbb;
-  --file-pdf: #ff9492;
-  --file-yaml: #d2a8ff;
-  --file-powershell: #56d4dd;
-  --file-shell: #7ee787;
-  --sidebar-scroll-thumb: rgba(230, 235, 244, .22);
-  --sidebar-scroll-thumb-hover: rgba(230, 235, 244, .44);
-  --accent-bg: #1c3556;
-  --code-bg: #111111;
-  --shadow: 0 18px 42px rgba(0, 0, 0, .28);
-}
 
 body {
   line-height: 1.5;
@@ -5057,7 +5026,7 @@ button:focus-visible,
 
 .messages {
   inset: 0 0 var(--composer-safe-bottom, 120px) 0;
-  padding: 32px clamp(20px, 4vw, 52px) 42px;
+  padding: 32px clamp(20px, 4vw, 52px) 20px;
 }
 
 .chat-pane.empty-chat {
@@ -5143,10 +5112,11 @@ button:focus-visible,
 }
 
 .user .bubble {
-  max-width: 100%;
-  padding: 11px 15px;
-  border: 1px solid color-mix(in srgb, var(--accent) 15%, transparent);
+  max-width: 620px;
+  padding: 8px 12px;
+  background: var(--user-bubble-bg);
   border-radius: 8px;
+  color: var(--text);
 }
 
 .thought,

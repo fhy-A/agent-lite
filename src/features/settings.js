@@ -281,18 +281,46 @@
       storage?.removeItem("code-platform-auth");
     }
 
-    function applyTheme(mode) {
-      const systemDark = global.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
-      const isDark = mode === "dark" || (mode === "system" && systemDark);
-      documentRef.body.classList.toggle("theme-dark", Boolean(isDark));
-      storage?.setItem("code-theme", mode);
+    const themeEngine = Code.core?.theme;
+    const DEFAULT_LIGHT = "codex";
+    const DEFAULT_DARK = "codex";
+
+    function getThemePrefs() {
+      return {
+        mode: storage?.getItem("code-theme-mode") || "light",
+        lightVariant: storage?.getItem("code-theme-light") || DEFAULT_LIGHT,
+        darkVariant: storage?.getItem("code-theme-dark") || DEFAULT_DARK,
+      };
+    }
+
+    function saveThemePrefs(mode, lightVariant, darkVariant) {
+      storage?.setItem("code-theme-mode", mode);
+      storage?.setItem("code-theme", mode);  // backward compat
+      if (lightVariant !== undefined) storage?.setItem("code-theme-light", lightVariant);
+      if (darkVariant !== undefined) storage?.setItem("code-theme-dark", darkVariant);
+    }
+
+    function applyTheme(mode, lightVariant, darkVariant) {
+      const prefs = getThemePrefs();
+      const m = mode || prefs.mode;
+      const lv = lightVariant !== undefined ? lightVariant : prefs.lightVariant;
+      const dv = darkVariant !== undefined ? darkVariant : prefs.darkVariant;
+      saveThemePrefs(m, lv, dv);
+      if (themeEngine) {
+        themeEngine.activateTheme(m, lv, dv);
+      } else {
+        // fallback: old behaviour
+        const systemDark = global.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
+        documentRef.body.classList.toggle("theme-dark", m === "dark" || (m === "system" && systemDark));
+      }
       updateThemeButtons();
     }
 
     function updateThemeButtons() {
-      const current = storage?.getItem("code-theme") || "light";
-      documentRef.querySelectorAll(".theme-opt").forEach((button) => {
-        button.classList.toggle("active", button.dataset.theme === current);
+      const prefs = getThemePrefs();
+      // sidebar toggle buttons
+      documentRef.querySelectorAll(".theme-opt[data-theme]").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.theme === prefs.mode);
       });
     }
 
@@ -391,17 +419,50 @@
     }
 
     function renderThemePanel(container) {
-      const current = storage?.getItem("code-theme") || "light";
-      const themes = [
-        { value: "light", label: t("light") },
-        { value: "dark", label: t("dark") },
-        { value: "system", label: t("followSystem") },
-      ];
+      if (!themeEngine) { container.innerHTML = "<p>Theme engine not loaded</p>"; return; }
+      const prefs = getThemePrefs();
+      const renderSwatch = (surface, ink) =>
+        `<span class="tp-swatch" style="background:${surface};color:${ink}" title="${surface}">Aa</span>`;
+
+      const renderVariantRow = (id, base, isSelected, dataset) => {
+        const name = id === "vscode-plus" ? "vscode+" : id;
+        return `<label class="tp-row ${isSelected ? "tp-row--sel" : ""}" data-tp-variant="${dataset}">
+          <input type="radio" ${isSelected ? "checked" : ""}>
+          ${renderSwatch(base.surface, base.ink)}
+          <span class="tp-name">${name}</span>
+        </label>`;
+      };
+
+      const lightOpts = Object.entries(themeEngine.LIGHT_THEMES)
+        .map(([id, base]) => renderVariantRow(id, base, id === prefs.lightVariant, `light:${id}`)).join("");
+
+      const darkOpts = Object.entries(themeEngine.DARK_THEMES)
+        .map(([id, base]) => renderVariantRow(id, base, id === prefs.darkVariant, `dark:${id}`)).join("");
+
       container.innerHTML = `<h3 style="margin:0 0 14px">${t("theme")}</h3>
-        <div class="settings-theme-row" style="max-width:240px">${themes.map((theme) => `<button class="theme-opt settings-theme-btn ${theme.value === current ? "active" : ""}" data-theme="${theme.value}">${theme.label}</button>`).join("")}</div>`;
-      container.querySelectorAll(".settings-theme-btn").forEach((button) => {
-        button.addEventListener("click", () => {
-          applyTheme(button.dataset.theme);
+        <div class="tp-section">
+          <label class="tp-mode-row"><input type="radio" name="tp-mode" value="light" data-tp-mode ${prefs.mode === "light" ? "checked" : ""}> <span style="font-weight:600">${t("light")}</span></label>
+          <div class="tp-variants">${lightOpts}</div>
+        </div>
+        <div class="tp-section">
+          <label class="tp-mode-row"><input type="radio" name="tp-mode" value="dark" data-tp-mode ${prefs.mode === "dark" ? "checked" : ""}> <span style="font-weight:600">${t("dark")}</span></label>
+          <div class="tp-variants">${darkOpts}</div>
+        </div>
+        <div class="tp-section">
+          <label class="tp-mode-row"><input type="radio" name="tp-mode" value="system" data-tp-mode ${prefs.mode === "system" ? "checked" : ""}> <span style="font-weight:600">${t("followSystem")}</span></label>
+        </div>`;
+
+      /* event listeners */
+      container.querySelectorAll("[data-tp-mode]").forEach((radio) => {
+        radio.addEventListener("change", () => {
+          applyTheme(radio.value);
+          renderThemePanel(container);
+        });
+      });
+      container.querySelectorAll("[data-tp-variant]").forEach((row) => {
+        row.addEventListener("click", () => {
+          const [mode, variant] = row.dataset.tpVariant.split(":");
+          applyTheme(mode, mode === "light" ? variant : undefined, mode === "dark" ? variant : undefined);
           renderThemePanel(container);
         });
       });
@@ -767,7 +828,7 @@
       if (bound) return;
       bound = true;
       global.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener("change", () => {
-        if ((storage?.getItem("code-theme") || "light") === "system") applyTheme("system");
+        if ((storage?.getItem("code-theme-mode") || storage?.getItem("code-theme") || "light") === "system") applyTheme("system");
       });
       byId("settingsMenuBtn")?.addEventListener("click", () => {
         markUpdateNoticeSeen("settings");
@@ -805,8 +866,26 @@
       });
     }
 
+    /* public helpers reachable from inline onclick handlers */
+    function _selectTheme(mode, lightVariant, darkVariant) {
+      const prefs = getThemePrefs();
+      const lv = lightVariant === "_pair" ? prefs.lightVariant : lightVariant;
+      const dv = darkVariant === "_pair" ? prefs.darkVariant : darkVariant;
+      applyTheme(mode, lv, dv);
+      const panel = byId("settingsDetail");
+      if (panel && panel.querySelector(".tp-section")) renderThemePanel(panel);
+    }
+
+    function _setMode(mode) {
+      applyTheme(mode);
+      const panel = byId("settingsDetail");
+      if (panel && panel.querySelector(".tp-section")) renderThemePanel(panel);
+    }
+
     return Object.freeze({
       applyTheme,
+      _selectTheme,
+      _setMode,
       bind,
       checkCodeCallback,
       checkForUpdates,

@@ -5,7 +5,7 @@ from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 from pathlib import Path
 
-SRC = Path.home() / "Desktop" / "Agent-Lite-产品介绍.pptx"
+SRC = Path.home() / "Desktop" / "Code-产品介绍.pptx"
 BLUE  = RGBColor(0x25, 0x63, 0xEB)
 WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 MUTED = RGBColor(0xA0, 0xBE, 0xF5)
@@ -55,7 +55,7 @@ for s in list(sl.shapes):
 add_text(sl, 2, 2.2, 9, 0.9, "开始你的第一个项目", fs=44, bold=True)
 add_text(sl, 2, 3.5, 9, 1.2, "下载 EXE → 双击运行 → 浏览器打开 127.0.0.1:3010\n\n用自然语言驱动代码", fs=18, color=MUTED, align=PP_ALIGN.CENTER)
 add_rect(sl, 5.2, 5.5, 2.5, Pt(1.5), RGBColor(0x50, 0x85, 0xF0))
-add_text(sl, 3, 5.9, 7, 0.4, "github.com/fhy-A/agent-lite", fs=13, color=MUTED, align=PP_ALIGN.CENTER)
+add_text(sl, 3, 5.9, 7, 0.4, "github.com/fhy-A/code", fs=13, color=MUTED, align=PP_ALIGN.CENTER)
 
 prs.save(str(SRC))
 print("Done: roadmap + end page updated")

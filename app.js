@@ -487,9 +487,9 @@ function syncComposerSafeArea() {
   if (!els.chatPane || !els.chatForm) return;
   const composerHeight = Math.ceil(els.chatForm.getBoundingClientRect().height);
   if (!composerHeight) return;
-  // Composer sits 24px above the viewport bottom. Keep a further 16px gap so
-  // the last message and the active run banner never slide underneath it.
-  els.chatPane.style.setProperty("--composer-safe-bottom", `${composerHeight + 40}px`);
+  // Composer bottom: 24px, keep a 4px gap above so the last message
+  // never slides underneath the composer edge.
+  els.chatPane.style.setProperty("--composer-safe-bottom", `${composerHeight + 28}px`);
 }
 
 function setupComposerSafeArea() {
@@ -9848,7 +9848,13 @@ async function init() {
     setInterval(sendBrowserHeartbeat, 3000);
     sendBrowserHeartbeat();
 
-    applyTheme(localStorage.getItem("code-theme") || "light");
+    const themeMode = localStorage.getItem("code-theme-mode") || localStorage.getItem("code-theme") || "light";
+    const themeLight = localStorage.getItem("code-theme-light") || "codex";
+    const themeDark = localStorage.getItem("code-theme-dark") || "codex";
+    if (window.Code?.core?.theme) {
+      window.Code.core.theme.activateTheme(themeMode, themeLight, themeDark);
+    }
+    applyTheme(themeMode, themeLight, themeDark);
 
     applyPreviewWidth();
 

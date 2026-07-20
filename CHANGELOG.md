@@ -14,6 +14,23 @@
 
 ---
 
+## 2026-07-20 10:00 · Claude Code
+
+### code：多主题系统完成
+
+- **主题引擎** (`src/core/theme-engine.js`)：15 套亮色主题 + 26 套暗色主题，含颜色数学工具（hexToRgb、mixColors、alphaStr）和 CSS 变量自动推导（deriveTheme），主题激活时设置所有 30+ 个 CSS 变量并切换 `color-scheme`。
+- **主题设置面板**：`renderThemePanel()` 完整改为带色板预览的变体选择器——亮色/暗色/跟随系统三种模式，每种模式下列出全部可选主题变体，点击即时切换。
+- **数据属性标记**：`<html>` 标记 `data-theme-mode`（light/dark）和 `data-theme-variant`（codex/catppuccin 等），方便 CSS 按主题变体做精细调整。
+- **CSS 收口**：修复 stray `}` 语法错误，合并重复的 `:root` 和 `body.theme-dark` 块，补充 `--yellow`、`--file-*`、`--sidebar-scroll-thumb*`、`--user-bubble-bg` 等缺失变量，CSS 降级回退块与主题引擎保持一致。
+- **文件树颜色自适应**：文件类型颜色（`--file-*`）不再硬编码，改为从主题 base 色派生——保留语义色相（JS=琥珀、Py=蓝…），饱和度和明度根据 surface 亮度自动适配，确保与背景 ≥4.5:1 对比度。同时检测 accent 色相冲突（距离 <25° 时自动偏转 35°），避免文件色与强调色混为一体。
+- **HSL 色彩工具**：新增 `rgbToHsl`、`hslToRgb` 函数，`deriveFileColors()` 在 11 种文件类型上生成适配当前主题的文件色。
+- **UI 微调**：用户消息气泡内边距 `10px 14px` → `8px 12px`；composer 上方安全区从 `+40px` 缩至 `+28px`，消息区底部内边距 `42px` → `20px`，消除输入框上方大片底色空隙。
+- **验证**：全量 558 passed, 148 subtests passed。
+
+**涉及文件**：`src/core/theme-engine.js`（新增）、`src/features/settings.js`、`app.js`、`index.html`、`styles.css`
+
+---
+
 ## 2026-07-20 02:00 · Claude Code
 
 ### New API：支付FM 集成、支付页面设计、ngrok 回调就绪

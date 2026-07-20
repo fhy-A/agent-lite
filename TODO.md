@@ -5,6 +5,7 @@
 ## 已知问题
 
 - [ ] **流式思考块首帧闪现左侧** — 发送消息后模型思考内容首帧出现在消息区左边缘，随即跳回居中位置。疑似浏览器 flex 布局 bug（Mozilla #1343370：flex 新子元素首帧使用容器旧尺寸做对齐）。已尝试：display:contents 移除、flex align-items:center、text-align:center+inline-block、left:50%+translateX、visibility:hidden+rAF 延迟显示、rAF 延迟插入、scrollbar-gutter:stable、contain:layout 等方案均未根治。下一轮调试方向：排查是否来自 messageList 之外的 DOM 操作（activeRunBanner 移动等）、或用 PerformanceObserver 录一帧确认首帧绘制来源。
+- [ ] **会话中模型错误后无法恢复** — 当某个会话中途出现模型 API 错误（如超时、500 等），之后该会话无论发送什么消息都持续报错，只能通过新建分支来恢复。需排查：① 错误后的消息历史是否被污染（混入异常响应片段）导致后续请求参数非法；② abort/reset 逻辑是否正确清理了 run state；③ 错误恢复路径是否应该自动回退到上一个健康状态而非保持错误状态。
 
 ## P0 · 上线前
 

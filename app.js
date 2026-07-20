@@ -47,7 +47,6 @@ function upgradeStaticIcons() {
   iconOnly("refreshFiles", "refresh");
   iconLabel("settingsMenuBtn", "settings");
   iconOnly("toggleSidebar", "panel");
-  iconLabel("exportChat", "download");
   iconLabel("toolLogToggle", "tools");
   iconLabel("togglePreview", "preview");
   iconOnly("attachFile", "plus");

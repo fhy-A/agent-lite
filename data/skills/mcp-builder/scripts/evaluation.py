@@ -1,11 +1,12 @@
-"""MCP Server Evaluation Harness
+"""MCP Server Evaluation Harness (Code-compatible)
 
-This script evaluates MCP servers by running test questions against them using Claude.
+Evaluates MCP servers by running test questions against them via Code's API.
 """
 
 import argparse
 import asyncio
 import json
+import os
 import re
 import sys
 import time
@@ -14,9 +15,12 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
-from anthropic import Anthropic
+import requests
 
 from connections import create_connection
+
+DEFAULT_BASE_URL = os.environ.get("CODE_API_BASE", "http://127.0.0.1:3010/v1")
+DEFAULT_API_KEY = os.environ.get("CODE_API_KEY", "code")
 
 EVALUATION_PROMPT = """You are an AI assistant with access to tools.
 
@@ -53,23 +57,36 @@ Response Requirements:
 - Your response should go last"""
 
 
+def _mcp_tools_to_openai(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert MCP tool definitions to OpenAI function-calling format."""
+    openai_tools = []
+    for tool in tools:
+        schema = tool.get("input_schema", {})
+        openai_tools.append({
+            "type": "function",
+            "function": {
+                "name": tool["name"],
+                "description": tool.get("description", ""),
+                "parameters": schema,
+            },
+        })
+    return openai_tools
+
+
 def parse_evaluation_file(file_path: Path) -> list[dict[str, Any]]:
     """Parse XML evaluation file with qa_pair elements."""
     try:
         tree = ET.parse(file_path)
         root = tree.getroot()
         evaluations = []
-
         for qa_pair in root.findall(".//qa_pair"):
             question_elem = qa_pair.find("question")
             answer_elem = qa_pair.find("answer")
-
             if question_elem is not None and answer_elem is not None:
                 evaluations.append({
                     "question": (question_elem.text or "").strip(),
                     "answer": (answer_elem.text or "").strip(),
                 })
-
         return evaluations
     except Exception as e:
         print(f"Error parsing evaluation file {file_path}: {e}")
@@ -83,76 +100,106 @@ def extract_xml_content(text: str, tag: str) -> str | None:
     return matches[-1].strip() if matches else None
 
 
+class CodeApiClient:
+    """Thin HTTP wrapper around Code's OpenAI-compatible chat completions API."""
+
+    def __init__(self, base_url: str = DEFAULT_BASE_URL, api_key: str = DEFAULT_API_KEY):
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self._session = requests.Session()
+        self._session.headers.update({
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        })
+
+    def chat(self, model: str, messages: list[dict], tools: list[dict] | None = None,
+             system: str | None = None, max_tokens: int = 4096) -> dict:
+        """Send a chat completion request. Returns parsed JSON response."""
+        body = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+        }
+        if system:
+            # inject system prompt as first message (OpenAI-compatible)
+            body["messages"] = [{"role": "system", "content": system}] + list(messages)
+        if tools:
+            body["tools"] = tools
+        resp = self._session.post(f"{self.base_url}/chat/completions", json=body, timeout=120)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def _choice_text(choice: dict) -> str | None:
+    return choice.get("message", {}).get("content") or None
+
+
+def _choice_tool_calls(choice: dict) -> list[dict]:
+    return choice.get("message", {}).get("tool_calls") or []
+
+
 async def agent_loop(
-    client: Anthropic,
+    api: CodeApiClient,
     model: str,
     question: str,
     tools: list[dict[str, Any]],
     connection: Any,
 ) -> tuple[str, dict[str, Any]]:
-    """Run the agent loop with MCP tools."""
+    """Run the agent loop with MCP tools via Code API."""
+    openai_tools = _mcp_tools_to_openai(tools)
     messages = [{"role": "user", "content": question}]
+    tool_metrics: dict[str, Any] = {}
 
-    response = await asyncio.to_thread(
-        client.messages.create,
-        model=model,
-        max_tokens=4096,
-        system=EVALUATION_PROMPT,
-        messages=messages,
-        tools=tools,
-    )
-
-    messages.append({"role": "assistant", "content": response.content})
-
-    tool_metrics = {}
-
-    while response.stop_reason == "tool_use":
-        tool_use = next(block for block in response.content if block.type == "tool_use")
-        tool_name = tool_use.name
-        tool_input = tool_use.input
-
-        tool_start_ts = time.time()
-        try:
-            tool_result = await connection.call_tool(tool_name, tool_input)
-            tool_response = json.dumps(tool_result) if isinstance(tool_result, (dict, list)) else str(tool_result)
-        except Exception as e:
-            tool_response = f"Error executing tool {tool_name}: {str(e)}\n"
-            tool_response += traceback.format_exc()
-        tool_duration = time.time() - tool_start_ts
-
-        if tool_name not in tool_metrics:
-            tool_metrics[tool_name] = {"count": 0, "durations": []}
-        tool_metrics[tool_name]["count"] += 1
-        tool_metrics[tool_name]["durations"].append(tool_duration)
-
-        messages.append({
-            "role": "user",
-            "content": [{
-                "type": "tool_result",
-                "tool_use_id": tool_use.id,
-                "content": tool_response,
-            }]
-        })
-
-        response = await asyncio.to_thread(
-            client.messages.create,
-            model=model,
-            max_tokens=4096,
-            system=EVALUATION_PROMPT,
-            messages=messages,
-            tools=tools,
+    while True:
+        resp = await asyncio.to_thread(
+            api.chat, model=model, messages=messages,
+            tools=openai_tools, system=EVALUATION_PROMPT, max_tokens=4096,
         )
-        messages.append({"role": "assistant", "content": response.content})
+        choice = resp["choices"][0]
+        finish_reason = choice.get("finish_reason", "")
+        text = _choice_text(choice)
+        tool_calls = _choice_tool_calls(choice)
 
-    response_text = next(
-        (block.text for block in response.content if hasattr(block, "text")),
-        None,
-    )
-    return response_text, tool_metrics
+        # build assistant message for history
+        assistant_msg: dict[str, Any] = {"role": "assistant"}
+        if text:
+            assistant_msg["content"] = text
+        if tool_calls:
+            assistant_msg["tool_calls"] = tool_calls
+        messages.append(assistant_msg)
+
+        if finish_reason != "tool_calls" or not tool_calls:
+            return text or "", tool_metrics
+
+        # execute each tool call
+        for tc in tool_calls:
+            tool_name = tc["function"]["name"]
+            try:
+                tool_input = json.loads(tc["function"]["arguments"])
+            except json.JSONDecodeError:
+                tool_input = {}
+
+            tool_start_ts = time.time()
+            try:
+                tool_result = await connection.call_tool(tool_name, tool_input)
+                tool_response = json.dumps(tool_result) if isinstance(tool_result, (dict, list)) else str(tool_result)
+            except Exception as e:
+                tool_response = f"Error executing tool {tool_name}: {str(e)}\n{traceback.format_exc()}"
+            tool_duration = time.time() - tool_start_ts
+
+            tool_metrics.setdefault(tool_name, {"count": 0, "durations": []})
+            tool_metrics[tool_name]["count"] += 1
+            tool_metrics[tool_name]["durations"].append(tool_duration)
+
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": tool_response,
+            })
 
 
 async def evaluate_single_task(
-    client: Anthropic,
+    api: CodeApiClient,
     model: str,
     qa_pair: dict[str, Any],
     tools: list[dict[str, Any]],
@@ -161,14 +208,12 @@ async def evaluate_single_task(
 ) -> dict[str, Any]:
     """Evaluate a single QA pair with the given tools."""
     start_time = time.time()
-
-    print(f"Task {task_index + 1}: Running task with question: {qa_pair['question']}")
-    response, tool_metrics = await agent_loop(client, model, qa_pair["question"], tools, connection)
+    print(f"Task {task_index + 1}: {qa_pair['question'][:80]}...")
+    response, tool_metrics = await agent_loop(api, model, qa_pair["question"], tools, connection)
 
     response_value = extract_xml_content(response, "response")
     summary = extract_xml_content(response, "summary")
     feedback = extract_xml_content(response, "feedback")
-
     duration_seconds = time.time() - start_time
 
     return {
@@ -178,7 +223,7 @@ async def evaluate_single_task(
         "score": int(response_value == qa_pair["answer"]) if response_value else 0,
         "total_duration": duration_seconds,
         "tool_calls": tool_metrics,
-        "num_tool_calls": sum(len(metrics["durations"]) for metrics in tool_metrics.values()),
+        "num_tool_calls": sum(len(m["durations"]) for m in tool_metrics.values()),
         "summary": summary,
         "feedback": feedback,
     }
@@ -220,12 +265,13 @@ TASK_TEMPLATE = """
 async def run_evaluation(
     eval_path: Path,
     connection: Any,
-    model: str = "claude-3-7-sonnet-20250219",
+    model: str = "gpt-4o",
+    base_url: str = DEFAULT_BASE_URL,
+    api_key: str = DEFAULT_API_KEY,
 ) -> str:
-    """Run evaluation with MCP server tools."""
+    """Run evaluation with MCP server tools via Code API."""
     print("🚀 Starting Evaluation")
-
-    client = Anthropic()
+    api = CodeApiClient(base_url=base_url, api_key=api_key)
 
     tools = await connection.list_tools()
     print(f"📋 Loaded {len(tools)} tools from MCP server")
@@ -236,28 +282,22 @@ async def run_evaluation(
     results = []
     for i, qa_pair in enumerate(qa_pairs):
         print(f"Processing task {i + 1}/{len(qa_pairs)}")
-        result = await evaluate_single_task(client, model, qa_pair, tools, connection, i)
+        result = await evaluate_single_task(api, model, qa_pair, tools, connection, i)
         results.append(result)
 
     correct = sum(r["score"] for r in results)
     accuracy = (correct / len(results)) * 100 if results else 0
-    average_duration_s = sum(r["total_duration"] for r in results) / len(results) if results else 0
-    average_tool_calls = sum(r["num_tool_calls"] for r in results) / len(results) if results else 0
-    total_tool_calls = sum(r["num_tool_calls"] for r in results)
+    avg_dur = sum(r["total_duration"] for r in results) / len(results) if results else 0
+    avg_calls = sum(r["num_tool_calls"] for r in results) / len(results) if results else 0
+    total_calls = sum(r["num_tool_calls"] for r in results)
 
     report = REPORT_HEADER.format(
-        correct=correct,
-        total=len(results),
-        accuracy=accuracy,
-        average_duration_s=average_duration_s,
-        average_tool_calls=average_tool_calls,
-        total_tool_calls=total_tool_calls,
+        correct=correct, total=len(results), accuracy=accuracy,
+        average_duration_s=avg_dur, average_tool_calls=avg_calls, total_tool_calls=total_calls,
     )
-
     report += "".join([
         TASK_TEMPLATE.format(
-            task_num=i + 1,
-            question=qa_pair["question"],
+            task_num=i + 1, question=qa_pair["question"],
             expected_answer=qa_pair["answer"],
             actual_answer=result["actual"] or "N/A",
             correct_indicator="✅" if result["score"] else "❌",
@@ -268,16 +308,13 @@ async def run_evaluation(
         )
         for i, (qa_pair, result) in enumerate(zip(qa_pairs, results))
     ])
-
     return report
 
 
 def parse_headers(header_list: list[str]) -> dict[str, str]:
-    """Parse header strings in format 'Key: Value' into a dictionary."""
     headers = {}
     if not header_list:
         return headers
-
     for header in header_list:
         if ":" in header:
             key, value = header.split(":", 1)
@@ -288,11 +325,9 @@ def parse_headers(header_list: list[str]) -> dict[str, str]:
 
 
 def parse_env_vars(env_list: list[str]) -> dict[str, str]:
-    """Parse environment variable strings in format 'KEY=VALUE' into a dictionary."""
     env = {}
     if not env_list:
         return env
-
     for env_var in env_list:
         if "=" in env_var:
             key, value = env_var.split("=", 1)
@@ -304,36 +339,35 @@ def parse_env_vars(env_list: list[str]) -> dict[str, str]:
 
 async def main():
     parser = argparse.ArgumentParser(
-        description="Evaluate MCP servers using test questions",
+        description="Evaluate MCP servers using Code API",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Evaluate a local stdio MCP server
   python evaluation.py -t stdio -c python -a my_server.py eval.xml
-
-  # Evaluate an SSE MCP server
   python evaluation.py -t sse -u https://example.com/mcp -H "Authorization: Bearer token" eval.xml
+  python evaluation.py -t http -u https://example.com/mcp -m gpt-4o eval.xml
 
-  # Evaluate an HTTP MCP server with custom model
-  python evaluation.py -t http -u https://example.com/mcp -m claude-3-5-sonnet-20241022 eval.xml
+Environment variables:
+  CODE_API_BASE   API base URL (default http://127.0.0.1:3010/v1)
+  CODE_API_KEY    API key (default "code")
         """,
     )
-
     parser.add_argument("eval_file", type=Path, help="Path to evaluation XML file")
-    parser.add_argument("-t", "--transport", choices=["stdio", "sse", "http"], default="stdio", help="Transport type (default: stdio)")
-    parser.add_argument("-m", "--model", default="claude-3-7-sonnet-20250219", help="Claude model to use (default: claude-3-7-sonnet-20250219)")
+    parser.add_argument("-t", "--transport", choices=["stdio", "sse", "http"], default="stdio")
+    parser.add_argument("-m", "--model", default="gpt-4o", help="Model name (default: gpt-4o)")
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help=f"API base URL (default: {DEFAULT_BASE_URL})")
+    parser.add_argument("--api-key", default=DEFAULT_API_KEY, help="API key")
 
     stdio_group = parser.add_argument_group("stdio options")
-    stdio_group.add_argument("-c", "--command", help="Command to run MCP server (stdio only)")
-    stdio_group.add_argument("-a", "--args", nargs="+", help="Arguments for the command (stdio only)")
-    stdio_group.add_argument("-e", "--env", nargs="+", help="Environment variables in KEY=VALUE format (stdio only)")
+    stdio_group.add_argument("-c", "--command", help="Command to run MCP server")
+    stdio_group.add_argument("-a", "--args", nargs="+", help="Arguments for the command")
+    stdio_group.add_argument("-e", "--env", nargs="+", help="Environment variables KEY=VALUE")
 
     remote_group = parser.add_argument_group("sse/http options")
-    remote_group.add_argument("-u", "--url", help="MCP server URL (sse/http only)")
-    remote_group.add_argument("-H", "--header", nargs="+", dest="headers", help="HTTP headers in 'Key: Value' format (sse/http only)")
+    remote_group.add_argument("-u", "--url", help="MCP server URL")
+    remote_group.add_argument("-H", "--header", nargs="+", dest="headers", help="HTTP headers 'Key: Value'")
 
-    parser.add_argument("-o", "--output", type=Path, help="Output file for evaluation report (default: stdout)")
-
+    parser.add_argument("-o", "--output", type=Path, help="Output file for report (default: stdout)")
     args = parser.parse_args()
 
     if not args.eval_file.exists():
@@ -345,25 +379,22 @@ Examples:
 
     try:
         connection = create_connection(
-            transport=args.transport,
-            command=args.command,
-            args=args.args,
-            env=env_vars,
-            url=args.url,
-            headers=headers,
+            transport=args.transport, command=args.command, args=args.args,
+            env=env_vars, url=args.url, headers=headers,
         )
     except ValueError as e:
         print(f"Error: {e}")
         sys.exit(1)
 
     print(f"🔗 Connecting to MCP server via {args.transport}...")
-
     async with connection:
         print("✅ Connected successfully")
-        report = await run_evaluation(args.eval_file, connection, args.model)
-
+        report = await run_evaluation(
+            args.eval_file, connection, args.model,
+            base_url=args.base_url, api_key=args.api_key,
+        )
         if args.output:
-            args.output.write_text(report)
+            args.output.write_text(report, encoding="utf-8")
             print(f"\n✅ Report saved to {args.output}")
         else:
             print("\n" + report)

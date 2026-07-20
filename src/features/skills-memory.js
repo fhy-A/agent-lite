@@ -381,7 +381,7 @@
       }
       dropdown.innerHTML = matches.map((skill) => `<div class="slash-item" data-skill="${escapeHtml(skill.name)}">
         <span class="slash-name">/${escapeHtml(skill.name)}</span>
-        <span class="slash-desc">${escapeHtml((skill.description || "").slice(0, 40))}</span>
+        <span class="slash-desc" title="${escapeHtml(skill.description || "")}">${escapeHtml(skill.description || "")}</span>
       </div>`).join("");
       dropdown.querySelectorAll(".slash-item").forEach((item) => {
         item.addEventListener("click", () => {

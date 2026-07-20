@@ -464,7 +464,6 @@
   const ELEMENT_TRANSLATION_KEYS = Object.freeze({
     newChat: "newSession",
     togglePreview: "previewBtn",
-    exportChat: "exportBtn",
     settingsMenuBtn: "settingsBtn",
     toolLogToggle: "toolLog",
     settingsModels: "models",

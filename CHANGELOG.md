@@ -16,6 +16,18 @@
 
 ## 2026-07-21 · Claude Code
 
+### code：Skill 移植 + UI 细节优化
+
+- **高优先级 Skill 移植**：从 Claude 官方 skill 移植 7 个——`docx`、`pptx`、`xlsx`、`pdf`（Office 四件套拆开）、`learn`（教学模式）、`consolidate-memory`（记忆整理）、`web-artifacts-builder`（React 组件生成）。均适配 code 的 frontmatter 格式，内容保持一致。Skill 总数从 17 增至 24。
+- **路由调优**：`learn` 关键词收紧，避免普通技术问答误触发。
+- **测试**：46 passed, 151 subtests passed。
+
+**涉及文件**：`data/skills/` 7 个新 SKILL.md、`tests/test_builtin_skills.py`
+
+---
+
+## 2026-07-21 · Claude Code
+
 ### code：UI 细节优化 + 已知问题记录
 
 - **面包屑溢出截断**：深层路径自动从左侧折叠为 `… ▸ parent ▸ current`，保留最后 2 段可见。

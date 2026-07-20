@@ -41,7 +41,7 @@ class TestBuiltInSkillRouting(unittest.TestCase):
         cases = {
             "帮我审查 server.py 的改动，找出潜在 bug": ["code-review"],
             "为 parser.py 补充 pytest 单元测试并运行": ["python-testing"],
-            "读取 docs/report.pdf 并提取前三页内容": ["office-files"],
+            "读取 docs/report.pdf 并提取前三页内容": ["office-files", "pdf"],
             "生成一份正式的 Word 项目周报": ["document-design"],
             "用 matplotlib 画一张月度销量折线图": ["image-generation"],
             "重新设计欢迎页的布局和视觉样式": ["design-aesthetics"],

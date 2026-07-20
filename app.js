@@ -796,7 +796,11 @@ const markdownFeature = createMarkdownFeature({
 const {
   highlightSyntax,
   renderMarkdownLite,
+  setupMathCopyHandler,
 } = markdownFeature;
+
+// Wire up copy handler so KaTeX math becomes $...$ on Ctrl+C
+setupMathCopyHandler(document.getElementById("messages"));
 
 const timelineFeature = createTimelineFeature({
   escapeHtml,

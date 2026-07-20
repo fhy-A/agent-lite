@@ -999,16 +999,15 @@ input:focus, select:focus, textarea:focus {
   min-height: 0;
   padding: 24px 28px 34px;
   scrollbar-width: thin;
-  scrollbar-color: rgba(128,128,128,0.25) transparent;
+  scrollbar-color: var(--sidebar-scroll-thumb) transparent;
 }
 .message-list {
   display: contents;
 }
 .messages::-webkit-scrollbar { width: 6px; }
-.messages::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.25); border-radius: 3px; }
-.messages::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.45); }
+.messages::-webkit-scrollbar-thumb { background: var(--sidebar-scroll-thumb); border-radius: 3px; }
+.messages::-webkit-scrollbar-thumb:hover { background: var(--sidebar-scroll-thumb-hover); }
 .messages::-webkit-scrollbar-track { background: transparent; }
-
 .chat-pane.empty-chat {
   display: flex;
   flex-direction: column;
@@ -4713,8 +4712,8 @@ body.theme-dark {
   --file-yaml: #d2a8ff;
   --file-powershell: #56d4dd;
   --file-shell: #7ee787;
-  --sidebar-scroll-thumb: rgba(230, 235, 244, .14);
-  --sidebar-scroll-thumb-hover: rgba(230, 235, 244, .30);
+  --sidebar-scroll-thumb: rgba(230, 235, 244, .22);
+  --sidebar-scroll-thumb-hover: rgba(230, 235, 244, .44);
   --accent-bg: #1c3556;
   --code-bg: #111111;
   --shadow: 0 18px 42px rgba(0, 0, 0, .28);

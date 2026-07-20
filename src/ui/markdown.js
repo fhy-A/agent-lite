@@ -147,9 +147,75 @@
     };
     markedRef.setOptions({ renderer, breaks: true, gfm: true });
 
+    function renderMathInText(text) {
+      if (!text || typeof global.katex === "undefined") return text;
+
+      // ── Step 1: protect code regions (fenced + inline) so $ inside them stays raw ──
+      const codeRegions = [];
+      let cid = 0;
+      text = text.replace(/```[\s\S]*?```/g, (match) => {
+        codeRegions.push(match);
+        return `\x00CODE${cid++}\x00`;
+      });
+      text = text.replace(/`[^`\n]+`/g, (match) => {
+        codeRegions.push(match);
+        return `\x00CODE${cid++}\x00`;
+      });
+
+      // ── Step 2: extract math expressions ──
+      const placeholders = [];
+      let pid = 0;
+
+      // Display math: $$ ... $$  and  \[ ... \]
+      text = text.replace(/\$\$([\s\S]*?)\$\$/g, (_, math) => {
+        placeholders.push({ math: math.trim(), disp: true });
+        return `\x00MATH${pid++}\x00`;
+      });
+      text = text.replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => {
+        placeholders.push({ math: math.trim(), disp: true });
+        return `\x00MATH${pid++}\x00`;
+      });
+
+      // Inline math: $ ... $  (single-line, no lookbehind for broad compat)
+      text = text.replace(/\$([^$\s](?:[^$\n]*[^$\s])?)\$/g, (_, math) => {
+        placeholders.push({ math: math.trim(), disp: false });
+        return `\x00MATH${pid++}\x00`;
+      });
+      // Inline math: \( ... \)
+      text = text.replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => {
+        placeholders.push({ math: math.trim(), disp: false });
+        return `\x00MATH${pid++}\x00`;
+      });
+
+      // ── Step 3: render math placeholders to KaTeX HTML ──
+      placeholders.forEach(({ math, disp }, idx) => {
+        try {
+          const rendered = global.katex.renderToString(math, { displayMode: disp, throwOnError: false });
+          const attr = math.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+          text = text.replace(
+            `\x00MATH${idx}\x00`,
+            disp
+              ? `<span class="math-block" data-latex="${attr}">${rendered}</span>`
+              : `<span class="math-inline" data-latex="${attr}">${rendered}</span>`
+          );
+        } catch (_) {
+          text = text.replace(`\x00MATH${idx}\x00`, escapeHtml(math));
+        }
+      });
+
+      // ── Step 4: restore protected code regions ──
+      codeRegions.forEach((code, idx) => {
+        text = text.replace(`\x00CODE${idx}\x00`, code);
+      });
+
+      return text;
+    }
+
     function renderMarkdownLite(text) {
       if (!text) return "";
-      let html = markedRef.parse(text);
+      // Extract and render math BEFORE marked parsing so LaTeX isn't mangled
+      let html = renderMathInText(text);
+      html = markedRef.parse(html);
       html = html.replace(/<code>([^<]+)<\/code>/g, (_, code) => {
         const path = code.trim();
         if (/\.\w{1,8}$/.test(path) || /^[\/\\]|[A-Za-z]:[\/\\]/.test(path)) {
@@ -169,11 +235,35 @@
       return html;
     }
 
+    function setupMathCopyHandler(messagesEl) {
+      if (!messagesEl) return;
+      messagesEl.addEventListener("copy", (e) => {
+        const sel = global.getSelection();
+        if (!sel || sel.isCollapsed) return;
+        const range = sel.getRangeAt(0);
+        if (!messagesEl.contains(range.commonAncestorContainer)) return;
+
+        const clone = range.cloneContents();
+        const mathEls = clone.querySelectorAll(".math-inline, .math-block");
+        mathEls.forEach((el) => {
+          const latex = el.getAttribute("data-latex") || el.textContent || "";
+          if (!latex) return;
+          const isBlock = el.classList.contains("math-block");
+          const replacement = isBlock ? `$$\n${latex}\n$$` : `$${latex}$`;
+          el.replaceWith(global.document.createTextNode(replacement));
+        });
+
+        e.preventDefault();
+        e.clipboardData.setData("text/plain", clone.textContent || "");
+      });
+    }
+
     return Object.freeze({
       highlightSyntax,
       renderAnsi,
       renderMarkdownLite,
       renderer,
+      setupMathCopyHandler,
     });
   }
 

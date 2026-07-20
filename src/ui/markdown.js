@@ -215,6 +215,10 @@
       if (!text) return "";
       // Extract and render math BEFORE marked parsing so LaTeX isn't mangled
       let html = renderMathInText(text);
+      // Escape setext heading underlines (lines of = or -) so marked doesn't
+      // turn preceding text into an <h1>/<h2>. Common in PowerShell here-strings
+      // and code-comment separators like "# =======".
+      html = html.replace(/^[ \t]*[=\-]{3,}[ \t]*$/gm, (match) => "\\" + match);
       html = markedRef.parse(html);
       html = html.replace(/<code>([^<]+)<\/code>/g, (_, code) => {
         const path = code.trim();

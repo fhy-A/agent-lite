@@ -119,8 +119,10 @@
       const applied = !!(meta.applied || editState.applied);
       const rejected = !!(meta.rejected || editState.rejected || editState.resolved && !editState.applied);
       const serverExecuting = Boolean(meta.serverManaged && meta.authorizationDecision === "approved" && !applied && !rejected);
-      const queued = authorizationRequests.some((item) => item.status === "pending" && item.editId === pendingId)
-        || Boolean(meta.serverManaged && !serverExecuting && !applied && !rejected);
+      const isPending = authorizationRequests.some((item) => item.status === "pending" && item.editId === pendingId);
+      // Server-managed edits that were approved: treat as applied (model handles retries).
+      const autoApplied = Boolean(meta.serverManaged && meta.authorizationDecision === "approved" && !applied && !rejected);
+      const queued = isPending || Boolean(meta.serverManaged && !serverExecuting && !applied && !rejected && !autoApplied);
       const proposalOnly = permissionProfile === "plan" || !!meta.proposalOnly;
       const diffText = normalizeDiffText(content);
       if (/^\(no changes\)$/i.test(diffText.trim())) return "";
@@ -128,8 +130,9 @@
       const body = isDiff ? renderDiff(diffText) : `<div class="tool-edit-markdown">${renderMarkdown(content)}</div>`;
       const stats = isDiff ? getDiffStats(diffText) : { additions: 0, removals: 0 };
       const canReject = permissionProfile !== "bypass";
-      const status = applied ? t("appliedLabel") : (rejected ? t("rejectedLabel") : (proposalOnly ? t("proposalOnly") : (serverExecuting ? t("processingLabel") : (queued ? t("waitingApproval") : t("pendingConfirmation")))));
-      const statusClass = applied ? "is-applied" : (rejected ? "is-rejected" : "is-review");
+      const effectiveApplied = applied || autoApplied;
+      const status = effectiveApplied ? t("appliedLabel") : (rejected ? t("rejectedLabel") : (proposalOnly ? t("proposalOnly") : (serverExecuting ? t("processingLabel") : (queued ? t("waitingApproval") : t("pendingConfirmation")))));
+      const statusClass = effectiveApplied ? "is-applied" : (rejected ? "is-rejected" : "is-review");
 
       let actions = "";
       if (!applied && !rejected && !queued && !proposalOnly && !meta.serverManaged) {

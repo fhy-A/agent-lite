@@ -4612,6 +4612,7 @@ body.theme-dark .syn-fn { color: #61afef; }
 }
 .slash-item:last-child { border-bottom: 0; }
 .slash-item:hover { background: var(--panel-2); }
+.slash-item--sel { background: var(--accent-bg); }
 .slash-name { font-weight: 700; font-size: 13px; color: var(--accent); white-space: nowrap; }
 .slash-desc { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -5186,6 +5187,8 @@ body.theme-dark .chat-pane.empty-chat .composer {
   font-size: 14.5px;
   line-height: 1.65;
 }
+
+.composer textarea.has-command { color: var(--accent); }
 
 .composer-bar {
   min-height: 42px;

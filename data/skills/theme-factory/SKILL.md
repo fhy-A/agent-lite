@@ -1,7 +1,7 @@
 ---
 name: theme-factory
 description: 10 套预设主题配色与字体方案，可应用至幻灯片、文档、HTML 页面等制品，也可按需生成新主题。
-keywords: 主题, 配色, 字体, 风格, 美化, theme, 调色板, 品牌色
+keywords: 配色+方案, 配色+主题, 换+主题, 主题搭配, 字体, 风格, 美化, theme, 调色板, 品牌色, 换一套+配色
 tools: list_files, read_file, write_file, glob_files, search_files, run_command
 ---
 

@@ -32,3 +32,4 @@ output/
 # Local presentation and demo assets
 Agent-Lite-产品介绍.pptx
 demo-materials/
+node_modules/

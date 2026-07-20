@@ -16,6 +16,23 @@
 
 ## 2026-07-21 · Claude Code
 
+### code：Skill 移植（续）+ 斜杠命令系统 + 键盘快捷键 + bug 修复
+
+- **斜杠命令系统**：新增 3 个前端直连 UI 命令 `/export`（导出对话）、`/clear`（清空会话）、`/branch`（创建分支），由 `handleUiSlashCommand()` 拦截直接执行不走模型。`/compact`（手动压缩上下文）保留为 skill。命令建议列表支持 ↑↓ 键盘导航、Enter 选中、默认高亮第一项。支持 `/command 参数文本` 格式。
+- **键盘快捷键**：`Ctrl+K` 聚焦输入框、`Ctrl+L` 清空会话、`Ctrl+/` 打开命令列表、`Esc` 暂停流式/失焦。
+- **中优先级 Skill 移植**：新增 `theme-factory`、`mcp-builder`、`algorithmic-art`、`doc-coauthoring`，Skill 总数 17 → 28。
+- **mcp-builder 脚本适配**：`evaluation.py` 改为走 Code API（`requests` + `/v1/chat/completions`），不再依赖 Anthropic SDK。
+- **关键词调优**：修复 4 个 skill 的误配/漏配问题（pptx/doc-coauthoring/web-artifacts-builder/theme-factory）。
+- **Markdown 渲染修复**：`=====` 和 `-----` 行不再被 `marked` 误解析为 setext heading 导致文字变大加粗。
+- **编辑卡片状态修复**：server-managed 编辑在自动模式下批准执行后直接显示"已应用"，不再卡在"等待批准"。
+- **待办更新**：子 Agent 缺乏上下文判断、流式思考块闪现左侧、会话错误恢复等已知问题。
+
+**涉及文件**：`app.js`、`index.html`、`styles.css`、`src/core/i18n.js`、`src/features/skills-memory.js`、`src/ui/diff.js`、`src/ui/markdown.js`、`data/skills/`（4 个新增 + 4 个修正 + 3 个移除）、`tests/test_new_skills_routing.py`、`CHANGELOG.md`、`TODO.md`
+
+---
+
+## 2026-07-21 · Claude Code
+
 ### code：Skill 移植 + UI 细节优化
 
 - **高优先级 Skill 移植**：从 Claude 官方 skill 移植 7 个——`docx`、`pptx`、`xlsx`、`pdf`（Office 四件套拆开）、`learn`（教学模式）、`consolidate-memory`（记忆整理）、`web-artifacts-builder`（React 组件生成）。均适配 code 的 frontmatter 格式，内容保持一致。Skill 总数从 17 增至 24。

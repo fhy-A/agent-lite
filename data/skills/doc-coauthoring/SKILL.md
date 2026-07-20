@@ -1,7 +1,7 @@
 ---
 name: doc-coauthoring
 description: 三阶段结构化文档协作流程——上下文收集→内容精炼→读者测试，引导用户共同撰写技术文档、提案、决策记录等。
-keywords: 写文档, 文档协作, 技术文档, 提案, 决策记录, 撰写+文档, 编写+方案, coauthor
+keywords: 写文档, 文档协作, 技术文档, 提案, 决策记录, 撰写+文档, 编写+方案, 写+方案, 协作+文档, 编写+需求, 一起+写, coauthor
 tools: list_files, read_file, write_file, glob_files, search_files, run_command
 ---
 

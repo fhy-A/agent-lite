@@ -348,6 +348,12 @@
     function showSlashSuggestions() {
       const existing = byId("slashSuggest");
       const value = els.prompt.value;
+      // Only show suggestions while typing the command name (before any space).
+      // Once a space appears, the command is locked — hide the list.
+      if (value.includes(" ")) {
+        existing?.remove();
+        return;
+      }
       if (!value.match(/^\/[\w-]*$/)) {
         existing?.remove();
         return;
@@ -359,13 +365,13 @@
 
       // Built-in UI commands that run locally without involving the model
       const UI_COMMANDS = [
-        { name: "export", desc: "导出对话为 Markdown 文件" },
-        { name: "clear",  desc: "清空当前会话，开始新对话" },
-        { name: "branch", desc: "从当前位置创建会话分支" },
+        { name: "export", desc: t("cmdExportDesc") },
+        { name: "clear",  desc: t("cmdClearDesc") },
+        { name: "branch", desc: t("cmdBranchDesc") },
       ];
       const cmdMatches = UI_COMMANDS.filter((cmd) => cmd.name.startsWith(partial));
 
-      const matches = [...skillMatches, ...cmdMatches.map((cmd) => ({ name: cmd.name, description: cmd.desc }))];
+      const matches = [...cmdMatches.map((cmd) => ({ name: cmd.name, description: cmd.desc })), ...skillMatches];
       if (!matches.length) {
         existing?.remove();
         return;
@@ -389,18 +395,47 @@
         dropdown.style.left = "";
         dropdown.style.right = "";
       }
-      dropdown.innerHTML = matches.map((skill) => `<div class="slash-item" data-skill="${escapeHtml(skill.name)}">
+      dropdown.innerHTML = matches.map((skill, i) => `<div class="slash-item${i === 0 ? " slash-item--sel" : ""}" data-skill="${escapeHtml(skill.name)}" data-index="${i}">
         <span class="slash-name">/${escapeHtml(skill.name)}</span>
         <span class="slash-desc" title="${escapeHtml(skill.description || "")}">${escapeHtml(skill.description || "")}</span>
       </div>`).join("");
+      state._slashIndex = 0;
+      state._slashCount = matches.length;
+
       dropdown.querySelectorAll(".slash-item").forEach((item) => {
-        item.addEventListener("click", () => {
-          els.prompt.value = `/${item.dataset.skill} `;
-          dropdown.remove();
-          els.prompt.focus();
-          onPromptChanged();
-        });
+        item.addEventListener("click", () => selectSlashItem(item.dataset.skill));
       });
+    }
+
+    function selectSlashItem(name) {
+      const dropdown = byId("slashSuggest");
+      els.prompt.value = `/${name} `;
+      dropdown?.remove();
+      els.prompt.focus();
+      state._slashIndex = -1;
+      onPromptChanged();
+    }
+
+    function navigateSlash(delta) {
+      const dropdown = byId("slashSuggest");
+      if (!dropdown || !state._slashCount) return;
+      const prev = state._slashIndex;
+      state._slashIndex = Math.max(0, Math.min(state._slashCount - 1, (prev || 0) + delta));
+      if (state._slashIndex === prev) return;
+      dropdown.querySelectorAll(".slash-item").forEach((el) => {
+        el.classList.toggle("slash-item--sel", parseInt(el.dataset.index, 10) === state._slashIndex);
+      });
+      // scroll selected item into view
+      const sel = dropdown.querySelector(".slash-item--sel");
+      if (sel) sel.scrollIntoView({ block: "nearest" });
+    }
+
+    function commitSlashSelection() {
+      const dropdown = byId("slashSuggest");
+      if (!dropdown || !state._slashCount) return false;
+      const sel = dropdown.querySelector(".slash-item--sel");
+      if (sel) { selectSlashItem(sel.dataset.skill); return true; }
+      return false;
     }
 
     async function loadMemoryContext() {
@@ -732,6 +767,8 @@
       getMatchedSkillPrompts,
       loadMemoryContext,
       loadSkills,
+      navigateSlash,
+      commitSlashSelection,
       openSkillEditor,
       renderMemoryPanel,
       renderSkillsInSettings,

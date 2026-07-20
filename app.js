@@ -902,6 +902,8 @@ const {
   getMatchedSkillPrompts,
   loadMemoryContext,
   loadSkills,
+  navigateSlash,
+  commitSlashSelection,
   renderMemoryPanel,
   renderSkillsInSettings,
   showSlashSuggestions,
@@ -9058,7 +9060,8 @@ function saveLocalSettings() {
 
 
 function handleUiSlashCommand(text) {
-  const cmd = text.trim();
+  const parts = text.trim().split(/\s+/);
+  const cmd = parts[0] || "";
   if (cmd === "/export") { exportMarkdown(); return true; }
   if (cmd === "/clear")  { clearCurrentSession(); return true; }
   if (cmd === "/branch") { createBranch(); return true; }
@@ -9183,6 +9186,7 @@ els.chatForm.addEventListener("dragover", (e) => { e.preventDefault(); });
 
 els.prompt.addEventListener("input", () => {
 
+  els.prompt.classList.toggle("has-command", /^\/[\w-]*/.test(els.prompt.value));
   updateSendButtonState();
 
   // Auto-grow by counting lines, cap at 5
@@ -9254,6 +9258,25 @@ async function resolveAtImages() {
 
 
 els.prompt.addEventListener("keydown", (event) => {
+
+  // Slash command dropdown navigation
+  const slashEl = document.getElementById("slashSuggest");
+  if (slashEl) {
+    if (event.key === "ArrowDown") { event.preventDefault(); navigateSlash(1); return; }
+    if (event.key === "ArrowUp")   { event.preventDefault(); navigateSlash(-1); return; }
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const sel = slashEl.querySelector(".slash-item--sel");
+      if (sel) {
+        els.prompt.value = "/" + sel.dataset.skill + " ";
+        slashEl.remove();
+        state._slashIndex = -1;
+        updateSendButtonState();
+      }
+      return;
+    }
+  }
 
   if (event.key === "Enter" && !event.shiftKey) {
 
@@ -9604,17 +9627,40 @@ els.confirmEditModal.addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  const mod = event.ctrlKey || event.metaKey;
+  const tag = document.activeElement?.tagName;
+
+  // ── Global shortcuts (work anywhere) ──
+  if (mod && event.key === "k" && !event.shiftKey) {
+    event.preventDefault();
+    els.prompt.focus();
+    return;
+  }
+  if (mod && event.key === "/") {
+    event.preventDefault();
+    els.prompt.value = "/";
+    els.prompt.focus();
+    els.prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    return;
+  }
+
+  // ── Non-input shortcuts (skip when typing in text fields) ──
+  if (tag === "INPUT" || tag === "TEXTAREA") {
+    if (event.key === "Escape") {
+      document.activeElement.blur();
+    }
+    return;
+  }
 
   if (event.key === "Escape") {
-    // Don't intercept when typing in input/textarea
-    if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") return;
-    // Pause current agent run if streaming
     if (state.isStreaming) {
       const run = ensureSessionRun(state.sessionId);
       cancelSessionRun(run);
     }
+    return;
   }
 
+  if (mod && event.key === "l" && !event.shiftKey) { event.preventDefault(); clearCurrentSession(); return; }
 });
 
 

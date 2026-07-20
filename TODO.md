@@ -5,6 +5,8 @@
 ## 已知问题
 
 - [ ] **流式思考块首帧闪现左侧** — 发送消息后模型思考内容首帧出现在消息区左边缘，随即跳回居中位置。疑似浏览器 flex 布局 bug（Mozilla #1343370：flex 新子元素首帧使用容器旧尺寸做对齐）。已尝试：display:contents 移除、flex align-items:center、text-align:center+inline-block、left:50%+translateX、visibility:hidden+rAF 延迟显示、rAF 延迟插入、scrollbar-gutter:stable、contain:layout 等方案均未根治。下一轮调试方向：排查是否来自 messageList 之外的 DOM 操作（activeRunBanner 移动等）、或用 PerformanceObserver 录一帧确认首帧绘制来源。
+- [x] **自动模式下工具执行失败后卡"等待批准"** — 已修复：`authorizationDecision === "approved"` 的 server-managed 编辑直接视为已应用，不再卡在等待批准。模型自行重试。
+- [ ] **子 Agent 接管队列消息时缺乏上下文判断** — 主 Agent 正在流式输出时发送的新消息会通过 `dispatchBackgroundSubAgent` 交给子 Agent 处理。但子 Agent 得到的上下文是精简的（只有当前会话摘要），难以判断该任务是应该排队等主 Agent 还是自己独立处理，容易误执行本应由主 Agent 完成的操作。需考虑：① 子 Agent 是否能感知主 Agent 的当前任务状态；② 是否需要一个"消息分类器"先判断消息类型再决定路由；③ 或者所有队列消息都先等待主 Agent 空闲后再交给它。
 - [ ] **会话中模型错误后无法恢复** — 当某个会话中途出现模型 API 错误（如超时、500 等），之后该会话无论发送什么消息都持续报错，只能通过新建分支来恢复。需排查：① 错误后的消息历史是否被污染（混入异常响应片段）导致后续请求参数非法；② abort/reset 逻辑是否正确清理了 run state；③ 错误恢复路径是否应该自动回退到上一个健康状态而非保持错误状态。
 
 ## P0 · 上线前

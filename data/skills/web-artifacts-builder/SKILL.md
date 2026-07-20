@@ -1,7 +1,7 @@
 ---
 name: web-artifacts-builder
 description: 使用 React 18 + TypeScript + Vite + Tailwind CSS + shadcn/ui 构建复杂的多组件 Web 前端制品（HTML artifact）。适用于需要状态管理、路由或 shadcn/ui 组件的复杂制品。
-keywords: 前端, React, artifact, HTML, 组件, shadcn, Tailwind, web, 页面, 交互
+keywords: React, artifact, 组件, shadcn, Tailwind, 前端+组件, React+页面, 仪表盘, 构建+前端, 搭建+前端
 tools: list_files, read_file, write_file, run_command, glob_files
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: pptx
 description: 创建、编辑和分析 PowerPoint 演示文稿（.pptx/.potx）。包括幻灯片生成、模板处理、图表、排版设计、视觉QA等。
-keywords: 创建+ppt, 编辑+pptx, 演示文稿, 幻灯片, .pptx, 模板, 排版, 图表, deck, presentation
+keywords: 创建+ppt, 编辑+pptx, 生成+PPT, 制作+PPT, 演示文稿, 幻灯片, .pptx, 模板, 排版, 图表, deck, presentation, 汇报+PPT
 tools: list_files, read_file, glob_files, search_files, write_file, run_command
 ---
 

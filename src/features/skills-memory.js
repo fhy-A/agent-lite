@@ -131,6 +131,8 @@
     if (!(state.disabledSkills instanceof Set)) state.disabledSkills = new Set(state.disabledSkills || []);
 
     let editingSkillName = null;
+    let settingsSelectedSkillName = null;
+    let settingsMemoryRequestId = 0;
     let bound = false;
 
     const byId = (id) => documentRef.getElementById(id);
@@ -301,11 +303,11 @@
         await loadSkills();
         closeSkillEditor();
         renderSkillsList();
-        renderSettingsSkillsSidebar();
+        settingsSelectedSkillName = name;
+        renderSettingsSkillsSidebar(name);
         const updated = state.skills.find((skill) => skill.name === name);
         if (updated) {
           showSkillDetail(updated);
-          showSkillDetailInSettings(updated);
         } else {
           showSkillDetail(null);
         }
@@ -330,11 +332,11 @@
           await apiJson(`/api/skills?name=${encodeURIComponent(name)}`, { method: "DELETE" });
           await loadSkills();
           renderSkillsList();
+          if (settingsSelectedSkillName === name) settingsSelectedSkillName = null;
           renderSettingsSkillsSidebar();
           const remaining = state.skills.find((skill) => skill.name === name);
           if (remaining) {
             showSkillDetail(remaining);
-            showSkillDetailInSettings(remaining);
           } else {
             showSkillDetail(null);
           }
@@ -574,7 +576,7 @@
           <textarea id="settingsMemBody" rows="5" placeholder="${t("memBodyPlaceholder")}" spellcheck="false"></textarea>
           <div class="memory-form-actions"><button id="settingsSaveMem" class="mini-btn" type="button">${t("save")}</button></div>
         </div>`;
-      global.setTimeout(() => refreshSettingsMemoryList(), 100);
+      refreshSettingsMemoryList();
       byId("settingsSaveMem").addEventListener("click", async () => {
         const name = byId("settingsMemName").value.trim();
         const description = byId("settingsMemDesc").value.trim();
@@ -612,8 +614,11 @@
     async function refreshSettingsMemoryList() {
       const list = byId("settingsMemoryList");
       if (!list) return;
+      const requestId = ++settingsMemoryRequestId;
+      list.innerHTML = `<div class="settings-memory-state is-loading" role="status"><span class="settings-memory-spinner" aria-hidden="true"></span><span>${t("loadingMemories")}</span></div>`;
       try {
         const data = await apiJson("/api/memory");
+        if (requestId !== settingsMemoryRequestId || byId("settingsMemoryList") !== list) return;
         const memories = data.data || [];
         list.innerHTML = memories.length ? memories.map((memory) => `<div class="memory-item ${state._editingMemory === memory.name ? "editing" : ""}" data-name="${escapeHtml(memory.name)}">
           <span class="memory-item-name">${escapeHtml(memory.name)}</span>
@@ -655,7 +660,11 @@
           });
           confirm.querySelector(".key-confirm-no").addEventListener("click", () => confirm.remove());
         }));
-      } catch (_) { /* keep the current settings panel stable */ }
+      } catch (error) {
+        if (requestId !== settingsMemoryRequestId || byId("settingsMemoryList") !== list) return;
+        list.innerHTML = `<div class="settings-memory-state is-error" role="alert"><span>${t("memoryLoadFailed")}：${escapeHtml(error.message || "")}</span><button id="settingsMemoryRetry" class="mini-btn" type="button">${t("retry")}</button></div>`;
+        byId("settingsMemoryRetry")?.addEventListener("click", refreshSettingsMemoryList);
+      }
     }
 
     function renderSkillsInSettings(container) {
@@ -671,27 +680,27 @@
       byId("settingsSkillAddBtn").addEventListener("click", () => openSkillEditor(null));
     }
 
-    function renderSettingsSkillsSidebar() {
+    function renderSettingsSkillsSidebar(preferredName = settingsSelectedSkillName) {
       const sidebar = byId("settingsSkillsSidebar");
       if (!sidebar) return;
       const sorted = sortedSkills();
+      const selectedSkill = sorted.find((skill) => skill.name === preferredName) || sorted[0] || null;
+      settingsSelectedSkillName = selectedSkill?.name || null;
       sidebar.innerHTML = sorted.length ? sorted.map((skill) => {
         const enabled = !state.disabledSkills.has(skill.name);
-        return `<div class="skill-list-item" data-skill-name="${escapeHtml(skill.name)}">
+        return `<div class="skill-list-item${skill.name === settingsSelectedSkillName ? " active" : ""}" data-skill-name="${escapeHtml(skill.name)}">
           <span class="dot ${enabled ? "on" : "off"}"></span><span>${escapeHtml(skill.name)}</span>
         </div>`;
       }).join("") : `<div class="muted-line" style="padding:12px;font-size:12px">${t("noSkills")}</div>`;
       sidebar.querySelectorAll(".skill-list-item").forEach((item) => {
         item.addEventListener("click", () => {
+          settingsSelectedSkillName = item.dataset.skillName;
           sidebar.querySelectorAll(".skill-list-item").forEach((element) => element.classList.remove("active"));
           item.classList.add("active");
           showSkillDetailInSettings(state.skills.find((skill) => skill.name === item.dataset.skillName));
         });
       });
-      if (sorted.length) {
-        sidebar.querySelector(".skill-list-item")?.classList.add("active");
-        showSkillDetailInSettings(sorted[0]);
-      }
+      showSkillDetailInSettings(selectedSkill);
     }
 
     async function showSkillDetailInSettings(skill) {
@@ -709,6 +718,7 @@
         return;
       }
       await ensureSkillBody(skill);
+      if (skill.name !== settingsSelectedSkillName) return;
       const enabled = !state.disabledSkills.has(skill.name);
       panel.innerHTML = `<div class="skill-detail-head">
         <div class="skill-detail-name">${escapeHtml(skill.name)}</div>
@@ -728,8 +738,7 @@
       <div class="skill-detail-actions"><button class="skill-delete-icon" id="settingsSkillDelete" title="${t("deleteSkill")}">${t("delete")}</button></div>`;
       byId("settingsSkillToggle").addEventListener("change", () => {
         toggleSkill(skill.name);
-        showSkillDetailInSettings(state.skills.find((item) => item.name === skill.name));
-        renderSettingsSkillsSidebar();
+        renderSettingsSkillsSidebar(skill.name);
       });
       byId("settingsSkillEdit").addEventListener("click", () => openSkillEditor(skill));
       byId("settingsSkillDelete").addEventListener("click", () => deleteSkillConfirm(skill.name, "settingsSkillDelete"));

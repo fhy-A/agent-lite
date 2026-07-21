@@ -4593,6 +4593,27 @@ body.theme-dark .syn-fn { color: #61afef; }
 .settings-detail .api-key-textarea { min-height: 100px; }
 .settings-detail .system-prompt-text { min-height: 320px; }
 .settings-detail .memory-form textarea { min-height: 140px; }
+.settings-memory-state {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+.settings-memory-state.is-error { color: var(--red); }
+.settings-memory-spinner {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border: 2px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: model-refresh-spin .7s linear infinite;
+}
 .settings-detail .model-list-display { max-height: 240px; }
 .settings-detail h3 { font-size: 18px; }
 .key-list { display: grid; gap: 8px; }

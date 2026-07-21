@@ -1242,6 +1242,33 @@ const feature = window.Code.features.settings.createSettingsFeature({
         self.assertNotIn('class="key-connect-btn"', SETTINGS_SOURCE)
         self.assertNotIn('class="key-enable-label"', SETTINGS_SOURCE)
 
+    def test_settings_panels_avoid_duplicate_refresh_and_preserve_async_state(self):
+        switch_start = SETTINGS_SOURCE.index("function switchSettingsPanel(panel)")
+        switch_end = SETTINGS_SOURCE.index("function openSettingsPage", switch_start)
+        switch_source = SETTINGS_SOURCE[switch_start:switch_end]
+        models_start = switch_source.index('case "models":')
+        models_end = switch_source.index('case "account":', models_start)
+        self.assertNotIn("refreshSettingsModelList()", switch_source[models_start:models_end])
+        self.assertIn('addEventListener("click", refreshSettingsModelList)', SETTINGS_SOURCE)
+
+        self.assertIn("let settingsSelectedSkillName = null", SKILLS_MEMORY_SOURCE)
+        self.assertIn("function renderSettingsSkillsSidebar(preferredName = settingsSelectedSkillName)", SKILLS_MEMORY_SOURCE)
+        self.assertIn("settingsSelectedSkillName = item.dataset.skillName", SKILLS_MEMORY_SOURCE)
+        self.assertIn("renderSettingsSkillsSidebar(skill.name)", SKILLS_MEMORY_SOURCE)
+        self.assertNotIn('sidebar.querySelector(".skill-list-item")?.classList.add("active")', SKILLS_MEMORY_SOURCE)
+
+        memory_start = SKILLS_MEMORY_SOURCE.index("function renderMemoryPanel(container)")
+        memory_end = SKILLS_MEMORY_SOURCE.index("function renderSkillsInSettings", memory_start)
+        memory_source = SKILLS_MEMORY_SOURCE[memory_start:memory_end]
+        self.assertNotIn("setTimeout(() => refreshSettingsMemoryList()", memory_source)
+        self.assertIn("refreshSettingsMemoryList();", memory_source)
+        self.assertIn('class="settings-memory-state is-loading"', memory_source)
+        self.assertIn('id="settingsMemoryRetry"', memory_source)
+        self.assertIn("requestId !== settingsMemoryRequestId", memory_source)
+        self.assertIn(".settings-memory-state", STYLE_SOURCE)
+        self.assertIn('loadingMemories: "正在加载记忆…"', I18N_SOURCE)
+        self.assertIn('loadingMemories: "Loading memories…"', I18N_SOURCE)
+
     def test_markdown_ui_owns_highlighting_ansi_and_html_postprocessing(self):
         self.assertIn("Code.ui.markdown = Object.freeze", MARKDOWN_SOURCE)
         script = r"""

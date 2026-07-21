@@ -929,7 +929,6 @@
       switch (panel) {
         case "models":
           renderModelsPanel(detail);
-          refreshSettingsModelList();
           break;
         case "account": renderAccountPanel(detail); break;
         case "memory": renderMemoryPanel(detail); break;

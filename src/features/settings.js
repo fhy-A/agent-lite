@@ -288,12 +288,16 @@
     }
 
     async function initializePlatformAuth() {
-      await checkCodeCallback();
+      const callbackHandled = await checkCodeCallback();
       const auth = getPlatformAuth();
       if (!auth?.token || !auth?.userId) {
         clearPlatformAuth();
         showPlatformAuthGate("missing");
         return false;
+      }
+      if (!callbackHandled) {
+        hidePlatformAuthGate();
+        return true;
       }
       showPlatformAuthGate("validating");
       try {
@@ -678,13 +682,13 @@
       }
     }
 
-    async function syncKeysFromPlatform() {
+    async function syncKeysFromPlatform({ interactive = true } = {}) {
       const auth = getPlatformAuth();
       if (!auth) {
-        showToast(t("loginFirst"));
-        return;
+        if (interactive) showToast(t("loginFirst"));
+        return { ok: false, authRequired: true };
       }
-      const button = byId("settingsConnectPlatform");
+      const button = interactive ? byId("settingsConnectPlatform") : null;
       if (button) {
         button.disabled = true;
         button.textContent = t("syncing");
@@ -693,34 +697,45 @@
         const response = await fetchFn("/api/code/sync-keys", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token: auth.token, userId: auth.userId, platformUrl: getPlatformUrl() }),
+          body: JSON.stringify({ token: auth.token, userId: auth.userId }),
         });
+        if (response.status === 401 || response.status === 403) {
+          clearPlatformAuth();
+          showPlatformAuthGate("expired");
+          if (interactive) showToast(t("loginExpired"), "error");
+          return { ok: false, authExpired: true };
+        }
         if (!response.ok) throw new Error(`Sync failed (${response.status})`);
         const data = await response.json();
         if (data.error) throw new Error(data.error);
         const tokens = data.tokens || [];
         if (!tokens.length) {
-          showToast(t("noPlatformKeys"));
-          return;
+          if (interactive) showToast(t("noPlatformKeys"));
+          return { ok: true, imported: 0, updated: 0 };
         }
-        showKeySyncModal(tokens, data.keys || {});
+        if (interactive) {
+          showKeySyncModal(tokens, data.keys || {});
+          return { ok: true, presented: tokens.length };
+        }
+        const result = platform.mergeSyncedKeys(loadKeyConfig(storage), tokens, data.keys || {});
+        const saved = saveKeyConfig(result.entries);
+        els.apiKey.value = serializeKeys(saved);
+        saveLocalSettings();
+        return { ok: true, imported: result.imported, updated: result.updated };
       } catch (error) {
         const message = error.message || String(error);
-        if (message.includes("401") || message.includes("Unauthorized") || message.includes("502")) {
-          clearPlatformAuth();
-          showToast(t("loginExpired"), "error");
-          global.setTimeout(() => {
-            global.open(`${getPlatformUrl()}/code/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
-          }, 1000);
-        } else {
-          showToast(t("syncFailed", { message }), "error");
-        }
+        if (interactive) showToast(t("syncFailed", { message }), "error");
+        return { ok: false, error: message };
       } finally {
         if (button) {
           button.disabled = false;
           button.textContent = t("syncGatewayKeys");
         }
       }
+    }
+
+    async function syncPlatformKeysSilently() {
+      return syncKeysFromPlatform({ interactive: false });
     }
 
     function showKeySyncModal(tokens, fullKeys) {
@@ -942,6 +957,7 @@
       openSettingsPage,
       shouldShowOnboarding,
       showOnboarding,
+      syncPlatformKeysSilently,
       switchSettingsPanel,
       updateThemeButtons,
     });

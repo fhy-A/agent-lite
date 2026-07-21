@@ -3,7 +3,9 @@ Tests for server.py pure functions.
 Run: python -m unittest tests.test_server -v
    or: python tests/test_server.py
 """
+import base64
 import json
+import os
 import re
 import sys
 import tempfile
@@ -129,6 +131,129 @@ class TestWorkbarAuthentication(unittest.TestCase):
         with mock.patch.object(server.request, "urlopen", side_effect=server.error.URLError("offline")):
             handler._handle_validate_code_auth()
         handler.send_json.assert_called_once_with({"error": "Workbar is unavailable"}, 502)
+
+    def test_sync_keys_uses_fixed_workbar_endpoint_and_normalizes_prefix(self):
+        handler = self.make_handler({
+            "token": "test-access-token",
+            "userId": "42",
+            "platformUrl": "https://untrusted.example",
+        })
+        token_response = mock.MagicMock()
+        token_response.read.return_value = json.dumps({
+            "data": {"items": [
+                {"id": 7, "name": "first", "status": 1},
+                {"id": 8, "name": "second", "status": 2},
+                {"id": 9, "name": "masked", "status": 1},
+            ]},
+        }).encode("utf-8")
+        token_response.__enter__.return_value = token_response
+        key_response = mock.MagicMock()
+        key_response.read.return_value = json.dumps({
+            "data": {"keys": {"7": "full-value", "8": "sk-ready", "9": "sk-***mask"}},
+        }).encode("utf-8")
+        key_response.__enter__.return_value = key_response
+
+        with mock.patch.object(
+            server.request,
+            "urlopen",
+            side_effect=[token_response, key_response],
+        ) as urlopen:
+            handler._handle_sync_keys()
+
+        requests = [call.args[0] for call in urlopen.call_args_list]
+        self.assertEqual(requests[0].full_url, "https://workbar.ai/api/token/?p=0&size=100")
+        self.assertEqual(requests[1].full_url, "https://workbar.ai/api/token/batch/keys")
+        self.assertEqual(requests[1].get_method(), "POST")
+        payload = handler.send_json.call_args.args[0]
+        self.assertEqual(payload["keys"], {"7": "sk-full-value", "8": "sk-ready"})
+
+    def test_sync_keys_preserves_local_auth_on_workbar_outage(self):
+        handler = self.make_handler({"token": "test-access-token", "userId": "42"})
+        with mock.patch.object(server.request, "urlopen", side_effect=server.error.URLError("offline")):
+            handler._handle_sync_keys()
+        handler.send_json.assert_called_once_with({"error": "Workbar is unavailable"}, 502)
+
+    def test_sync_keys_paginates_and_batches_all_platform_keys(self):
+        handler = self.make_handler({"token": "test-access-token", "userId": "42"})
+
+        def response(payload):
+            result = mock.MagicMock()
+            result.read.return_value = json.dumps(payload).encode("utf-8")
+            result.__enter__.return_value = result
+            return result
+
+        first_page = [{"id": key_id, "name": f"key-{key_id}", "status": 1} for key_id in range(1, 101)]
+        second_page = [{"id": 101, "name": "key-101", "status": 1}]
+        side_effects = [
+            response({"data": {"items": first_page, "total": 101}}),
+            response({"data": {"items": second_page, "total": 101}}),
+            response({"data": {"keys": {str(key_id): f"value-{key_id}" for key_id in range(1, 101)}}}),
+            response({"data": {"keys": {"101": "value-101"}}}),
+        ]
+        with mock.patch.object(server.request, "urlopen", side_effect=side_effects) as urlopen:
+            handler._handle_sync_keys()
+
+        requests = [call.args[0] for call in urlopen.call_args_list]
+        self.assertEqual(requests[0].full_url, "https://workbar.ai/api/token/?p=0&size=100")
+        self.assertEqual(requests[1].full_url, "https://workbar.ai/api/token/?p=1&size=100")
+        self.assertEqual(json.loads(requests[2].data)["ids"], list(range(1, 101)))
+        self.assertEqual(json.loads(requests[3].data)["ids"], [101])
+        payload = handler.send_json.call_args.args[0]
+        self.assertEqual(len(payload["tokens"]), 101)
+        self.assertEqual(payload["keys"]["101"], "sk-value-101")
+
+
+class TestTrayRestart(unittest.TestCase):
+    def test_source_restart_closes_server_and_relaunches_server_script(self):
+        server_ref = mock.Mock()
+        icon = mock.Mock()
+        with mock.patch.object(server.subprocess, "Popen") as popen:
+            server._restart_code_process(server_ref, icon)
+
+        powershell = popen.call_args.args[0]
+        self.assertEqual(powershell[:5], [
+            "powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+        ])
+        encoded = powershell[powershell.index("-EncodedCommand") + 1]
+        script = base64.b64decode(encoded).decode("utf-16-le")
+        self.assertIn(f"Wait-Process -Id {os.getpid()}", script)
+        self.assertIn(str((server.APP_DIR / "server.py").resolve()), script)
+        server_ref.shutdown.assert_called_once_with()
+        server_ref.server_close.assert_called_once_with()
+        icon.stop.assert_called_once_with()
+
+    def test_packaged_restart_reuses_browser_and_executable_directory(self):
+        server_ref = mock.Mock()
+        icon = mock.Mock()
+        packaged_exe = Path(r"C:\Program Files\Code\Code-v0.5.4.exe")
+        with mock.patch.object(server.sys, "frozen", True, create=True), \
+             mock.patch.object(server.sys, "executable", str(packaged_exe)), \
+             mock.patch.object(server.subprocess, "Popen") as popen:
+            server._restart_code_process(server_ref, icon)
+
+        powershell = popen.call_args.args[0]
+        encoded = powershell[powershell.index("-EncodedCommand") + 1]
+        script = base64.b64decode(encoded).decode("utf-16-le")
+        self.assertIn(f"-FilePath '{packaged_exe}'", script)
+        self.assertIn("-ArgumentList @('--reuse-browser')", script)
+        self.assertIn(f"-WorkingDirectory '{packaged_exe.parent}'", script)
+        self.assertIn("-WindowStyle Hidden", script)
+        icon.stop.assert_called_once_with()
+
+    def test_tray_menu_exposes_restart_action(self):
+        source = Path(server.__file__).read_text(encoding="utf-8")
+        self.assertIn('pystray.MenuItem("Restart Code", on_restart)', source)
+
+    def test_restart_cancels_waiter_if_current_server_cannot_stop(self):
+        server_ref = mock.Mock()
+        server_ref.shutdown.side_effect = RuntimeError("cannot stop")
+        icon = mock.Mock()
+        waiter = mock.Mock()
+        with mock.patch.object(server.subprocess, "Popen", return_value=waiter):
+            with self.assertRaisesRegex(RuntimeError, "cannot stop"):
+                server._restart_code_process(server_ref, icon)
+        waiter.terminate.assert_called_once_with()
+        icon.stop.assert_not_called()
 
 
 class TestSanitizeFilename(unittest.TestCase):

@@ -343,11 +343,18 @@ const parsed = platform.parseKeyText([
   "remote: sk-remote",
 ].join("\n"), loaded);
 const saved = platform.saveKeyConfig(parsed.entries, storage);
+const synced = platform.mergeSyncedKeys(loaded, [
+  {id: 1, name: "remote-renamed", status: 2},
+  {id: 2, name: "manual-from-platform", status: 1},
+  {id: 3, name: "new-platform", status: 1},
+  {id: 4, name: "masked", status: 1},
+], {1: "remote", 2: "legacy", 3: "new-full", 4: "sk-***mask"});
 process.stdout.write(JSON.stringify({
   url: platform.WORKBAR_URL,
   loaded,
   parsed,
   saved,
+  synced,
   serialized: platform.serializeKeyEntries(saved),
 }));
 """
@@ -370,6 +377,14 @@ process.stdout.write(JSON.stringify({
         ])
         self.assertEqual(data["saved"][-1]["source"], "platform")
         self.assertIn("primary: sk-primary", data["serialized"])
+        self.assertEqual(data["synced"]["imported"], 1)
+        self.assertEqual(data["synced"]["updated"], 1)
+        synced = {entry["key"]: entry for entry in data["synced"]["entries"]}
+        self.assertEqual(synced["sk-legacy"]["name"], "legacy")
+        self.assertEqual(synced["sk-legacy"]["source"], "manual")
+        self.assertEqual(synced["sk-remote"]["name"], "remote-renamed")
+        self.assertFalse(synced["sk-remote"]["enabled"])
+        self.assertEqual(synced["sk-new-full"]["source"], "platform")
 
     def test_modules_export_through_code_core(self):
         icons = (ROOT / "src/core/icons.js").read_text(encoding="utf-8")
@@ -795,7 +810,7 @@ const feature = createSettingsFeature({
         self.assertEqual(data["replaced"], [[None, "", "/"]])
         self.assertEqual(data["toasts"], [["loggedInAs:Alice", "warning"]])
 
-    def test_settings_feature_validates_auth_and_blocks_expired_sessions(self):
+    def test_settings_feature_validates_callback_and_skips_duplicate_startup_validation(self):
         script = r"""
 const values = new Map([["code-platform-auth", JSON.stringify({token: "access-1", userId: "7", username: "old"})]]);
 const storage = {
@@ -830,7 +845,7 @@ const fetchStub = async (url, options) => {
 global.window = {
   localStorage: storage,
   URLSearchParams,
-  location: {search: "", reload: () => {}},
+  location: {search: "?code_token=callback-token&user_id=7&username=alice", reload: () => {}},
   history: {replaceState: () => {}},
   matchMedia: () => ({matches: false, addEventListener: () => {}}),
   addEventListener: () => {},
@@ -854,10 +869,11 @@ const feature = window.Code.features.settings.createSettingsFeature({
   const valid = await feature.initializePlatformAuth();
   const refreshedAuth = JSON.parse(values.get("code-platform-auth"));
   const gateAfterValid = nodes.has("platformAuthGate");
+  window.location.search = "";
   mode = "expired";
-  const expired = await feature.initializePlatformAuth();
-  const expiredGate = nodes.get("platformAuthGate")?.innerHTML || "";
-  process.stdout.write(JSON.stringify({valid, expired, refreshedAuth, gateAfterValid, expiredGate, authExists: values.has("code-platform-auth"), calls}));
+  const cached = await feature.initializePlatformAuth();
+  const cachedGate = nodes.has("platformAuthGate");
+  process.stdout.write(JSON.stringify({valid, cached, refreshedAuth, gateAfterValid, cachedGate, authExists: values.has("code-platform-auth"), calls}));
 })().catch((error) => { console.error(error); process.exit(1); });
 """
         completed = subprocess.run(
@@ -870,15 +886,183 @@ const feature = window.Code.features.settings.createSettingsFeature({
         )
         data = json.loads(completed.stdout)
         self.assertTrue(data["valid"])
-        self.assertFalse(data["expired"])
+        self.assertTrue(data["cached"])
         self.assertEqual(data["refreshedAuth"]["username"], "alice")
         self.assertFalse(data["gateAfterValid"])
-        self.assertIn("workbarSessionExpired", data["expiredGate"])
+        self.assertFalse(data["cachedGate"])
+        self.assertTrue(data["authExists"])
+        self.assertEqual(data["calls"], [{
+            "url": "/api/code/auth/validate",
+            "body": {"token": "callback-token", "userId": "7"},
+        }])
+
+    def test_settings_silent_sync_turns_unauthorized_cached_auth_into_expired_gate(self):
+        script = r"""
+const values = new Map([["code-platform-auth", JSON.stringify({token: "expired", userId: "7"})]]);
+const storage = {
+  getItem: (key) => values.has(key) ? values.get(key) : null,
+  setItem: (key, value) => values.set(key, String(value)),
+  removeItem: (key) => values.delete(key),
+};
+const nodes = new Map();
+const documentStub = {
+  body: {appendChild: (node) => nodes.set(node.id, node)},
+  createElement: () => {
+    let id = "";
+    return {
+      innerHTML: "",
+      className: "",
+      set id(value) { id = value; },
+      get id() { return id; },
+      remove: () => nodes.delete(id),
+    };
+  },
+  getElementById: (id) => nodes.get(id) || null,
+  querySelectorAll: () => [],
+};
+global.window = {
+  localStorage: storage,
+  URLSearchParams,
+  location: {search: "", reload: () => {}},
+  history: {replaceState: () => {}},
+  matchMedia: () => ({matches: false, addEventListener: () => {}}),
+  addEventListener: () => {},
+  open: () => {},
+  setTimeout,
+  setInterval,
+  clearInterval,
+};
+require("./src/core/namespace.js");
+require("./src/core/platform.js");
+require("./src/features/settings.js");
+const feature = window.Code.features.settings.createSettingsFeature({
+  elements: {apiKey: {value: ""}},
+  t: (key) => key,
+  apiJson: async () => ({}),
+  document: documentStub,
+  storage,
+  fetch: async () => ({status: 401, ok: false, json: async () => ({})}),
+});
+(async () => {
+  const initialized = await feature.initializePlatformAuth();
+  const result = await feature.syncPlatformKeysSilently();
+  process.stdout.write(JSON.stringify({
+    initialized,
+    result,
+    authExists: values.has("code-platform-auth"),
+    gate: nodes.get("platformAuthGate")?.innerHTML || "",
+  }));
+})().catch((error) => { console.error(error); process.exit(1); });
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertTrue(data["initialized"])
+        self.assertTrue(data["result"]["authExpired"])
         self.assertFalse(data["authExists"])
-        self.assertEqual(data["calls"], [
-            {"url": "/api/code/auth/validate", "body": {"token": "access-1", "userId": "7"}},
-            {"url": "/api/code/auth/validate", "body": {"token": "access-1", "userId": "7"}},
-        ])
+        self.assertIn("workbarSessionExpired", data["gate"])
+
+    def test_settings_silent_sync_merges_without_touching_manual_keys_or_ui(self):
+        script = r"""
+const values = new Map([
+  ["code-platform-auth", JSON.stringify({token: "access-1", userId: "7", username: "alice"})],
+  ["code-key-config", JSON.stringify([
+    {name: "manual", key: "sk-manual", enabled: false, source: "manual"},
+    {name: "old", key: "sk-old", enabled: true, source: "platform"},
+  ])],
+]);
+const storage = {
+  getItem: (key) => values.has(key) ? values.get(key) : null,
+  setItem: (key, value) => values.set(key, String(value)),
+  removeItem: (key) => values.delete(key),
+};
+const apiKey = {value: ""};
+const calls = [];
+const toasts = [];
+let settingsSaved = 0;
+global.window = {
+  localStorage: storage,
+  URLSearchParams,
+  location: {search: "", reload: () => {}},
+  history: {replaceState: () => {}},
+  matchMedia: () => ({matches: false, addEventListener: () => {}}),
+  addEventListener: () => {},
+  open: () => {},
+  setTimeout,
+  setInterval,
+  clearInterval,
+};
+require("./src/core/namespace.js");
+require("./src/core/platform.js");
+require("./src/features/settings.js");
+const feature = window.Code.features.settings.createSettingsFeature({
+  elements: {apiKey},
+  t: (key) => key,
+  apiJson: async () => ({}),
+  document: {getElementById: () => null, querySelectorAll: () => []},
+  storage,
+  fetch: async (url, options) => {
+    calls.push({url, body: JSON.parse(options.body)});
+    return {
+      status: 200,
+      ok: true,
+      json: async () => ({
+        tokens: [
+          {id: 1, name: "old-renamed", status: 2},
+          {id: 2, name: "new", status: 1},
+        ],
+        keys: {1: "sk-old", 2: "sk-new"},
+      }),
+    };
+  },
+  saveLocalSettings: () => { settingsSaved += 1; },
+  showToast: (...args) => toasts.push(args),
+});
+(async () => {
+  const result = await feature.syncPlatformKeysSilently();
+  process.stdout.write(JSON.stringify({
+    result,
+    config: JSON.parse(values.get("code-key-config")),
+    apiKey: apiKey.value,
+    calls,
+    toasts,
+    settingsSaved,
+  }));
+})().catch((error) => { console.error(error); process.exit(1); });
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        config = {entry["key"]: entry for entry in data["config"]}
+        self.assertTrue(data["result"]["ok"])
+        self.assertEqual(data["result"]["imported"], 1)
+        self.assertEqual(config["sk-manual"], {
+            "name": "manual", "key": "sk-manual", "enabled": False, "source": "manual",
+        })
+        self.assertEqual(config["sk-old"]["name"], "old-renamed")
+        self.assertFalse(config["sk-old"]["enabled"])
+        self.assertEqual(config["sk-new"]["source"], "platform")
+        self.assertIn("manual: sk-manual", data["apiKey"])
+        self.assertEqual(data["calls"], [{
+            "url": "/api/code/sync-keys",
+            "body": {"token": "access-1", "userId": "7"},
+        }])
+        self.assertEqual(data["toasts"], [])
+        self.assertEqual(data["settingsSaved"], 1)
+        self.assertIn("const platformSyncPromise = syncPlatformKeysSilently();", APP_SOURCE)
+        self.assertNotIn("await syncPlatformKeysSilently()", APP_SOURCE)
 
     def test_markdown_ui_owns_highlighting_ansi_and_html_postprocessing(self):
         self.assertIn("Code.ui.markdown = Object.freeze", MARKDOWN_SOURCE)

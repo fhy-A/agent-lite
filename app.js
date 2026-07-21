@@ -942,6 +942,7 @@ const {
   initializePlatformAuth,
   shouldShowOnboarding,
   showOnboarding,
+  syncPlatformKeysSilently,
 } = settingsFeature;
 settingsFeature.bind();
 
@@ -10031,6 +10032,10 @@ async function init() {
     return;
   }
 
+  // Key synchronization is deliberately non-blocking: local sessions and
+  // settings remain usable while Workbar is queried in the background.
+  const platformSyncPromise = syncPlatformKeysSilently();
+
   // Always load config — server defaults to user home when no project is set
   await loadConfig().catch((err) => {
     els.fileTree.innerHTML = `<div class="muted-line" style="padding:8px;">${escapeHtml(err.message)}</div>`;
@@ -10073,6 +10078,11 @@ async function init() {
 
   }
 
+  const platformSync = await platformSyncPromise;
+  if (platformSync?.authExpired) {
+    updateSendButtonState();
+    return;
+  }
   if (els.apiKey.value.trim() && els.baseUrl.value.trim()) await refreshModels();
 
   // Resume tasks whose browser-side stream was interrupted by a page reload.

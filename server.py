@@ -48,6 +48,7 @@ _browser_heartbeat = 0   # timestamp of last browser ping
 _server_instance_id = uuid.uuid4().hex
 _tray_icon_ref = None    # keep the icon alive for the lifetime of the process
 _tray_loop_active = False
+_tray_restart_pending = False
 MAX_PREVIEW_BYTES = 1024 * 1024
 MAX_TOOL_READ_BYTES = 512 * 1024
 MAX_TOOL_IMAGE_BYTES = 10 * 1024 * 1024
@@ -3035,12 +3036,83 @@ def _create_tray_icon(port, server_ref=None, img=None):
         if icon:
             icon.stop()
 
+    def on_restart(icon=None, item=None):
+        global _tray_restart_pending
+        if _tray_restart_pending:
+            return
+        _tray_restart_pending = True
+
+        def restart_worker():
+            global _tray_restart_pending
+            try:
+                _restart_code_process(server_ref, icon)
+            except Exception as exc:
+                _tray_restart_pending = False
+                print(f"Failed to restart Code: {exc}")
+
+        threading.Thread(
+            target=restart_worker,
+            daemon=True,
+            name="tray-restart",
+        ).start()
+
     menu = pystray.Menu(
         pystray.MenuItem("Open Code", on_open, default=True),
+        pystray.MenuItem("Restart Code", on_restart),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Exit", on_exit),
     )
     return CodeTrayIcon("Code", img, "Code", menu)
+
+
+def _restart_code_process(server_ref=None, icon=None):
+    """Schedule relaunch after this process exits, then stop server and tray."""
+    if getattr(sys, "frozen", False):
+        command = [sys.executable, "--reuse-browser"]
+        working_dir = Path(sys.executable).resolve().parent
+    else:
+        command = [sys.executable, str((APP_DIR / "server.py").resolve())]
+        working_dir = APP_DIR
+
+    script = _build_tray_restart_script(os.getpid(), command, working_dir)
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    waiter = subprocess.Popen(
+        [
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-EncodedCommand",
+            encoded,
+        ],
+        close_fds=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    try:
+        if server_ref:
+            server_ref.shutdown()
+            server_ref.server_close()
+    except Exception:
+        waiter.terminate()
+        raise
+    if icon:
+        icon.stop()
+
+
+def _build_tray_restart_script(process_id, command, working_dir):
+    """Build a PowerShell waiter so old and new Code processes never overlap."""
+    def quote(value):
+        return "'" + str(value).replace("'", "''") + "'"
+
+    executable = quote(command[0])
+    arguments = ", ".join(quote(value) for value in command[1:])
+    argument_clause = f" -ArgumentList @({arguments})" if arguments else ""
+    return (
+        f"Wait-Process -Id {int(process_id)} -ErrorAction SilentlyContinue\n"
+        f"Start-Process -FilePath {executable}{argument_clause} "
+        f"-WorkingDirectory {quote(working_dir)} -WindowStyle Hidden\n"
+    )
 
 
 def start_tray(port=3010, server_ref=None):
@@ -7349,30 +7421,55 @@ class CodeHandler(BaseHTTPRequestHandler):
     def _handle_sync_keys(self):
         body = self.read_body_json()
         token = (body.get("token") or "").strip()
-        user_id = str(body.get("userId") or "")
-        print(f"[sync-keys] hasToken={bool(token)} userId='{user_id}'")
+        user_id = str(body.get("userId") or "").strip()
         if not token or not user_id:
             self.send_json({"error": "Missing token or userId"}, 400)
             return
-        base_url = (body.get("platformUrl") or "").strip().rstrip("/") or "http://localhost:3001"
         headers = {"Authorization": token, "New-Api-User": user_id, "Content-Type": "application/json"}
         try:
-            req1 = request.Request(base_url + "/api/token/?p=0&size=100", headers=headers)
-            resp1 = request.urlopen(req1, timeout=10)
-            data1 = json.loads(resp1.read())
-            tokens = (data1.get("data") or {}).get("items") or []
+            tokens = []
+            page = 0
+            while True:
+                req1 = request.Request(
+                    WORKBAR_URL + f"/api/token/?p={page}&size=100",
+                    headers=headers,
+                )
+                with request.urlopen(req1, timeout=10) as resp1:
+                    data1 = json.loads(resp1.read().decode("utf-8"))
+                page_data = data1.get("data") or {}
+                page_tokens = page_data.get("items") or []
+                tokens.extend(page_tokens)
+                total = int(page_data.get("total") or 0)
+                if len(page_tokens) < 100 or (total and len(tokens) >= total):
+                    break
+                page += 1
             if not tokens:
                 self.send_json({"tokens": [], "keys": {}})
                 return
             ids = [t.get("id") for t in tokens if t.get("id")]
-            req2 = request.Request(base_url + "/api/token/batch/keys", headers=headers,
-                                   data=json.dumps({"ids": ids}).encode(), method="POST")
-            resp2 = request.urlopen(req2, timeout=10)
-            data2 = json.loads(resp2.read())
-            full_keys = data2.get("data", {}).get("keys") or {}
+            full_keys = {}
+            for offset in range(0, len(ids), 100):
+                req2 = request.Request(
+                    WORKBAR_URL + "/api/token/batch/keys",
+                    headers=headers,
+                    data=json.dumps({"ids": ids[offset:offset + 100]}).encode(),
+                    method="POST",
+                )
+                with request.urlopen(req2, timeout=10) as resp2:
+                    data2 = json.loads(resp2.read().decode("utf-8"))
+                upstream_keys = data2.get("data", {}).get("keys") or {}
+                for key_id, value in upstream_keys.items():
+                    value = str(value or "").strip()
+                    if not value or "***" in value:
+                        continue
+                    full_keys[str(key_id)] = "sk-" + value[3:] if value.lower().startswith("sk-") else "sk-" + value
             self.send_json({"tokens": tokens, "keys": full_keys})
-        except Exception as e:
-            self.send_json({"error": "Failed to sync keys: " + str(e)}, 502)
+        except error.HTTPError as exc:
+            status = 401 if exc.code in {401, 403} else 502
+            message = "Platform authorization is invalid" if status == 401 else "Workbar is unavailable"
+            self.send_json({"error": message}, status)
+        except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
+            self.send_json({"error": "Workbar is unavailable"}, 502)
 
     def _handle_validate_code_auth(self):
         body = self.read_body_json()

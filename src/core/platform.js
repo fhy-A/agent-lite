@@ -46,6 +46,44 @@
     return normalized;
   }
 
+  function normalizeSyncedKey(value) {
+    const key = String(value || "").trim();
+    if (!key || key.includes("***")) return "";
+    return /^sk-/i.test(key) ? `sk-${key.slice(3)}` : `sk-${key}`;
+  }
+
+  function mergeSyncedKeys(config, tokens, fullKeys) {
+    const merged = normalizeKeyConfig(config).map((entry) => ({ ...entry }));
+    const indexByKey = new Map(merged.map((entry, index) => [entry.key, index]));
+    let imported = 0;
+    let updated = 0;
+
+    for (const token of Array.isArray(tokens) ? tokens : []) {
+      const key = normalizeSyncedKey(fullKeys?.[String(token?.id)]);
+      if (!key) continue;
+      const enabled = token?.status == null || Number(token.status) === 1;
+      const name = String(token?.name || "").trim();
+      const existingIndex = indexByKey.get(key);
+      if (existingIndex != null) {
+        const existing = merged[existingIndex];
+        if (existing.source === "platform") {
+          merged[existingIndex] = {
+            ...existing,
+            name: name || existing.name,
+            enabled,
+          };
+          updated += 1;
+        }
+        continue;
+      }
+      indexByKey.set(key, merged.length);
+      merged.push({ name, key, enabled, source: "platform" });
+      imported += 1;
+    }
+
+    return { entries: normalizeKeyConfig(merged), imported, updated };
+  }
+
   function splitKeyLine(value) {
     const line = String(value || "").trim();
     if (!line) return null;
@@ -97,7 +135,9 @@
     KEY_CONFIG_STORAGE_KEY,
     WORKBAR_URL,
     loadKeyConfig,
+    mergeSyncedKeys,
     normalizeKeyConfig,
+    normalizeSyncedKey,
     parseKeyText,
     saveKeyConfig,
     serializeKeyEntries,

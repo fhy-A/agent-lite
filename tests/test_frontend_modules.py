@@ -355,6 +355,8 @@ process.stdout.write(JSON.stringify({
   parsed,
   saved,
   synced,
+  formatted: platform.formatSyncedKeyLine("team:\nprimary", "raw-value"),
+  masked: platform.maskSyncedKey("raw-value"),
   serialized: platform.serializeKeyEntries(saved),
 }));
 """
@@ -385,6 +387,10 @@ process.stdout.write(JSON.stringify({
         self.assertEqual(synced["sk-remote"]["name"], "remote-renamed")
         self.assertFalse(synced["sk-remote"]["enabled"])
         self.assertEqual(synced["sk-new-full"]["source"], "platform")
+        self.assertEqual(data["formatted"], "team primary: sk-raw-value")
+        self.assertTrue(data["masked"].startswith("sk-•"))
+        self.assertTrue(data["masked"].endswith("alue"))
+        self.assertNotIn("raw-value", data["masked"])
 
     def test_modules_export_through_code_core(self):
         icons = (ROOT / "src/core/icons.js").read_text(encoding="utf-8")
@@ -1063,6 +1069,157 @@ const feature = window.Code.features.settings.createSettingsFeature({
         self.assertEqual(data["settingsSaved"], 1)
         self.assertIn("const platformSyncPromise = syncPlatformKeysSilently();", APP_SOURCE)
         self.assertNotIn("await syncPlatformKeysSilently()", APP_SOURCE)
+
+    def test_settings_interactive_sync_masks_html_and_copies_colon_formatted_keys(self):
+        script = r"""
+const values = new Map([
+  ["code-platform-auth", JSON.stringify({token: "access-1", userId: "7"})],
+  ["code-key-config", JSON.stringify([
+    {name: "existing", key: "sk-existing-secret", enabled: true, source: "manual"},
+  ])],
+]);
+const storage = {
+  getItem: (key) => values.has(key) ? values.get(key) : null,
+  setItem: (key, value) => values.set(key, String(value)),
+  removeItem: (key) => values.delete(key),
+};
+const writes = [];
+const toasts = [];
+const copyHandlers = [];
+let copyAllHandler = null;
+let appended = null;
+const closeButton = {addEventListener: () => {}};
+const copyAllButton = {
+  textContent: "",
+  addEventListener: (type, handler) => { if (type === "click") copyAllHandler = handler; },
+};
+const copyButtons = [0, 1].map((index) => ({
+  dataset: {copyIndex: String(index)},
+  textContent: "",
+  addEventListener: (type, handler) => { if (type === "click") copyHandlers[index] = handler; },
+}));
+const overlay = {
+  id: "",
+  className: "",
+  innerHTML: "",
+  remove: () => {},
+  addEventListener: () => {},
+  querySelector: (selector) => selector === ".key-sync-close" ? closeButton
+    : selector === "#keySyncCopyAll" ? copyAllButton : null,
+  querySelectorAll: (selector) => selector === ".key-copy-one" ? copyButtons : [],
+};
+const documentStub = {
+  body: {appendChild: (node) => { appended = node; }},
+  createElement: () => overlay,
+  getElementById: () => null,
+  querySelectorAll: () => [],
+};
+global.window = {
+  localStorage: storage,
+  URLSearchParams,
+  location: {search: "", reload: () => {}},
+  history: {replaceState: () => {}},
+  matchMedia: () => ({matches: false, addEventListener: () => {}}),
+  addEventListener: () => {},
+  open: () => {},
+  setTimeout: (handler) => { handler(); return 1; },
+  setInterval,
+  clearInterval,
+};
+require("./src/core/namespace.js");
+require("./src/core/platform.js");
+require("./src/features/settings.js");
+const feature = window.Code.features.settings.createSettingsFeature({
+  elements: {apiKey: {value: "existing: sk-existing-secret"}},
+  t: (key, args) => args?.count == null ? key : `${key}:${args.count}`,
+  apiJson: async () => ({}),
+  document: documentStub,
+  storage,
+  navigator: {clipboard: {writeText: async (text) => { writes.push(text); }}},
+  fetch: async () => ({
+    status: 200,
+    ok: true,
+    json: async () => ({
+      tokens: [
+        {id: 1, name: "existing", status: 1},
+        {id: 2, name: "new:key\nname", status: 1},
+        {id: 3, name: "disabled", status: 2},
+      ],
+      keys: {1: "existing-secret", 2: "sk-new-secret", 3: "sk-disabled-secret"},
+    }),
+  }),
+  showToast: (...args) => toasts.push(args),
+});
+(async () => {
+  const result = await feature.syncKeysFromPlatform();
+  copyHandlers[0]();
+  copyAllHandler();
+  await Promise.resolve();
+  await Promise.resolve();
+  process.stdout.write(JSON.stringify({
+    result,
+    html: appended.innerHTML,
+    writes,
+    toasts,
+    copyButtonCount: (appended.innerHTML.match(/key-copy-one/g) || []).length,
+  }));
+})().catch((error) => { console.error(error); process.exit(1); });
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertEqual(data["result"]["presented"], 3)
+        self.assertEqual(data["copyButtonCount"], 2)
+        self.assertIn("alreadyAdded", data["html"])
+        self.assertIn("disabledStatus", data["html"])
+        self.assertIn("disabledKeyCount:1", data["html"])
+        self.assertIn("key-sync-disabled", data["html"])
+        self.assertIn("sk-••••••••cret", data["html"])
+        self.assertNotIn("sk-existing-secret", data["html"])
+        self.assertNotIn("sk-new-secret", data["html"])
+        self.assertNotIn("sk-disabled-secret", data["html"])
+        self.assertEqual(data["writes"], [
+            "existing: sk-existing-secret",
+            "existing: sk-existing-secret\nnew key name: sk-new-secret",
+        ])
+        self.assertEqual(data["toasts"], [])
+
+    def test_settings_key_cards_and_model_detection_keep_existing_controls(self):
+        for expected in (
+            'class="key-main"',
+            'class="key-act-btn key-eye"',
+            'class="toggle-switch key-enable"',
+            'class="key-act-btn key-trash"',
+            'data-source="${entry.source === "platform" ? "platform" : "manual"}"',
+            'class="key-workbar-btn"',
+            't("getFromWorkbar")',
+            'id="settingsModelCount"',
+            'class="model-refresh-btn"',
+            'refreshSettingsModelList',
+            'await refreshModels()',
+        ):
+            self.assertIn(expected, SETTINGS_SOURCE)
+        for expected in (
+            ".key-row.disabled .key-main",
+            ".model-count-badge",
+            ".model-refresh-btn.is-loading svg",
+            ".model-provider-group + .model-provider-group",
+            ".model-list-empty",
+        ):
+            self.assertIn(expected, STYLE_SOURCE)
+        self.assertIn('getFromWorkbar: "从 Workbar 获取"', I18N_SOURCE)
+        self.assertIn('syncKeysTitle: "选择 Workbar API Key"', I18N_SOURCE)
+        self.assertIn('allKeysAdded: "已启用的 API Key 均已在本地列表中"', I18N_SOURCE)
+        self.assertIn('detectAvailableModels: "重新检测可用模型"', I18N_SOURCE)
+        self.assertIn(".key-sync-note.is-complete::before", STYLE_SOURCE)
+        self.assertNotIn('class="key-connect-btn"', SETTINGS_SOURCE)
+        self.assertNotIn('class="key-enable-label"', SETTINGS_SOURCE)
 
     def test_markdown_ui_owns_highlighting_ansi_and_html_postprocessing(self):
         self.assertIn("Code.ui.markdown = Object.freeze", MARKDOWN_SOURCE)

@@ -52,6 +52,21 @@
     return /^sk-/i.test(key) ? `sk-${key.slice(3)}` : `sk-${key}`;
   }
 
+  function formatSyncedKeyLine(name, value) {
+    const key = normalizeSyncedKey(value);
+    if (!key) return "";
+    const cleanName = String(name || "").replace(/[\r\n:]+/g, " ").trim();
+    return cleanName ? `${cleanName}: ${key}` : key;
+  }
+
+  function maskSyncedKey(value) {
+    const key = normalizeSyncedKey(value);
+    if (!key) return "";
+    const body = key.slice(3);
+    const visible = body.length > 4 ? body.slice(-4) : body.slice(-1);
+    return `sk-••••••••${visible}`;
+  }
+
   function mergeSyncedKeys(config, tokens, fullKeys) {
     const merged = normalizeKeyConfig(config).map((entry) => ({ ...entry }));
     const indexByKey = new Map(merged.map((entry, index) => [entry.key, index]));
@@ -134,7 +149,9 @@
   Code.core.platform = Object.freeze({
     KEY_CONFIG_STORAGE_KEY,
     WORKBAR_URL,
+    formatSyncedKeyLine,
     loadKeyConfig,
+    maskSyncedKey,
     mergeSyncedKeys,
     normalizeKeyConfig,
     normalizeSyncedKey,

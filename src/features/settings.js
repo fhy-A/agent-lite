@@ -93,8 +93,10 @@
         const isNew = newRow && index === entries.length - 1;
         return `<div class="key-row ${entry.enabled === false && !isNew ? "disabled" : ""}" data-idx="${index}" data-source="${entry.source === "platform" ? "platform" : "manual"}">
           <span class="key-drag-handle" title="${t("dragSort")}" draggable="true">⠿</span>
-          <input class="key-name-input" placeholder="${t("keyNamePlaceholder")}" value="${escapeHtml(entry.name)}" data-idx="${index}" />
-          <div class="key-value-wrap"><input class="key-value-input" type="password" value="${escapeHtml(entry.key)}" data-idx="${index}" /></div>
+          <div class="key-main">
+            <input class="key-name-input" placeholder="${t("keyNamePlaceholder")}" value="${escapeHtml(entry.name)}" data-idx="${index}" />
+            <div class="key-value-wrap"><input class="key-value-input" type="password" value="${escapeHtml(entry.key)}" data-idx="${index}" /></div>
+          </div>
           ${isNew ? keyConfirmActions(index) : keyNormalActions(entry, index)}
         </div>`;
       }).join("");
@@ -181,7 +183,12 @@
         });
       });
       container.querySelectorAll(".key-enable input").forEach((checkbox) => {
-        checkbox.addEventListener("change", () => persistKeyEntries(container));
+        checkbox.addEventListener("change", () => {
+          const row = checkbox.closest(".key-row");
+          row?.classList.toggle("disabled", !checkbox.checked);
+          if (checkbox.closest(".key-enable")) checkbox.closest(".key-enable").title = checkbox.checked ? t("enabledStatus") : t("disabledStatus");
+          persistKeyEntries(container);
+        });
       });
       container.querySelectorAll(".key-confirm").forEach((button) => {
         button.addEventListener("click", () => {
@@ -385,15 +392,56 @@
       byId("settingsDropdown")?.classList.add("hidden");
     }
 
+    function renderedModelCount() {
+      return (String(els.modelListBox?.innerHTML || "").match(/class="model-name-tag"/g) || []).length;
+    }
+
+    function updateSettingsModelSnapshot() {
+      const list = byId("settingsModelList");
+      const count = renderedModelCount();
+      const countBadge = byId("settingsModelCount");
+      if (countBadge) countBadge.textContent = String(count);
+      if (!list) return count;
+      if (count > 0) {
+        list.innerHTML = els.modelListBox.innerHTML;
+      } else {
+        const hasEnabledKey = loadKeyConfig(storage).some((entry) => entry.enabled !== false && String(entry.key || "").trim());
+        list.innerHTML = `<div class="model-list-empty">${t(hasEnabledKey ? "noModelsFound" : "enterApiKey")}</div>`;
+      }
+      return count;
+    }
+
+    async function refreshSettingsModelList() {
+      const button = byId("settingsRefreshModels");
+      if (button) {
+        button.disabled = true;
+        button.classList.add("is-loading");
+        button.title = t("detectingModels");
+      }
+      try {
+        await refreshModels();
+      } finally {
+        updateSettingsModelSnapshot();
+        if (button) {
+          button.disabled = false;
+          button.classList.remove("is-loading");
+          button.title = t("detectAvailableModels");
+        }
+      }
+    }
+
     function renderModelsPanel(container) {
+      const modelCount = renderedModelCount();
+      const initialModels = modelCount > 0
+        ? els.modelListBox.innerHTML
+        : `<div class="model-list-empty">${t(loadKeyConfig(storage).some((entry) => entry.enabled !== false && String(entry.key || "").trim()) ? "noModelsFound" : "enterApiKey")}</div>`;
       container.innerHTML = `<h3 style="margin:0 0 14px">${t("models")}</h3>
-        <label class="field"><span>${t("apiKeys")}</span>
+        <div class="field"><div class="key-field-heading"><span>${t("apiKeys")}</span><button id="settingsConnectPlatform" class="key-workbar-btn" type="button" title="${t("getFromWorkbar")}"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1.5v7m0 0L4.5 6M7 8.5L9.5 6M2 10.5v1.25c0 .41.34.75.75.75h8.5c.41 0 .75-.34.75-.75V10.5" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/></svg><span>${t("getFromWorkbar")}</span></button></div>
           <div class="key-list" id="settingsKeyList">${renderKeyEditor(els.apiKey.value)}</div>
           <div id="settingsKeyAddArea"><button id="settingsKeyAddRow" class="key-add-btn" type="button">${t("addKey")}</button></div>
-          <button id="settingsConnectPlatform" class="key-connect-btn" type="button">${t("syncGatewayKeys")}</button>
-        </label>
-        <div class="model-list-header"><span>${t("availableModels")} <button id="settingsRefreshModels" class="icon-refresh-btn" type="button" title="${t("refreshModels")}"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M1 7a6 6 0 0111.1-3.5M13 7a6 6 0 01-11.1 3.5" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M12 1v3H9M2 13v-3h3" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button></span></div>
-        <div id="settingsModelList" class="model-list-display">${els.modelListBox.innerHTML}</div>
+        </div>
+        <div class="model-list-header"><div class="model-list-title"><span>${t("availableModels")}</span><span id="settingsModelCount" class="model-count-badge">${modelCount}</span></div><button id="settingsRefreshModels" class="model-refresh-btn" type="button" title="${t("detectAvailableModels")}" aria-label="${t("detectAvailableModels")}"><svg width="15" height="15" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 7a6 6 0 0111.1-3.5M13 7a6 6 0 01-11.1 3.5" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M12 1v3H9M2 13v-3h3" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+        <div id="settingsModelList" class="model-list-display">${initialModels}</div>
         <div class="grid-two">
           <label class="field"><span>${t("temperature")}</span><input id="settingsTemperature" type="number" min="0" max="2" step="0.1" value="${els.temperature.value}" /></label>
           <label class="field"><span>${t("maxTokens")}</span><select id="settingsMaxTokens">${els.maxTokens.innerHTML}</select></label>
@@ -406,13 +454,7 @@
         }
         syncKeysFromPlatform();
       });
-      byId("settingsRefreshModels")?.addEventListener("click", () => {
-        els.refreshModelsBtn?.click();
-        global.setTimeout(() => {
-          const list = byId("settingsModelList");
-          if (list) list.innerHTML = els.modelListBox.innerHTML;
-        }, 2000);
-      });
+      byId("settingsRefreshModels")?.addEventListener("click", refreshSettingsModelList);
       byId("settingsTemperature")?.addEventListener("change", (event) => {
         els.temperature.value = event.currentTarget.value;
         saveLocalSettings();
@@ -691,7 +733,8 @@
       const button = interactive ? byId("settingsConnectPlatform") : null;
       if (button) {
         button.disabled = true;
-        button.textContent = t("syncing");
+        const label = button.querySelector("span");
+        if (label) label.textContent = t("fetchingKeys");
       }
       try {
         const response = await fetchFn("/api/code/sync-keys", {
@@ -714,8 +757,9 @@
           return { ok: true, imported: 0, updated: 0 };
         }
         if (interactive) {
-          showKeySyncModal(tokens, data.keys || {});
-          return { ok: true, presented: tokens.length };
+          const presented = showKeySyncModal(tokens, data.keys || {});
+          if (!presented) showToast(t("noPlatformKeys"));
+          return { ok: true, presented };
         }
         const result = platform.mergeSyncedKeys(loadKeyConfig(storage), tokens, data.keys || {});
         const saved = saveKeyConfig(result.entries);
@@ -729,7 +773,8 @@
       } finally {
         if (button) {
           button.disabled = false;
-          button.textContent = t("syncGatewayKeys");
+          const label = button.querySelector("span");
+          if (label) label.textContent = t("getFromWorkbar");
         }
       }
     }
@@ -740,33 +785,57 @@
 
     function showKeySyncModal(tokens, fullKeys) {
       byId("keySyncOverlay")?.remove();
-      const existingKeys = new Set(parseKeyLines(els.apiKey.value).map((entry) => entry.key.trim()).filter(Boolean));
-      let allText = "";
-      let newCount = 0;
-      const rows = tokens.map((tokenEntry) => {
-        const key = fullKeys[String(tokenEntry.id)] || tokenEntry.key || "";
-        const exists = existingKeys.has(key);
-        if (!exists) {
-          allText += `${tokenEntry.name || t("unnamed")} ${key}\n`;
-          newCount += 1;
-        }
-        const copyButton = `<button class="mini-btn key-copy-one" data-line="${escapeHtml(`${tokenEntry.name || t("unnamed")} ${key}`)}" type="button">${t("copy")}</button>`;
-        return `<div class="key-sync-row${exists ? " key-sync-exists" : ""}"><span class="key-sync-name">${escapeHtml(tokenEntry.name || t("unnamed"))}</span><span class="key-sync-key">${escapeHtml(`${key.slice(0, 12)}…${key.slice(-4)}`)}</span>${exists ? `<span class="key-sync-badge">${t("alreadyAdded")}</span>` : copyButton}</div>`;
+      const existingKeys = new Set(loadKeyConfig(storage)
+        .map((entry) => platform.normalizeSyncedKey(entry.key))
+        .filter(Boolean));
+      const seen = new Set();
+      const items = [];
+      for (const tokenEntry of Array.isArray(tokens) ? tokens : []) {
+        const key = platform.normalizeSyncedKey(fullKeys[String(tokenEntry?.id)]);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        const name = String(tokenEntry?.name || "").trim();
+        items.push({
+          name,
+          key,
+          line: platform.formatSyncedKeyLine(name, key),
+          preview: platform.maskSyncedKey(key),
+          exists: existingKeys.has(key),
+          enabled: tokenEntry?.status == null || Number(tokenEntry.status) === 1,
+        });
+      }
+      if (!items.length) return 0;
+
+      const copyLines = items.map((item) => item.enabled ? item.line : "");
+      const enabledItems = items.filter((item) => item.enabled);
+      const allText = enabledItems.map((item) => item.line).join("\n");
+      const newCount = enabledItems.filter((item) => !item.exists).length;
+      const disabledCount = items.length - enabledItems.length;
+      const rows = items.map((item, index) => {
+        const badges = [
+          item.exists ? `<span class="key-sync-badge">${t("alreadyAdded")}</span>` : "",
+          !item.enabled ? `<span class="key-sync-badge key-sync-disabled-badge">${t("disabledStatus")}</span>` : "",
+        ].join("");
+        const copyButton = item.enabled
+          ? `<button class="mini-btn key-copy-one" data-copy-index="${index}" type="button">${t("copy")}</button>`
+          : "";
+        return `<div class="key-sync-row${item.exists ? " key-sync-exists" : ""}${item.enabled ? "" : " key-sync-disabled"}"><span class="key-sync-name">${escapeHtml(item.name || t("unnamed"))}</span><span class="key-sync-key">${escapeHtml(item.preview)}</span><span class="key-sync-actions">${badges}${copyButton}</span></div>`;
       }).join("");
       const overlay = documentRef.createElement("div");
       overlay.id = "keySyncOverlay";
       overlay.className = "modal-overlay";
       overlay.innerHTML = `<div class="modal-card" style="width:540px;max-height:70vh;display:flex;flex-direction:column">
         <header><h3>${t("syncKeysTitle")}</h3><button class="icon-btn key-sync-close" type="button">&times;</button></header>
-        <div class="key-sync-summary"><span>${t("keyCount", { count: tokens.length })}${newCount > 0 && newCount < tokens.length ? `，${t("newKeyCount", { count: newCount })}` : ""}</span>${newCount > 0 ? `<button id="keySyncCopyAll" class="mini-btn primary" type="button">${t("copyAll")}</button>` : ""}</div>
+        <div class="key-sync-summary"><span>${t("keyCount", { count: items.length })}${newCount > 0 && newCount < enabledItems.length ? `，${t("newKeyCount", { count: newCount })}` : ""}${disabledCount > 0 ? `，${t("disabledKeyCount", { count: disabledCount })}` : ""}</span><button id="keySyncCopyAll" class="mini-btn primary" type="button"${enabledItems.length ? "" : " disabled"}>${t("copyAll")}</button></div>
         <div class="key-sync-list">${rows}</div>
-        <div class="panel-actions" style="margin-top:12px">${tokens.length > 0 && newCount === 0 ? `<span style="font-size:12px;color:var(--muted)">${t("allKeysAdded")}</span>` : `<span style="font-size:12px;color:var(--muted)">${t("pasteKeysHint")}</span>`}</div>
+        <div class="key-sync-footer">${enabledItems.length === 0 ? `<span class="key-sync-note">${t("noEnabledPlatformKeys")}</span>` : newCount === 0 ? `<span class="key-sync-note is-complete">${t("allKeysAdded")}</span>` : `<span class="key-sync-note">${t("pasteKeysHint")}</span>`}</div>
       </div>`;
       documentRef.body.appendChild(overlay);
       overlay.querySelector(".key-sync-close").addEventListener("click", () => overlay.remove());
       overlay.addEventListener("click", (event) => { if (event.target === overlay) overlay.remove(); });
       const copyAllButton = overlay.querySelector("#keySyncCopyAll");
       copyAllButton?.addEventListener("click", () => {
+        if (!allText) return;
         navigatorRef.clipboard.writeText(allText.trim()).then(() => {
           copyAllButton.textContent = t("copied");
           global.setTimeout(() => { copyAllButton.textContent = t("copyAll"); }, 1500);
@@ -774,12 +843,14 @@
       });
       overlay.querySelectorAll(".key-copy-one").forEach((button) => {
         button.addEventListener("click", () => {
-          navigatorRef.clipboard.writeText(button.dataset.line).then(() => {
+          const line = copyLines[Number(button.dataset.copyIndex)] || "";
+          navigatorRef.clipboard.writeText(line).then(() => {
             button.textContent = t("copied");
             global.setTimeout(() => { button.textContent = t("copy"); }, 1500);
           }).catch(() => showToast(t("copyFailed")));
         });
       });
+      return items.length;
     }
 
     async function checkCodeCallback() {
@@ -858,10 +929,7 @@
       switch (panel) {
         case "models":
           renderModelsPanel(detail);
-          refreshModels().then(() => {
-            const list = byId("settingsModelList");
-            if (list) list.innerHTML = els.modelListBox.innerHTML;
-          });
+          refreshSettingsModelList();
           break;
         case "account": renderAccountPanel(detail); break;
         case "memory": renderMemoryPanel(detail); break;
@@ -957,6 +1025,7 @@
       openSettingsPage,
       shouldShowOnboarding,
       showOnboarding,
+      syncKeysFromPlatform,
       syncPlatformKeysSilently,
       switchSettingsPanel,
       updateThemeButtons,

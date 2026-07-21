@@ -30,6 +30,27 @@ LOGO_EXPORT_SOURCE = (ROOT / "design" / "logo-concepts" / "export_selected_logo.
 
 
 class TestFrontendCoreModules(unittest.TestCase):
+    def test_settings_shell_is_responsive_and_navigation_is_grouped(self):
+        for key in (
+            "settingsGroupAgent",
+            "settingsGroupAppearance",
+            "settingsGroupApplication",
+        ):
+            self.assertIn(f'data-i18n="{key}"', INDEX_SOURCE)
+
+        self.assertEqual(INDEX_SOURCE.count('class="settings-nav-group"'), 3)
+        self.assertIn("width: min(1150px, calc(100vw - 48px))", STYLE_SOURCE)
+        self.assertIn("height: min(830px, calc(100vh - 48px))", STYLE_SOURCE)
+        self.assertIn(".settings-page-card > header { flex: 0 0 auto; }", STYLE_SOURCE)
+        self.assertIn(".settings-nav-group + .settings-nav-group", STYLE_SOURCE)
+
+        layout_start = STYLE_SOURCE.index(".settings-layout {")
+        layout_end = STYLE_SOURCE.index(".settings-nav {", layout_start)
+        layout = STYLE_SOURCE[layout_start:layout_end]
+        self.assertIn("flex: 1 1 auto", layout)
+        self.assertIn("min-height: 0", layout)
+        self.assertNotIn("height: 750px", layout)
+
     def test_composer_controls_do_not_implicitly_submit_prompt(self):
         form_start = INDEX_SOURCE.index('<form id="chatForm"')
         form_end = INDEX_SOURCE.index("</form>", form_start)

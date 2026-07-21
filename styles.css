@@ -4529,9 +4529,48 @@ body.theme-dark .syn-fn { color: #61afef; }
 .lang-opt.active { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }
 
 /* ── Unified Settings Page ── */
-.settings-page-card { width: 1150px; }
-.settings-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 0; height: 750px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.settings-nav { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; padding: 4px 0; }
+.settings-page-card {
+  width: min(1150px, calc(100vw - 48px));
+  height: min(830px, calc(100vh - 48px));
+  max-height: none;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.settings-page-card > header { flex: 0 0 auto; }
+.settings-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.settings-nav {
+  min-height: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0;
+}
+.settings-nav-group { display: flex; flex-direction: column; }
+.settings-nav-group + .settings-nav-group {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.settings-nav-heading {
+  padding: 3px 14px 7px 17px;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
 .settings-nav-item {
   display: block; width: 100%; padding: 10px 14px; border: 0; border-left: 3px solid transparent;
   border-radius: 0; text-align: left; font-size: 13px; color: var(--text); background: transparent;
@@ -4539,7 +4578,7 @@ body.theme-dark .syn-fn { color: #61afef; }
 }
 .settings-nav-item:hover { background: var(--panel-2); }
 .settings-nav-item.active { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--panel-2)); font-weight: 700; }
-.settings-detail { padding: 16px 20px; overflow: auto; background: var(--panel-3); }
+.settings-detail { min-height: 0; padding: 16px 20px; overflow: auto; background: var(--panel-3); }
 .settings-detail .field input,
 .settings-detail .field select { height: 42px; font-size: 14px; }
 .settings-detail .field select {

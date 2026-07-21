@@ -511,48 +511,61 @@
     function renderThemePanel(container) {
       if (!themeEngine) { container.innerHTML = "<p>Theme engine not loaded</p>"; return; }
       const prefs = getThemePrefs();
+      const systemDark = global.matchMedia?.("(prefers-color-scheme: dark)")?.matches === true;
+      const resolvedMode = prefs.mode === "system" ? (systemDark ? "dark" : "light") : prefs.mode;
       const renderSwatch = (surface, ink) =>
         `<span class="tp-swatch" style="background:${surface};color:${ink}" title="${surface}">Aa</span>`;
 
-      const renderVariantRow = (id, base, isSelected, dataset) => {
+      const renderVariantRow = (mode, id, base, isSelected) => {
         const name = id === "vscode-plus" ? "vscode+" : id;
-        return `<label class="tp-row ${isSelected ? "tp-row--sel" : ""}" data-tp-variant="${dataset}">
-          <input type="radio" ${isSelected ? "checked" : ""}>
+        return `<button class="tp-row ${isSelected ? "tp-row--sel" : ""}" type="button" role="radio" aria-checked="${isSelected}" data-tp-variant="${id}" data-tp-variant-mode="${mode}">
           ${renderSwatch(base.surface, base.ink)}
           <span class="tp-name">${name}</span>
-        </label>`;
+          <span class="tp-check" aria-hidden="true">✓</span>
+        </button>`;
       };
 
-      const lightOpts = Object.entries(themeEngine.LIGHT_THEMES)
-        .map(([id, base]) => renderVariantRow(id, base, id === prefs.lightVariant, `light:${id}`)).join("");
+      const renderVariantGroup = (mode) => {
+        const variants = mode === "dark" ? themeEngine.DARK_THEMES : themeEngine.LIGHT_THEMES;
+        const selectedVariant = mode === "dark" ? prefs.darkVariant : prefs.lightVariant;
+        const options = Object.entries(variants)
+          .map(([id, base]) => renderVariantRow(mode, id, base, id === selectedVariant)).join("");
+        return `<section class="tp-variant-group" data-tp-variant-group="${mode}">
+          <div class="tp-picker-head">
+            <div class="tp-picker-title"><strong>${t("themeSchemes")}</strong><span>${t(mode)}</span></div>
+            <span class="tp-picker-count">${t("themeSchemeCount", { count: Object.keys(variants).length })}</span>
+          </div>
+          <div class="tp-variants" role="radiogroup" aria-label="${t(mode)}${t("themeSchemes")}">${options}</div>
+        </section>`;
+      };
 
-      const darkOpts = Object.entries(themeEngine.DARK_THEMES)
-        .map(([id, base]) => renderVariantRow(id, base, id === prefs.darkVariant, `dark:${id}`)).join("");
+      const modeOptions = [
+        ["light", "light"],
+        ["dark", "dark"],
+        ["system", "followSystem"],
+      ].map(([mode, label]) => `<button class="tp-mode-btn ${prefs.mode === mode ? "active" : ""}" type="button" role="radio" aria-checked="${prefs.mode === mode}" data-tp-mode="${mode}">${t(label)}</button>`).join("");
+      const visibleModes = prefs.mode === "system" ? ["light", "dark"] : [resolvedMode];
+      const variantGroups = visibleModes.map(renderVariantGroup).join("");
 
       container.innerHTML = `<h3 style="margin:0 0 14px">${t("theme")}</h3>
-        <div class="tp-section">
-          <label class="tp-mode-row"><input type="radio" name="tp-mode" value="light" data-tp-mode ${prefs.mode === "light" ? "checked" : ""}> <span style="font-weight:600">${t("light")}</span></label>
-          <div class="tp-variants">${lightOpts}</div>
-        </div>
-        <div class="tp-section">
-          <label class="tp-mode-row"><input type="radio" name="tp-mode" value="dark" data-tp-mode ${prefs.mode === "dark" ? "checked" : ""}> <span style="font-weight:600">${t("dark")}</span></label>
-          <div class="tp-variants">${darkOpts}</div>
-        </div>
-        <div class="tp-section">
-          <label class="tp-mode-row"><input type="radio" name="tp-mode" value="system" data-tp-mode ${prefs.mode === "system" ? "checked" : ""}> <span style="font-weight:600">${t("followSystem")}</span></label>
+        <div class="tp-picker">
+          <div class="tp-picker-label">${t("themeMode")}</div>
+          <div class="tp-mode-switch" role="radiogroup" aria-label="${t("themeMode")}">${modeOptions}</div>
+          ${variantGroups}
         </div>`;
 
       /* event listeners */
-      container.querySelectorAll("[data-tp-mode]").forEach((radio) => {
-        radio.addEventListener("change", () => {
-          applyTheme(radio.value);
+      container.querySelectorAll("[data-tp-mode]").forEach((button) => {
+        button.addEventListener("click", () => {
+          applyTheme(button.dataset.tpMode);
           renderThemePanel(container);
         });
       });
-      container.querySelectorAll("[data-tp-variant]").forEach((row) => {
-        row.addEventListener("click", () => {
-          const [mode, variant] = row.dataset.tpVariant.split(":");
-          applyTheme(mode, mode === "light" ? variant : undefined, mode === "dark" ? variant : undefined);
+      container.querySelectorAll("[data-tp-variant]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const variant = button.dataset.tpVariant;
+          const variantMode = button.dataset.tpVariantMode;
+          applyTheme(prefs.mode, variantMode === "light" ? variant : undefined, variantMode === "dark" ? variant : undefined);
           renderThemePanel(container);
         });
       });
@@ -951,7 +964,10 @@
       if (bound) return;
       bound = true;
       global.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener("change", () => {
-        if ((storage?.getItem("code-theme-mode") || storage?.getItem("code-theme") || "light") === "system") applyTheme("system");
+        if ((storage?.getItem("code-theme-mode") || storage?.getItem("code-theme") || "light") !== "system") return;
+        applyTheme("system");
+        const panel = byId("settingsDetail");
+        if (panel?.querySelector(".tp-picker")) renderThemePanel(panel);
       });
       byId("settingsMenuBtn")?.addEventListener("click", () => {
         markUpdateNoticeSeen("settings");
@@ -999,13 +1015,13 @@
       const dv = darkVariant === "_pair" ? prefs.darkVariant : darkVariant;
       applyTheme(mode, lv, dv);
       const panel = byId("settingsDetail");
-      if (panel && panel.querySelector(".tp-section")) renderThemePanel(panel);
+      if (panel && panel.querySelector(".tp-picker")) renderThemePanel(panel);
     }
 
     function _setMode(mode) {
       applyTheme(mode);
       const panel = byId("settingsDetail");
-      if (panel && panel.querySelector(".tp-section")) renderThemePanel(panel);
+      if (panel && panel.querySelector(".tp-picker")) renderThemePanel(panel);
     }
 
     return Object.freeze({

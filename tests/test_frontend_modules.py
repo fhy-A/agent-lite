@@ -1269,6 +1269,36 @@ const feature = window.Code.features.settings.createSettingsFeature({
         self.assertIn('loadingMemories: "正在加载记忆…"', I18N_SOURCE)
         self.assertIn('loadingMemories: "Loading memories…"', I18N_SOURCE)
 
+    def test_theme_picker_separates_mode_from_the_resolved_variant_list(self):
+        start = SETTINGS_SOURCE.index("function renderThemePanel(container)")
+        end = SETTINGS_SOURCE.index("function renderAccountPanel", start)
+        source = SETTINGS_SOURCE[start:end]
+
+        self.assertIn('class="tp-mode-switch"', source)
+        self.assertIn('class="tp-mode-btn ${prefs.mode === mode ? "active" : ""}"', source)
+        self.assertEqual(source.count('class="tp-variants"'), 1)
+        self.assertNotIn('class="tp-mode-row"', source)
+        self.assertNotIn('name="tp-mode"', source)
+        self.assertIn('const resolvedMode = prefs.mode === "system"', source)
+        self.assertIn('const visibleModes = prefs.mode === "system" ? ["light", "dark"] : [resolvedMode]', source)
+        self.assertIn('data-tp-variant-mode="${mode}"', source)
+        self.assertIn('applyTheme(prefs.mode, variantMode === "light"', source)
+
+        for selector in (
+            ".tp-mode-switch",
+            ".tp-mode-btn.active",
+            ".tp-variant-group + .tp-variant-group",
+            ".tp-row--sel .tp-check",
+        ):
+            self.assertIn(selector, STYLE_SOURCE)
+        for expected in (
+            'themeMode: "外观模式"',
+            'themeSchemes: "主题方案"',
+            'themeMode: "Appearance mode"',
+            'themeSchemes: "Theme schemes"',
+        ):
+            self.assertIn(expected, I18N_SOURCE)
+
     def test_markdown_ui_owns_highlighting_ansi_and_html_postprocessing(self):
         self.assertIn("Code.ui.markdown = Object.freeze", MARKDOWN_SOURCE)
         script = r"""

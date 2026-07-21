@@ -174,6 +174,20 @@ class TestModelRuntime(unittest.TestCase):
         self.assertEqual(run["keys"], [])
         self.assertEqual(run["payload"], {})
 
+    def test_failed_upstream_yields_error_status_for_frontend_recovery(self):
+        """When the upstream model returns a non-200 status, the agent run
+        should become 'failed' so the frontend can trigger rollback."""
+        run = server_mod._create_model_runtime_run(
+            "session-error",
+            {"model": "test-model", "messages": [{"role": "user", "content": "crash"}]},
+            "http://127.0.0.1:1",  # unreachable — triggers connection error
+            ["test-key"],
+        )
+        self._wait_for_terminal(run, timeout=8)
+        self.assertEqual(run["status"], "failed")
+        self.assertIn("error", run)
+        self.assertTrue(run["error"], "error should contain failure reason")
+
 
 if __name__ == "__main__":
     unittest.main()

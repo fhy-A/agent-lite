@@ -163,7 +163,7 @@ eval(source);
         ):
             self.assertIn(expected, APP_SOURCE)
         self.assertIn(
-            "Boolean(meta.serverManaged && !serverExecuting && !applied && !rejected)",
+            "Boolean(meta.serverManaged && !serverExecuting && !applied && !rejected",
             DIFF_SOURCE,
         )
         self.assertIn("executionOwner: executionOwnerForPermissionProfile(permissionProfile)", APP_SOURCE)
@@ -1769,6 +1769,23 @@ process.stdout.write(JSON.stringify({
         self.assertIn("--composer-safe-bottom", STYLE_SOURCE)
         self.assertIn("function syncComposerSafeArea()", APP_SOURCE)
         self.assertIn("new ResizeObserver(syncComposerSafeArea)", APP_SOURCE)
+
+    def test_error_recovery_rolls_back_to_healthy_snapshot(self):
+        """After a model API error, messages are rolled back to pre-run state."""
+        self.assertIn("const snapshotIndex = ctx.messages.length", APP_SOURCE)
+        self.assertIn("if (!isAbort)", APP_SOURCE)
+        self.assertIn("ctx.messages.length = snapshotIndex", APP_SOURCE)
+        self.assertIn('delete msg.streaming', APP_SOURCE)
+        self.assertIn("delete msg._streamProjection", APP_SOURCE)
+        self.assertIn('kind: "error-recovery"', APP_SOURCE)
+        self.assertIn("errorRecoveryHint", APP_SOURCE)
+        self.assertIn("errorRecoveryHint", I18N_SOURCE)
+
+    def test_error_recovery_preserves_user_message_on_rollback(self):
+        """Rollback restores user message content and keeps it at snapshot-1."""
+        self.assertIn("userMsg.content = originalUserContent", APP_SOURCE)
+        self.assertIn("const originalUserContent = messageContent", APP_SOURCE)
+        self.assertIn('userMsg.role === "user"', APP_SOURCE)
 
 
 if __name__ == "__main__":

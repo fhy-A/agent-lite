@@ -127,7 +127,20 @@
       const diffText = normalizeDiffText(content);
       if (/^\(no changes\)$/i.test(diffText.trim())) return "";
       const isDiff = /(^|\n)(--- |\+\+\+ |@@ )/.test(diffText);
-      const body = isDiff ? renderDiff(diffText) : `<div class="tool-edit-markdown">${renderMarkdown(content)}</div>`;
+      const isWriteFile = action === "write_file";
+      let body;
+      if (isDiff) {
+        body = renderDiff(diffText);
+      } else if (isWriteFile) {
+        const ext = (target || "").split(".").pop().toLowerCase() || "";
+        const lines = content.split("\n");
+        const lineCount = lines.length;
+        const isLong = lineCount > 40;
+        const lineHtml = lines.map((line, i) => `<span class="diff-line diff-add"><span class="diff-gutter">+</span><span class="diff-num">${i + 1}</span><span class="diff-code">${highlightSyntax(line, ext)}</span></span>`).join("");
+        body = `<div class="code-block write-file-preview${isLong ? " is-collapsed" : ""}"><div class="diff-lines">${lineHtml}</div>${isLong ? `<button class="diff-expand-btn" type="button" aria-expanded="false">展开全部 ${lineCount} 行</button>` : ""}</div>`;
+      } else {
+        body = `<div class="tool-edit-markdown">${renderMarkdown(content)}</div>`;
+      }
       const stats = isDiff ? getDiffStats(diffText) : { additions: 0, removals: 0 };
       const canReject = permissionProfile !== "bypass";
       const effectiveApplied = applied || autoApplied;
@@ -153,8 +166,8 @@
                 <span class="tool-edit-title">${action === "write_file" ? t("fileWriteProposal") : t("editProposal")}</span>
               </div>
               <div class="tool-edit-summary">
-                ${isDiff ? `<span class="diff-stat diff-stat-add">+${stats.additions}</span><span class="diff-stat diff-stat-remove">−${stats.removals}</span>` : ""}
-                ${isDiff ? renderCopyButton(diffText) : ""}
+                ${isDiff ? `<span class="diff-stat diff-stat-add">+${stats.additions}</span><span class="diff-stat diff-stat-remove">−${stats.removals}</span>` : (isWriteFile ? `<span class="diff-stat diff-stat-add">+${stats.additions || content.split("\n").length} lines</span>` : "")}
+                ${isDiff || isWriteFile ? renderCopyButton(content) : ""}
                 <span class="tool-edit-status ${statusClass}">${escapeHtml(status)}</span>
               </div>
             </div>

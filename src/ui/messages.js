@@ -204,10 +204,19 @@
       const streamAttrs = streamingItem
         ? ` data-msg-index="${streamingItem.index}" data-streaming-message="true" data-stream-session="${escapeHtml(getSessionId() || "")}" data-stream-kind="thinking"`
         : "";
+      const MAX_SUMMARY_LEN = 500;
       return `
         <article class="msg assistant thinking-process${streamingItem ? " is-streaming" : ""}" data-thinking-block="${serial}"${streamAttrs}>
           <div class="thinking-summary-list">
-            ${summaries.map((item) => `<div class="thinking-summary-item${item.streaming ? " is-streaming" : ""}"${item.streaming ? ' data-stream-part="summary"' : ""}>${item.text ? renderMarkdown(item.text) : ""}</div>`).join("")}
+            ${summaries.map((item) => {
+              const text = item.text || "";
+              const isLong = text.length > MAX_SUMMARY_LEN && !item.streaming;
+              if (isLong) {
+                const preview = text.slice(0, MAX_SUMMARY_LEN) + "…";
+                return `<details class="thinking-summary-item thinking-summary-fold"><summary>${renderMarkdown(preview)}<span class="thinking-expand-hint">（点击展开全部 ${text.length} 字）</span></summary><div class="thinking-summary-full">${renderMarkdown(text)}</div></details>`;
+              }
+              return `<div class="thinking-summary-item${item.streaming ? " is-streaming" : ""}"${item.streaming ? ' data-stream-part="summary"' : ""}>${item.text ? renderMarkdown(text) : ""}</div>`;
+            }).join("")}
           </div>
         </article>
       `;

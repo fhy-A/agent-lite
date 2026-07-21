@@ -5623,6 +5623,39 @@ body.theme-dark .chat-pane.empty-chat .composer {
   min-height: 1em;
 }
 
+/* Fold long thinking summaries */
+.thinking-summary-fold {
+  cursor: pointer;
+}
+.thinking-summary-fold > summary {
+  list-style: none;
+  display: block;
+}
+.thinking-summary-fold > summary::-webkit-details-marker { display: none; }
+.thinking-summary-fold > summary::marker { display: none; content: none; }
+.thinking-expand-hint {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  margin-left: 4px;
+}
+.thinking-summary-full {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+/* Write-file preview (code block in edit cards) */
+.write-file-preview .diff-lines .diff-code {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.write-file-preview.is-collapsed .diff-lines {
+  max-height: 420px;
+  overflow: hidden;
+}
+.write-file-preview.is-expanded .diff-lines { max-height: none; }
+
 .streaming-answer-output > :first-child {
   margin-top: 0;
 }

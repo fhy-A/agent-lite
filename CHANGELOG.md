@@ -29,6 +29,27 @@
 
 **涉及文件**：`app.js`、`index.html`、`styles.css`、`src/core/i18n.js`、`src/features/skills-memory.js`、`src/ui/diff.js`、`src/ui/markdown.js`、`data/skills/`（4 个新增 + 4 个修正 + 3 个移除）、`tests/test_new_skills_routing.py`、`CHANGELOG.md`、`TODO.md`
 
+### code：文件写入 UI 修复 + i18n 收口 + 安装教程 + npm 配置
+
+- **write_file 预览修复**：新文件内容不再整篇渲染为格式化 Markdown，改为语法高亮代码块 + 行号（绿色 `+` 标记），超过 40 行自动折叠，展开按钮支持 `.write-file-preview` 选择器。
+- **思考块长文本折叠**：超过 500 字的非流式思考总结用 `<details>` 包裹，避免长说明文字撑满思考块。
+- **i18n 收口**：`LANG` 从 34 键瘦身到 12 键（移除 22 个被 `I18N` 覆盖的死键）；`I18N` 移除 6 个零引用的 `*Label` 冗余键（`inputLabel`/`outputLabel`/`cacheLabel`/`contextLabel`/`userLabel`/`agentLabel`）。服务端 `srv*` 错误键统一前缀 CamelCase，当前中文→key 映射方案可用但建议后续 server 直返 i18n key。
+- **Claude Code 安装教程**：新增 `docs/claude-code-install-guide.md`（面向零基础用户），含作用域 registry 永久配置、PATH 修复、常见错误速查表。
+- **npm 作用域 registry 配置**：`~/.npmrc` 新增 `@anthropic-ai:registry = https://registry.npmjs.org/`，Claude Code 自动更新不再受腾讯云镜像影响。
+- **测试**：578 passed, 206 subtests passed。
+
+**涉及文件**：`src/ui/diff.js`、`src/ui/messages.js`、`styles.css`、`app.js`、`src/core/i18n.js`、`docs/claude-code-install-guide.md`、`tests/test_frontend_modules.py`、`TODO.md`、`CHANGELOG.md`
+
+### code：会话错误自动恢复
+
+- **错误自动回滚**：`sendMessage` 记录本轮用户消息位置作为健康快照。模型 API 错误时（非 AbortError），自动回退到快照点：恢复原始用户消息、移除失败轮新增的 assistant/tool-call/tool-result、清理残留 `streaming`/`_streamProjection` 标记。
+- **恢复提示**：回滚后追加一条 assistant 消息告知用户错误原因，并提示可修改提问重试或使用 `/branch` 创建分支。
+- **i18n**：新增 `errorRecoveryHint` 键（中/英）。
+- **根因分析**：错误轮的消息被持久化后反复重放 → API 持续返回相同错误。回滚打破了这个循环。
+- **测试**：313 passed, 19 subtests passed。
+
+**涉及文件**：`app.js`、`src/core/i18n.js`、`TODO.md`、`CHANGELOG.md`
+
 ---
 
 ## 2026-07-21 · Claude Code

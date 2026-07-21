@@ -2278,7 +2278,7 @@ function bindCopyButtons() {
 
   document.querySelectorAll(".diff-expand-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const block = btn.closest(".diff-block");
+      const block = btn.closest(".diff-block") || btn.closest(".write-file-preview");
       if (!block) return;
       const expanded = block.classList.toggle("is-expanded");
       block.classList.toggle("is-collapsed", !expanded);
@@ -8872,6 +8872,9 @@ async function sendMessage(userText) {
   run.taskStartTime = submittedAt;
   ctx.taskStartedAt = submittedAt;
   ctx.messages.push({ role: "user", content: messageContent, _images: imageRefs.length > 0 ? imageRefs : undefined, _model: ctx.model || getSelectedModel(), _time: new Date(submittedAt).toISOString() });
+  // Snapshot the healthy message count so we can rollback on failure
+  const snapshotIndex = ctx.messages.length;
+  const originalUserContent = messageContent;
   setSessionMessages(sessionId, ctx.messages);
 
   state.attachedImages = [];
@@ -8935,7 +8938,36 @@ async function sendMessage(userText) {
   }
 
   if (loopError) {
-    const status = loopError?.name === "AbortError" ? "paused" : "failed";
+    const isAbort = loopError?.name === "AbortError";
+    const status = isAbort ? "paused" : "failed";
+    // For non-abort errors, rollback to healthy state so the conversation
+    // isn't stuck replaying the same broken context on every retry.
+    if (!isAbort) {
+      // Restore user message in case image retry modified it
+      const userMsg = ctx.messages[snapshotIndex - 1];
+      if (userMsg && userMsg.role === "user") {
+        userMsg.content = originalUserContent;
+      }
+      // Drop all messages from the failed run (assistant, tool-call, tool-result)
+      ctx.messages.length = snapshotIndex;
+      // Clean any streaming/partial markers on messages before the snapshot
+      for (const msg of ctx.messages) {
+        if (msg && msg.streaming) {
+          delete msg.streaming;
+          delete msg._streamProjection;
+        }
+      }
+      // Append a helpful error notification suggesting recovery options
+      const errMsg = loopError?.message || String(loopError);
+      ctx.messages.push({
+        role: "assistant",
+        content: `**${t("errorPrefix")}：${escapeHtml(errMsg)}**\n\n> ${t("errorRecoveryHint")}`,
+        meta: { kind: "error-recovery", _model: ctx.model || getSelectedModel() },
+        _time: new Date().toISOString(),
+      });
+      setSessionMessages(sessionId, ctx.messages);
+      renderSessionMessages(sessionId);
+    }
     await persistRunCheckpoint(ctx, status, "model", {
       lastError: loopError?.message || String(loopError),
     }).catch(() => {});

@@ -8,19 +8,15 @@
 
     zh: {
 
-      settings: "设置", models: "模型", memory: "记忆", skills: "Skills", system: "System Prompt", theme: "主题", language: "语言", update: "更新", account: "账户",
+      update: "更新", account: "账户",
 
-      baseUrl: "Base URL", apiKeys: "API Keys", refreshModels: "刷新", availableModels: "可用模型",
+      show: "显示", hide: "隐藏",
 
-      temperature: "温度", maxTokens: "最大输出", show: "显示", hide: "隐藏", save: "保存", cancel: "取消",
+      name: "名称", description: "描述", keywords: "关键词", body: "正文",
 
-      name: "名称", description: "描述", keywords: "关键词", tools: "工具", body: "正文",
-
-      addKey: "+ 添加 Key", confirmDelete: "确认", newMemory: "新建记忆", editing: "编辑中",
+      confirmDelete: "确认",
 
       enabled: "已启用", disabled: "已禁用", noMemory: "暂无记忆", noSkills: "暂无 Skill",
-
-      light: "亮", dark: "暗", followSystem: "系统",
 
       skillPath: "文件路径", skillExplicitOnly: "此 Skill 仅支持显式调用",
 
@@ -28,19 +24,15 @@
 
     en: {
 
-      settings: "Settings", models: "Models", memory: "Memory", skills: "Skills", system: "System Prompt", theme: "Theme", language: "Language", update: "Update", account: "Account",
+      update: "Update", account: "Account",
 
-      baseUrl: "Base URL", apiKeys: "API Keys", refreshModels: "Refresh", availableModels: "Models",
+      show: "Show", hide: "Hide",
 
-      temperature: "Temperature", maxTokens: "Max Tokens", show: "Show", hide: "Hide", save: "Save", cancel: "Cancel",
+      name: "Name", description: "Description", keywords: "Keywords", body: "Body",
 
-      name: "Name", description: "Description", keywords: "Keywords", tools: "Tools", body: "Body",
-
-      addKey: "+ Add Key", confirmDelete: "Confirm", newMemory: "New Memory", editing: "Editing",
+      confirmDelete: "Confirm",
 
       enabled: "Enabled", disabled: "Disabled", noMemory: "No memories", noSkills: "No skills",
-
-      light: "Light", dark: "Dark", followSystem: "System",
 
       skillPath: "File Path", skillExplicitOnly: "This skill requires explicit invocation via",
 
@@ -64,8 +56,7 @@
       appliedLabel: "已应用", rejectedLabel: "已拒绝",
       sessionInfo: "会话信息", messages: "消息", tokens: "Token",
       sessionName: "名称", created: "创建", active: "活跃", file: "文件",
-      totalLabel: "合计", userLabel: "用户", agentLabel: "Agent",
-      inputLabel: "输入", outputLabel: "输出", cacheLabel: "缓存", contextLabel: "上下文",
+      totalLabel: "合计",
       input: "输入", output: "输出", cache: "缓存", context: "上下文",
       user: "用户", agent: "Agent",
       previewBtn: "预览", noFileOpen: "未打开文件", selectFileToPreview: "选择文件以预览",
@@ -251,6 +242,7 @@
       questionnaireTextPlaceholder: "输入你的想法", questionnaireOtherPlaceholder: "其他想法或跳过原因（可选）",
       questionnaireAnswered: "已确认", questionCanceled: "已跳过", questionnaireSummary: "问卷结果",
       multiSelect: "多选",
+      errorRecoveryHint: "已自动回滚到上一次健康状态。你可以修改提问内容重试，或使用 /branch 从当前位置创建分支继续对话。",
     },
     en: {
       toolListFiles: "List Files", toolReadFile: "Read File", toolSearchFiles: "Search Files",
@@ -267,8 +259,7 @@
       appliedLabel: "Applied", rejectedLabel: "Rejected",
       sessionInfo: "Session Info", messages: "Messages", tokens: "Tokens",
       sessionName: "Name", created: "Created", active: "Active", file: "File",
-      totalLabel: "Total", userLabel: "User", agentLabel: "Agent",
-      inputLabel: "Input", outputLabel: "Output", cacheLabel: "Cache", contextLabel: "Context",
+      totalLabel: "Total",
       input: "Input", output: "Output", cache: "Cache", context: "Context",
       user: "User", agent: "Agent",
       previewBtn: "Preview", noFileOpen: "No file open", selectFileToPreview: "Select a file to preview",
@@ -454,6 +445,7 @@
       questionnaireTextPlaceholder: "Enter your answer", questionnaireOtherPlaceholder: "Other thoughts or reason for skipping (optional)",
       questionnaireAnswered: "Confirmed", questionCanceled: "Skipped", questionnaireSummary: "Questionnaire result",
       multiSelect: "Multiple choice",
+      errorRecoveryHint: "Automatically rolled back to the last healthy state. You can rephrase your request and try again, or use /branch to create a branch from here.",
     },
   };
   const MANAGED_ELEMENT_IDS = new Set([

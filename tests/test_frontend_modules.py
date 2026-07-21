@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 APP_SOURCE = (ROOT / "app.js").read_text(encoding="utf-8")
 RUNTIME_SOURCE = (ROOT / "agent-runtime.js").read_text(encoding="utf-8")
 I18N_SOURCE = (ROOT / "src" / "core" / "i18n.js").read_text(encoding="utf-8")
+PLATFORM_SOURCE = (ROOT / "src" / "core" / "platform.js").read_text(encoding="utf-8")
 API_CLIENT_SOURCE = (ROOT / "src" / "services" / "api-client.js").read_text(encoding="utf-8")
 SETTINGS_SOURCE = (ROOT / "src" / "features" / "settings.js").read_text(encoding="utf-8")
 DIFF_SOURCE = (ROOT / "src" / "ui" / "diff.js").read_text(encoding="utf-8")
@@ -272,6 +273,7 @@ eval(source);
             "src/core/icons.js",
             "src/core/utils.js",
             "src/core/i18n.js",
+            "src/core/platform.js",
             "src/services/notifications.js",
             "src/services/api-client.js",
             "src/ui/diff.js",
@@ -289,6 +291,7 @@ eval(source);
     def test_scripts_load_before_runtime_and_app(self):
         scripts = (
             "./src/core/namespace.js",
+            "./src/core/platform.js",
             "./src/core/icons.js",
             "./src/core/utils.js",
             "./src/core/i18n.js",
@@ -313,6 +316,60 @@ eval(source);
         source = (ROOT / "src/core/namespace.js").read_text(encoding="utf-8")
         for bucket in ("core", "services", "features", "agent", "ui"):
             self.assertIn(f'Code.{bucket} = Code.{bucket} || {{}}', source)
+
+    def test_platform_core_normalizes_and_parses_key_config(self):
+        self.assertIn('const WORKBAR_URL = "https://workbar.ai"', PLATFORM_SOURCE)
+        script = r"""
+const values = new Map([
+  ["code-key-config", JSON.stringify([
+    {name: "legacy", key: "sk-legacy", enabled: false},
+    {name: "remote", key: "sk-remote", enabled: true, source: "platform"},
+  ])],
+]);
+const storage = {
+  getItem: (key) => values.has(key) ? values.get(key) : null,
+  setItem: (key, value) => values.set(key, String(value)),
+};
+global.window = {localStorage: storage};
+require("./src/core/namespace.js");
+require("./src/core/platform.js");
+const platform = window.Code.core.platform;
+const loaded = platform.loadKeyConfig(storage);
+const parsed = platform.parseKeyText([
+  "primary: sk-primary",
+  "secondary sk-secondary",
+  "sk-plain",
+  "duplicate: sk-primary",
+  "remote: sk-remote",
+].join("\n"), loaded);
+const saved = platform.saveKeyConfig(parsed.entries, storage);
+process.stdout.write(JSON.stringify({
+  url: platform.WORKBAR_URL,
+  loaded,
+  parsed,
+  saved,
+  serialized: platform.serializeKeyEntries(saved),
+}));
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertEqual(data["url"], "https://workbar.ai")
+        self.assertEqual(data["loaded"][0]["source"], "manual")
+        self.assertFalse(data["loaded"][0]["enabled"])
+        self.assertEqual(data["loaded"][1]["source"], "platform")
+        self.assertEqual(data["parsed"]["duplicates"], ["duplicate"])
+        self.assertEqual([entry["key"] for entry in data["saved"]], [
+            "sk-primary", "sk-secondary", "sk-plain", "sk-remote",
+        ])
+        self.assertEqual(data["saved"][-1]["source"], "platform")
+        self.assertIn("primary: sk-primary", data["serialized"])
 
     def test_modules_export_through_code_core(self):
         icons = (ROOT / "src/core/icons.js").read_text(encoding="utf-8")
@@ -663,7 +720,6 @@ const storage = {
 const bodyClasses = new Set();
 const replaced = [];
 global.window = {
-  Code: {features: {}},
   localStorage: storage,
   URLSearchParams,
   location: {search: "?code_token=token-1&user_id=user-1&username=Alice", href: "http://127.0.0.1:3010/", replace: () => {}},
@@ -673,6 +729,8 @@ global.window = {
   setInterval,
   clearInterval,
 };
+require("./src/core/namespace.js");
+require("./src/core/platform.js");
 require("./src/features/settings.js");
 const {createSettingsFeature, loadKeyConfig} = window.Code.features.settings;
 const calls = [];
@@ -728,7 +786,7 @@ const feature = createSettingsFeature({
         data = json.loads(completed.stdout)
         self.assertEqual(data["bodyClasses"], ["theme-dark"])
         self.assertEqual(data["theme"], "dark")
-        self.assertEqual(data["keys"], [{"name": "primary", "key": "sk-1", "enabled": True}])
+        self.assertEqual(data["keys"], [{"name": "primary", "key": "sk-1", "enabled": True, "source": "manual"}])
         self.assertEqual(data["calls"], ["/api/check-update"])
         self.assertEqual(data["first"], data["second"])
         self.assertEqual(data["updateInfo"]["remoteVersion"], "0.6.0")

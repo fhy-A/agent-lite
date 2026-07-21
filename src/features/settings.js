@@ -3,6 +3,10 @@
 
   const Code = global.Code;
   if (!Code?.features) throw new Error("Code namespace must load before settings feature");
+  const platform = Code.core?.platform;
+  if (!platform) throw new Error("Platform core must load before settings feature");
+
+  const { WORKBAR_URL } = platform;
 
   const UPDATE_NOTICE_STORAGE_KEYS = Object.freeze({
     settings: "code-update-seen-settings",
@@ -10,11 +14,7 @@
   });
 
   function loadKeyConfig(storage = global.localStorage) {
-    try {
-      return JSON.parse(storage?.getItem("code-key-config") || "[]");
-    } catch {
-      return [];
-    }
+    return platform.loadKeyConfig(storage);
   }
 
   function createSettingsFeature(options = {}) {
@@ -44,40 +44,19 @@
     let bound = false;
 
     function saveKeyConfig(config) {
-      storage?.setItem("code-key-config", JSON.stringify(config));
+      return platform.saveKeyConfig(config, storage);
     }
 
-    function parseKeyLines(raw) {
+    function parseKeyLines(raw, notifyDuplicates = true) {
       if (!raw) return [];
       const config = loadKeyConfig(storage);
-      const lines = raw.split("\n").map((line) => line.trim()).filter(Boolean);
-      if (!lines.length) return [{ name: "", key: "", enabled: true }];
-      const seen = new Set();
-      const duplicates = [];
-      const result = [];
-      lines.forEach((line) => {
-        let index = line.indexOf(":");
-        if (index === -1) index = line.indexOf(" ");
-        const name = index > 0 ? line.slice(0, index).trim() : "";
-        const key = index > 0 ? line.slice(index + 1).trim() : line.trim();
-        if (seen.has(key)) {
-          duplicates.push(name || key);
-          return;
-        }
-        seen.add(key);
-        const existing = config.find((item) => item.key === key);
-        result.push({ name, key, enabled: existing ? existing.enabled !== false : true });
-      });
-      if (duplicates.length) showToast(t("ignoredDuplicateKeys", { count: duplicates.length }), "warning");
-      return result.length ? result : [{ name: "", key: "", enabled: true }];
+      const { entries, duplicates } = platform.parseKeyText(raw, config);
+      if (notifyDuplicates && duplicates.length) showToast(t("ignoredDuplicateKeys", { count: duplicates.length }), "warning");
+      return entries.length ? entries : [{ name: "", key: "", enabled: true, source: "manual" }];
     }
 
     function serializeKeys(entries) {
-      return entries.map((entry) => {
-        const key = (entry.key || "").trim();
-        const name = (entry.name || "").trim();
-        return name ? `${name}: ${key}` : key;
-      }).filter(Boolean).join("\n");
+      return platform.serializeKeyEntries(entries);
     }
 
     function eyeIcon() {
@@ -111,7 +90,7 @@
       if (!entries.length) entries.push({ name: "", key: "", enabled: true });
       return entries.map((entry, index) => {
         const isNew = newRow && index === entries.length - 1;
-        return `<div class="key-row ${entry.enabled === false && !isNew ? "disabled" : ""}" data-idx="${index}">
+        return `<div class="key-row ${entry.enabled === false && !isNew ? "disabled" : ""}" data-idx="${index}" data-source="${entry.source === "platform" ? "platform" : "manual"}">
           <span class="key-drag-handle" title="${t("dragSort")}" draggable="true">⠿</span>
           <input class="key-name-input" placeholder="${t("keyNamePlaceholder")}" value="${escapeHtml(entry.name)}" data-idx="${index}" />
           <div class="key-value-wrap"><input class="key-value-input" type="password" value="${escapeHtml(entry.key)}" data-idx="${index}" /></div>
@@ -126,7 +105,8 @@
         const name = row.querySelector(".key-name-input")?.value || "";
         const key = row.querySelector(".key-value-input")?.value || "";
         const enabled = row.querySelector(".key-enable input")?.checked !== false;
-        if (key.trim()) entries.push({ name: name.trim(), key: key.trim(), enabled });
+        const source = row.dataset.source === "platform" ? "platform" : "manual";
+        if (key.trim()) entries.push({ name: name.trim(), key: key.trim(), enabled, source });
       });
       return entries;
     }
@@ -243,12 +223,7 @@
         bulkSave.addEventListener("click", () => {
           const lines = bulkInput.value.split("\n").map((line) => line.trim()).filter(Boolean);
           if (!lines.length) return;
-          const additions = lines.map((line) => {
-            const space = line.indexOf(" ");
-            return space > 0
-              ? { name: line.slice(0, space).trim(), key: line.slice(space + 1).trim(), enabled: true }
-              : { name: "", key: line, enabled: true };
-          });
+          const additions = platform.parseKeyText(lines.join("\n")).entries.map((entry) => ({ ...entry, source: "manual" }));
           const keyList = byId("settingsKeyList");
           const merged = [...collectKeyEntries(keyList), ...additions];
           els.apiKey.value = serializeKeys(merged);
@@ -262,7 +237,7 @@
     }
 
     function getPlatformUrl() {
-      return storage?.getItem("code-platform-url") || "http://localhost:3001";
+      return WORKBAR_URL;
     }
 
     function getPlatformAuth() {
@@ -334,7 +309,6 @@
 
     function renderModelsPanel(container) {
       container.innerHTML = `<h3 style="margin:0 0 14px">${t("models")}</h3>
-        <label class="field"><span>${t("baseUrl")}</span><input id="settingsBaseUrl" value="${escapeHtml(els.baseUrl.value)}" placeholder="https://your-api-host.com" autocomplete="off" /></label>
         <label class="field"><span>${t("apiKeys")}</span>
           <div class="key-list" id="settingsKeyList">${renderKeyEditor(els.apiKey.value)}</div>
           <div id="settingsKeyAddArea"><button id="settingsKeyAddRow" class="key-add-btn" type="button">${t("addKey")}</button></div>
@@ -353,10 +327,6 @@
           return;
         }
         syncKeysFromPlatform();
-      });
-      byId("settingsBaseUrl")?.addEventListener("change", (event) => {
-        els.baseUrl.value = event.currentTarget.value;
-        saveLocalSettings();
       });
       byId("settingsRefreshModels")?.addEventListener("click", () => {
         els.refreshModelsBtn?.click();
@@ -473,9 +443,7 @@
       if (auth) {
         container.innerHTML = `<h3 style="margin:0 0 14px">${t("platformAccount")}</h3>
           <div class="account-card"><div class="account-avatar">${escapeHtml((auth.username || "U")[0].toUpperCase())}</div><div class="account-info"><div class="account-name">${escapeHtml(auth.username || "Unknown")}</div><div class="account-id">${t("accountUserId")}: ${escapeHtml(auth.userId || "")}</div></div></div>
-          <div class="field" style="margin-top:12px"><label>${t("platformUrl")}</label><input id="settingsPlatformUrl" class="field-input" type="text" placeholder="http://localhost:3001" value="${escapeHtml(getPlatformUrl())}" /></div>
           <div style="margin-top:12px"><button id="accountLogout" class="mini-btn" type="button">${t("logout")}</button></div>`;
-        byId("settingsPlatformUrl").addEventListener("change", (event) => storage?.setItem("code-platform-url", event.currentTarget.value.trim()));
         byId("accountLogout").addEventListener("click", () => {
           clearPlatformAuth();
           showToast(t("loggedOut"), "warning");
@@ -485,10 +453,8 @@
       }
       container.innerHTML = `<h3 style="margin:0 0 14px">${t("platformAccount")}</h3>
         <div class="muted-line" style="padding:16px;text-align:center"><p>${t("notLoggedIn")}</p>
-          <div class="field" style="margin-bottom:8px"><label>${t("platformUrl")}</label><input id="settingsPlatformUrl" class="field-input" type="text" placeholder="http://localhost:3001" value="${escapeHtml(getPlatformUrl())}" /></div>
           <button id="accountLoginNow" class="mini-btn primary" type="button" style="margin-top:8px">${t("loginPlatform")}</button>
         </div>`;
-      byId("settingsPlatformUrl").addEventListener("change", (event) => storage?.setItem("code-platform-url", event.currentTarget.value.trim()));
       byId("accountLoginNow").addEventListener("click", () => {
         global.open(`${getPlatformUrl()}/code/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
       });
@@ -891,6 +857,9 @@
       checkForUpdates,
       closeDropdown,
       loadKeyConfig: () => loadKeyConfig(storage),
+      parseKeyLines,
+      saveKeyConfig,
+      serializeKeys,
       openSettingsPage,
       shouldShowOnboarding,
       showOnboarding,
@@ -901,6 +870,7 @@
 
   Code.features.settings = Object.freeze({
     UPDATE_NOTICE_STORAGE_KEYS,
+    WORKBAR_URL,
     createSettingsFeature,
     loadKeyConfig,
   });

@@ -7,6 +7,13 @@ const {
   estimateTokens,
 } = window.Code.core.utils;
 const { createI18nRuntime } = window.Code.core.i18n;
+const {
+  WORKBAR_URL,
+  loadKeyConfig,
+  parseKeyText,
+  saveKeyConfig,
+  serializeKeyEntries,
+} = window.Code.core.platform;
 const { showToast, notify: _notify } = window.Code.services.notifications;
 const { apiJson } = window.Code.services.apiClient;
 const { createDiffFeature } = window.Code.ui.diff;
@@ -932,7 +939,6 @@ const {
   applyTheme,
   checkCodeCallback,
   checkForUpdates,
-  loadKeyConfig,
   shouldShowOnboarding,
   showOnboarding,
 } = settingsFeature;
@@ -1814,34 +1820,10 @@ function getFallbackKeys(model) {
 function getApiKeys() {
 
   const cfg = loadKeyConfig();
-
-  const raw = (els.apiKey.value || "").split("\n").map((k) => k.trim()).filter(Boolean);
-
-  // Parse name:key lines, extract key only. Fallback to config.
-
-  const keys = raw.map((line) => {
-
-    const idx = line.indexOf(":");
-
-    return idx > 0 ? line.slice(idx + 1).trim() : line.trim();
-
-  });
-
-  // Only return enabled keys (from config)
-
-  if (cfg.length > 0) {
-
-    return keys.filter((k) => {
-
-      const entry = cfg.find((c) => c.key === k);
-
-      return !entry || entry.enabled !== false;
-
-    });
-
-  }
-
-  return keys;
+  if (cfg.length > 0) return cfg.filter((entry) => entry.enabled !== false).map((entry) => entry.key);
+  return parseKeyText(els.apiKey.value).entries
+    .filter((entry) => entry.enabled !== false)
+    .map((entry) => entry.key);
 
 }
 
@@ -9066,10 +9048,12 @@ function setPermLevel(value) {
 
 
 function saveLocalSettings() {
-
-  localStorage.setItem("code-key", els.apiKey.value.trim());
-
-  localStorage.setItem("code-base-url", els.baseUrl.value.trim());
+  const keyConfig = saveKeyConfig(parseKeyText(els.apiKey.value, loadKeyConfig()).entries);
+  els.apiKey.value = serializeKeyEntries(keyConfig);
+  localStorage.setItem("code-key", els.apiKey.value);
+  els.baseUrl.value = WORKBAR_URL;
+  localStorage.removeItem("code-base-url");
+  localStorage.removeItem("code-platform-url");
 
   localStorage.setItem("code-model", getSelectedModel());
 
@@ -9986,9 +9970,17 @@ async function init() {
 
     }
 
-    els.apiKey.value = localStorage.getItem("code-key") || "";
+    const storedKeyConfig = loadKeyConfig();
+    if (storedKeyConfig.length > 0) {
+      els.apiKey.value = serializeKeyEntries(storedKeyConfig);
+    } else {
+      const migratedKeyConfig = saveKeyConfig(parseKeyText(localStorage.getItem("code-key") || "").entries);
+      els.apiKey.value = serializeKeyEntries(migratedKeyConfig);
+    }
 
-    els.baseUrl.value = localStorage.getItem("code-base-url") || "http://localhost:3000";
+    els.baseUrl.value = WORKBAR_URL;
+    localStorage.removeItem("code-base-url");
+    localStorage.removeItem("code-platform-url");
 
   els.temperature.value = localStorage.getItem("code-temperature") || "0.2";
 

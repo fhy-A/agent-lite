@@ -241,10 +241,7 @@
           <h2 data-i18n="models">Models</h2>
           <button id="closeSettings" class="icon-btn" type="button">×</button>
         </header>
-        <label class="field">
-          <span data-i18n="baseUrl">Base URL</span>
-          <input id="baseUrl" placeholder="https://your-api-host.com" autocomplete="off" />
-        </label>
+        <input id="baseUrl" type="hidden" value="https://workbar.ai" />
         <label class="field">
           <span data-i18n="apiKeysMultiline">API Key（一行一个，支持多个）</span>
           <textarea id="apiKey" class="api-key-textarea" placeholder="sk-your-key" spellcheck="false" rows="3"></textarea>
@@ -458,6 +455,7 @@
 
   <div id="toastContainer" class="toast-container"></div>
   <script src="./src/core/namespace.js"></script>
+  <script src="./src/core/platform.js"></script>
   <script src="./src/core/icons.js"></script>
   <script src="./src/core/utils.js"></script>
   <script src="./src/core/i18n.js"></script>

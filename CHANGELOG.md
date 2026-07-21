@@ -14,6 +14,20 @@
 
 ---
 
+## 2026-07-22 · Codex
+
+### 2026-07-22 04:26 Code：Workbar 登录与 Key 同步重构阶段 1
+
+- **固定服务地址**：新增 `src/core/platform.js` 作为 Workbar 集成的统一配置与 Key 数据契约；模型 Base URL 和平台登录地址固定为 `https://workbar.ai`，启动时清理旧的 `code-base-url`、`code-platform-url` 自定义值。
+- **移除地址配置 UI**：模型设置和账户面板不再展示 Base URL 或中转站地址输入框；旧设置弹窗仅保留隐藏的固定地址节点，以兼容现有请求链路。
+- **结构化 Key 配置**：`code-key-config` 成为 Key 配置主数据源，条目统一包含 `name`、`key`、`enabled`、`source`；旧条目自动迁移为 `source: "manual"`，平台来源可保留为 `source: "platform"`。
+- **输入格式兼容**：Key 解析统一支持 `名称: sk-xxx`、`名称 sk-xxx` 和纯 `sk-xxx`，并保持去重、启停状态和来源信息。
+- **验证**：`tests/test_frontend_modules.py` 37 项通过；排除会在 pytest 收集期主动 `sys.exit` 的独立路由脚本后，全量回归 582 项、206 个 subtests 通过；Node 语法检查与 `git diff --check` 通过。用户完成前端验收，确认模型/账户面板地址字段已隐藏且原有功能正常。
+
+**涉及文件**：`src/core/platform.js`、`src/features/settings.js`、`app.js`、`index.html`、`tests/test_frontend_modules.py`、`TODO.md`、`CHANGELOG.md`
+
+---
+
 ## 2026-07-21 · Claude Code
 
 ### code：Skill 移植（续）+ 斜杠命令系统 + 键盘快捷键 + bug 修复

@@ -16,6 +16,16 @@
 
 ## 2026-07-22 · Codex
 
+### 2026-07-22 04:35 Code：Workbar 登录与 Key 同步重构阶段 2
+
+- **强制登录门禁**：未保存平台授权时不再继续加载会话、项目上下文或模型功能，改为展示不可关闭的“连接到 Workbar”引导页；授权过期与平台暂时不可用使用不同提示和恢复动作。
+- **启动授权验证**：新增本地 `POST /api/code/auth/validate`，由 Code 服务端使用固定 Workbar 地址调用 `/api/user/self` 验证 access token 与 User ID，前端启动时自动验证并刷新真实用户名；网络故障不会误删仍可能有效的授权。
+- **OAuth 回调收口**：回调参数保存后立即清理地址栏，再通过服务端完成有效性确认；跨标签页完成授权时，原 Code 页面通过 storage 事件自动刷新。
+- **退出清理**：退出登录会同步清除平台授权、全部结构化 Key、旧 Key 文本、模型映射、模型列表和已选模型，并立即恢复登录门禁。
+- **验证**：授权有效、授权过期、账号不匹配、Workbar 不可用和固定请求地址均有自动化覆盖；定向回归 184 项、2 个 subtests 通过，Node/Python 语法检查与 `git diff --check` 通过。用户完成真实 Workbar 登录门禁与回调链路验收，结果正常。
+
+**涉及文件**：`server.py`、`src/features/settings.js`、`src/core/i18n.js`、`app.js`、`styles.css`、`tests/test_server.py`、`tests/test_frontend_modules.py`、`TODO.md`、`CHANGELOG.md`
+
 ### 2026-07-22 04:26 Code：Workbar 登录与 Key 同步重构阶段 1
 
 - **固定服务地址**：新增 `src/core/platform.js` 作为 Workbar 集成的统一配置与 Key 数据契约；模型 Base URL 和平台登录地址固定为 `https://workbar.ai`，启动时清理旧的 `code-base-url`、`code-platform-url` 自定义值。

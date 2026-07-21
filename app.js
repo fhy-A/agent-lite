@@ -933,16 +933,31 @@ const settingsFeature = createSettingsFeature({
   renderMemoryPanel,
   renderSkillsInSettings,
   getDefaultSystemPrompt: () => defaultSystemPrompt,
+  onPlatformLogout: clearPlatformLocalData,
   trashIcon,
 });
 const {
   applyTheme,
-  checkCodeCallback,
   checkForUpdates,
+  initializePlatformAuth,
   shouldShowOnboarding,
   showOnboarding,
 } = settingsFeature;
 settingsFeature.bind();
+
+function clearPlatformLocalData() {
+  saveKeyConfig([]);
+  localStorage.removeItem("code-key");
+  localStorage.removeItem("code-model");
+  els.apiKey.value = "";
+  els.baseUrl.value = WORKBAR_URL;
+  state.modelKeyMap = {};
+  els.modelListBox.innerHTML = "";
+  els.modelPillDropdown.innerHTML = "";
+  document.getElementById("settingsModelList")?.replaceChildren();
+  setSelectedModel("");
+  updateSendButtonState();
+}
 
 const previewFeature = createPreviewFeature({
   state,
@@ -10010,6 +10025,12 @@ async function init() {
 
   renderMessages();
 
+  const platformReady = await initializePlatformAuth();
+  if (!platformReady) {
+    updateSendButtonState();
+    return;
+  }
+
   // Always load config — server defaults to user home when no project is set
   await loadConfig().catch((err) => {
     els.fileTree.innerHTML = `<div class="muted-line" style="padding:8px;">${escapeHtml(err.message)}</div>`;
@@ -10030,9 +10051,6 @@ async function init() {
 
   // Show onboarding if first launch or version changed
   if (shouldShowOnboarding()) { showOnboarding(); }
-
-  // Check for Code callback from New API
-  checkCodeCallback();
 
   await refreshSessions();
 

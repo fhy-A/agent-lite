@@ -40,6 +40,7 @@ MEMORY_INDEX_PATH = MEMORY_DIR / "MEMORY.md"
 SKILLS_DIR = DATA_DIR / "skills"
 CONFIG_PATH = DATA_DIR / "config.json"
 NEW_API_BASE_URL = os.environ.get("NEW_API_BASE_URL", "").rstrip("/")
+WORKBAR_URL = "https://workbar.ai"
 PORT = int(os.environ.get("CODE_PORT", "3010"))
 _active_downloads = {}   # downloadId -> {progress, done, error, path, total}
 _tray_thread_ref = None  # tray daemon thread reference
@@ -6424,6 +6425,9 @@ class CodeHandler(BaseHTTPRequestHandler):
             if self.path == "/api/code/sync-keys":
                 self._handle_sync_keys()
                 return
+            if self.path == "/api/code/auth/validate":
+                self._handle_validate_code_auth()
+                return
         except Exception as exc:
             self.send_json({"error": str(exc)}, 400)
             return
@@ -7369,6 +7373,46 @@ class CodeHandler(BaseHTTPRequestHandler):
             self.send_json({"tokens": tokens, "keys": full_keys})
         except Exception as e:
             self.send_json({"error": "Failed to sync keys: " + str(e)}, 502)
+
+    def _handle_validate_code_auth(self):
+        body = self.read_body_json()
+        token = str(body.get("token") or "").strip()
+        user_id = str(body.get("userId") or "").strip()
+        if not token or not user_id:
+            self.send_json({"error": "Missing platform authorization"}, 400)
+            return
+
+        headers = {
+            "Authorization": token,
+            "New-Api-User": user_id,
+            "Accept": "application/json",
+        }
+        upstream = request.Request(WORKBAR_URL + "/api/user/self", headers=headers)
+        try:
+            with request.urlopen(upstream, timeout=10) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            status = 401 if exc.code in {401, 403} else 502
+            self.send_json({"error": "Platform authorization is invalid" if status == 401 else "Workbar is unavailable"}, status)
+            return
+        except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
+            self.send_json({"error": "Workbar is unavailable"}, 502)
+            return
+
+        if payload.get("success") is False or not isinstance(payload.get("data"), dict):
+            self.send_json({"error": "Platform authorization is invalid"}, 401)
+            return
+        account = payload["data"]
+        if str(account.get("id") or "") != user_id:
+            self.send_json({"error": "Platform account does not match authorization"}, 401)
+            return
+        self.send_json({
+            "valid": True,
+            "account": {
+                "userId": user_id,
+                "username": str(account.get("username") or ""),
+            },
+        })
 
     def log_message(self, fmt, *args):
         print("%s - %s" % (self.address_string(), fmt % args))

@@ -32,6 +32,7 @@
     const renderMemoryPanel = options.renderMemoryPanel || (() => {});
     const renderSkillsInSettings = options.renderSkillsInSettings || (() => {});
     const getDefaultSystemPrompt = options.getDefaultSystemPrompt || (() => "");
+    const onPlatformLogout = options.onPlatformLogout || (() => {});
     const trashIcon = options.trashIcon || (() => "");
     const documentRef = options.document || global.document;
     const storage = options.storage || global.localStorage;
@@ -256,6 +257,79 @@
       storage?.removeItem("code-platform-auth");
     }
 
+    function openPlatformLogin() {
+      global.open(`${WORKBAR_URL}/code/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
+    }
+
+    function showPlatformAuthGate(reason = "missing") {
+      byId("platformAuthGate")?.remove();
+      const validating = reason === "validating";
+      const unavailable = reason === "unavailable";
+      const expired = reason === "expired";
+      const overlay = documentRef.createElement("div");
+      overlay.id = "platformAuthGate";
+      overlay.className = "platform-auth-gate";
+      overlay.innerHTML = `<section class="platform-auth-card" role="dialog" aria-modal="true" aria-labelledby="platformAuthTitle">
+        <div class="platform-auth-brand"><span class="platform-auth-mark" aria-hidden="true">W</span><span>Workbar</span></div>
+        <h1 id="platformAuthTitle">${t("connectWorkbarTitle")}</h1>
+        <p>${expired ? t("workbarSessionExpired") : unavailable ? t("workbarUnavailable") : t("connectWorkbarDesc")}</p>
+        ${validating ? `<div class="platform-auth-progress"><span class="platform-auth-spinner" aria-hidden="true"></span>${t("validatingWorkbar")}</div>` : `<button id="platformAuthAction" class="platform-auth-action" type="button">${unavailable ? t("retryValidation") : t("connectWorkbarAction")}</button>`}
+        <small>${t("workbarAuthHint")}</small>
+      </section>`;
+      documentRef.body.appendChild(overlay);
+      byId("platformAuthAction")?.addEventListener("click", () => {
+        if (unavailable) global.location.reload();
+        else openPlatformLogin();
+      });
+    }
+
+    function hidePlatformAuthGate() {
+      byId("platformAuthGate")?.remove();
+    }
+
+    async function initializePlatformAuth() {
+      await checkCodeCallback();
+      const auth = getPlatformAuth();
+      if (!auth?.token || !auth?.userId) {
+        clearPlatformAuth();
+        showPlatformAuthGate("missing");
+        return false;
+      }
+      showPlatformAuthGate("validating");
+      try {
+        const response = await fetchFn("/api/code/auth/validate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: auth.token, userId: auth.userId }),
+        });
+        if (response.status === 401 || response.status === 403) {
+          clearPlatformAuth();
+          showPlatformAuthGate("expired");
+          return false;
+        }
+        if (!response.ok) {
+          showPlatformAuthGate("unavailable");
+          return false;
+        }
+        const data = await response.json();
+        if (!data.valid) {
+          clearPlatformAuth();
+          showPlatformAuthGate("expired");
+          return false;
+        }
+        savePlatformAuth({
+          token: auth.token,
+          userId: String(data.account?.userId || auth.userId),
+          username: data.account?.username || auth.username || "",
+        });
+        hidePlatformAuthGate();
+        return true;
+      } catch {
+        showPlatformAuthGate("unavailable");
+        return false;
+      }
+    }
+
     const themeEngine = Code.core?.theme;
     const DEFAULT_LIGHT = "codex";
     const DEFAULT_DARK = "codex";
@@ -446,8 +520,9 @@
           <div style="margin-top:12px"><button id="accountLogout" class="mini-btn" type="button">${t("logout")}</button></div>`;
         byId("accountLogout").addEventListener("click", () => {
           clearPlatformAuth();
+          onPlatformLogout();
           showToast(t("loggedOut"), "warning");
-          renderAccountPanel(container);
+          showPlatformAuthGate("missing");
         });
         return;
       }
@@ -456,7 +531,7 @@
           <button id="accountLoginNow" class="mini-btn primary" type="button" style="margin-top:8px">${t("loginPlatform")}</button>
         </div>`;
       byId("accountLoginNow").addEventListener("click", () => {
-        global.open(`${getPlatformUrl()}/code/connect?callback=${encodeURIComponent("http://127.0.0.1:3010/")}`, "_blank");
+        openPlatformLogin();
       });
     }
 
@@ -826,6 +901,9 @@
       documentRef.addEventListener("click", (event) => {
         if (!event.target.closest(".settings-dropdown")) closeDropdown();
       });
+      global.addEventListener?.("storage", (event) => {
+        if (event.key === "code-platform-auth" && event.newValue) global.location.reload();
+      });
       els.closeSettings?.addEventListener("click", () => showSettings(false));
       els.settingsModal?.addEventListener("click", (event) => {
         if (event.target === els.settingsModal) showSettings(false);
@@ -857,6 +935,7 @@
       checkForUpdates,
       closeDropdown,
       loadKeyConfig: () => loadKeyConfig(storage),
+      initializePlatformAuth,
       parseKeyLines,
       saveKeyConfig,
       serializeKeys,

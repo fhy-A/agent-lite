@@ -795,6 +795,91 @@ const feature = createSettingsFeature({
         self.assertEqual(data["replaced"], [[None, "", "/"]])
         self.assertEqual(data["toasts"], [["loggedInAs:Alice", "warning"]])
 
+    def test_settings_feature_validates_auth_and_blocks_expired_sessions(self):
+        script = r"""
+const values = new Map([["code-platform-auth", JSON.stringify({token: "access-1", userId: "7", username: "old"})]]);
+const storage = {
+  getItem: (key) => values.has(key) ? values.get(key) : null,
+  setItem: (key, value) => values.set(key, String(value)),
+  removeItem: (key) => values.delete(key),
+};
+const nodes = new Map();
+const documentStub = {
+  body: {appendChild: (node) => nodes.set(node.id, node)},
+  createElement: () => {
+    let id = "";
+    return {
+      innerHTML: "",
+      className: "",
+      set id(value) { id = value; },
+      get id() { return id; },
+      remove: () => nodes.delete(id),
+    };
+  },
+  getElementById: (id) => nodes.get(id) || null,
+  querySelectorAll: () => [],
+  addEventListener: () => {},
+};
+let mode = "valid";
+const calls = [];
+const fetchStub = async (url, options) => {
+  calls.push({url, body: JSON.parse(options.body)});
+  if (mode === "expired") return {status: 401, ok: false, json: async () => ({})};
+  return {status: 200, ok: true, json: async () => ({valid: true, account: {userId: "7", username: "alice"}})};
+};
+global.window = {
+  localStorage: storage,
+  URLSearchParams,
+  location: {search: "", reload: () => {}},
+  history: {replaceState: () => {}},
+  matchMedia: () => ({matches: false, addEventListener: () => {}}),
+  addEventListener: () => {},
+  open: () => {},
+  setTimeout,
+  setInterval,
+  clearInterval,
+};
+require("./src/core/namespace.js");
+require("./src/core/platform.js");
+require("./src/features/settings.js");
+const feature = window.Code.features.settings.createSettingsFeature({
+  elements: {},
+  t: (key) => key,
+  apiJson: async () => ({}),
+  document: documentStub,
+  storage,
+  fetch: fetchStub,
+});
+(async () => {
+  const valid = await feature.initializePlatformAuth();
+  const refreshedAuth = JSON.parse(values.get("code-platform-auth"));
+  const gateAfterValid = nodes.has("platformAuthGate");
+  mode = "expired";
+  const expired = await feature.initializePlatformAuth();
+  const expiredGate = nodes.get("platformAuthGate")?.innerHTML || "";
+  process.stdout.write(JSON.stringify({valid, expired, refreshedAuth, gateAfterValid, expiredGate, authExists: values.has("code-platform-auth"), calls}));
+})().catch((error) => { console.error(error); process.exit(1); });
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertTrue(data["valid"])
+        self.assertFalse(data["expired"])
+        self.assertEqual(data["refreshedAuth"]["username"], "alice")
+        self.assertFalse(data["gateAfterValid"])
+        self.assertIn("workbarSessionExpired", data["expiredGate"])
+        self.assertFalse(data["authExists"])
+        self.assertEqual(data["calls"], [
+            {"url": "/api/code/auth/validate", "body": {"token": "access-1", "userId": "7"}},
+            {"url": "/api/code/auth/validate", "body": {"token": "access-1", "userId": "7"}},
+        ])
+
     def test_markdown_ui_owns_highlighting_ansi_and_html_postprocessing(self):
         self.assertIn("Code.ui.markdown = Object.freeze", MARKDOWN_SOURCE)
         script = r"""

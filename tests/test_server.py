@@ -82,6 +82,55 @@ class TestUpdaterHelpers(unittest.TestCase):
         self.assertIn("global.location.replace(refreshed.toString())", settings_js)
 
 
+class TestWorkbarAuthentication(unittest.TestCase):
+    def make_handler(self, body):
+        handler = object.__new__(server.CodeHandler)
+        handler.read_body_json = mock.Mock(return_value=body)
+        handler.send_json = mock.Mock()
+        return handler
+
+    def test_validate_code_auth_uses_fixed_workbar_endpoint(self):
+        handler = self.make_handler({"token": "test-access-token", "userId": "42"})
+        response = mock.MagicMock()
+        response.read.return_value = json.dumps({
+            "success": True,
+            "data": {"id": 42, "username": "alice", "quota": 123},
+        }).encode("utf-8")
+        response.__enter__.return_value = response
+
+        with mock.patch.object(server.request, "urlopen", return_value=response) as urlopen:
+            handler._handle_validate_code_auth()
+
+        upstream = urlopen.call_args.args[0]
+        self.assertEqual(upstream.full_url, "https://workbar.ai/api/user/self")
+        self.assertEqual(upstream.get_header("Authorization"), "test-access-token")
+        self.assertEqual(upstream.get_header("New-api-user"), "42")
+        handler.send_json.assert_called_once_with({
+            "valid": True,
+            "account": {"userId": "42", "username": "alice"},
+        })
+
+    def test_validate_code_auth_rejects_invalid_or_mismatched_account(self):
+        for payload in (
+            {"success": False, "message": "invalid"},
+            {"success": True, "data": {"id": 99, "username": "other"}},
+        ):
+            with self.subTest(payload=payload):
+                handler = self.make_handler({"token": "test-access-token", "userId": "42"})
+                response = mock.MagicMock()
+                response.read.return_value = json.dumps(payload).encode("utf-8")
+                response.__enter__.return_value = response
+                with mock.patch.object(server.request, "urlopen", return_value=response):
+                    handler._handle_validate_code_auth()
+                self.assertEqual(handler.send_json.call_args.args[1], 401)
+
+    def test_validate_code_auth_keeps_outage_separate_from_expiry(self):
+        handler = self.make_handler({"token": "test-access-token", "userId": "42"})
+        with mock.patch.object(server.request, "urlopen", side_effect=server.error.URLError("offline")):
+            handler._handle_validate_code_auth()
+        handler.send_json.assert_called_once_with({"error": "Workbar is unavailable"}, 502)
+
+
 class TestSanitizeFilename(unittest.TestCase):
     def test_normal_name(self):
         self.assertEqual(server.sanitize_filename("hello.txt"), "hello.txt")

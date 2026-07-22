@@ -8155,10 +8155,13 @@ class CodeHandler(BaseHTTPRequestHandler):
         if new_exe.parent != target_dir or new_exe.name.lower() != "code.exe":
             self.send_json({"error": "Update executable must be Code.exe inside the .code directory"}, 400)
             return
-        if new_exe == current_exe:
-            self.send_json({"error": "Downloaded version is already running"}, 400)
+        # With the fixed Code.exe name the new executable has the same path as
+        # the current one.  The actual update payload lives in Code.exe.part.
+        partial_exe = target_dir / "Code.exe.part"
+        if not partial_exe.exists():
+            self.send_json({"error": "No pending update found — download first"}, 400)
             return
-        if not _is_valid_windows_executable(new_exe):
+        if not _is_valid_windows_executable(partial_exe):
             self.send_json({"error": "Update file not found or invalid"}, 400)
             return
         log_path = DATA_DIR / "update.log"

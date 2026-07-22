@@ -1580,6 +1580,47 @@ process.stdout.write(JSON.stringify({staleBrowserValueCleared, keyUpdated, edito
         self.assertIn('loadingMemories: "正在加载记忆…"', I18N_SOURCE)
         self.assertIn('loadingMemories: "Loading memories…"', I18N_SOURCE)
 
+    def test_skill_dependency_preflight_is_lazy_cached_and_visible_in_settings(self):
+        render_start = SKILLS_MEMORY_SOURCE.index("function renderSkillsInSettings(container)")
+        sidebar_start = SKILLS_MEMORY_SOURCE.index("function renderSettingsSkillsSidebar", render_start)
+        render_source = SKILLS_MEMORY_SOURCE[render_start:sidebar_start]
+        load_start = render_source.index("async function loadSkillDependencyStatus")
+        load_source = render_source[load_start:]
+
+        self.assertIn('id="settingsSkillDependencyOverview"', render_source)
+        self.assertIn('id="settingsSkillDependencyRefresh"', render_source)
+        self.assertIn('apiJson("/api/skills/dependencies")', load_source)
+        self.assertIn("if (skillDependencySnapshot && !force) return skillDependencySnapshot", load_source)
+        self.assertIn("if (!skillDependencySnapshot && !skillDependencyLoading) loadSkillDependencyStatus()", render_source)
+        self.assertNotIn("/api/skills/dependencies", SKILLS_MEMORY_SOURCE[:render_start])
+
+        detail_start = SKILLS_MEMORY_SOURCE.index("async function showSkillDetailInSettings", sidebar_start)
+        detail_end = SKILLS_MEMORY_SOURCE.index("function bind()", detail_start)
+        detail_source = SKILLS_MEMORY_SOURCE[detail_start:detail_end]
+        self.assertIn("renderSkillDependencySection(skill.name)", detail_source)
+        self.assertIn("skill-dependency-sidebar-status", SKILLS_MEMORY_SOURCE)
+
+        for key in (
+            "skillDependencyTitle",
+            "skillDependencyCheck",
+            "skillDependencyChecking",
+            "skillDependencySummary",
+            "skillDependencyProbeFailed",
+            "skillDependencyReady",
+            "skillDependencyPartial",
+            "skillDependencyUnavailable",
+        ):
+            self.assertEqual(I18N_SOURCE.count(f"{key}:"), 2)
+
+        for selector in (
+            ".skill-dependency-overview",
+            ".skill-dependency-sidebar-status",
+            ".skill-dependency-card",
+            ".skill-capability-row",
+            ".skill-dependency-chip.is-missing.is-optional",
+        ):
+            self.assertIn(selector, STYLE_SOURCE)
+
     def test_theme_picker_separates_mode_from_the_resolved_variant_list(self):
         start = SETTINGS_SOURCE.index("function renderThemePanel(container)")
         end = SETTINGS_SOURCE.index("function renderAccountPanel", start)

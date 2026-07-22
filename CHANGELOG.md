@@ -16,6 +16,15 @@
 
 ## 2026-07-22 · Codex
 
+### 2026-07-22 20:14 Code：Skill 依赖管理阶段 2——设置页状态可视化
+
+- **按需检查与缓存**：Skills 设置页在首次打开时才请求依赖预检，不增加应用启动负担；结果在当前页面生命周期内复用，并提供“重新检查”按钮显式刷新本机状态。
+- **分层状态展示**：设置页顶部汇总已声明、可用、部分可用和不可用数量；左侧 Skill 列表以绿、黄、红状态点快速提示，详情页按能力展示可用性、必需/可选依赖、已检测版本和缺失项，不提供安装入口，也不会在检查时修改本机环境。
+- **环境口径明确**：状态以实际运行中的 Code 进程为准。开发终端可从 Codex 附带 PATH 发现 `pdftoppm`，而重启后的 Code 进程未发现该命令，因此真实界面显示 10 个声明中 4 个可用、4 个部分可用、2 个不可用；该差异将由后续隔离运行时收口。
+- **国际化与验证**：能力名称、状态、摘要、错误及操作完成中英文覆盖；JavaScript 语法检查与 `git diff --check` 通过，依赖接口、内置清单、路由和前端定向回归 133 项、190 个 subtests 通过。用户重启 Code 后完成人工验收，确认红、黄状态点显示正常。
+
+**涉及文件**：`src/features/skills-memory.js`、`src/core/i18n.js`、`styles.css`、`tests/test_frontend_modules.py`、`TODO.md`、`CHANGELOG.md`
+
 ### 2026-07-22 19:57 Code：Skill 依赖管理阶段 1——声明与只读预检
 
 - **机器可读依赖契约**：新增版本化 `dependencies.json` 格式，以能力为单位声明必需/可选的 Python 包、Node 包和系统命令；首批覆盖 `docx`、`pptx`、`xlsx`、`pdf`、`mcp-builder`、`office-files`、`document-design`、`image-generation`、`hyperframes` 与 `web-artifacts-builder` 10 个内置 Skill。

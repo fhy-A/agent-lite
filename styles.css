@@ -4683,11 +4683,87 @@ body.theme-dark .syn-fn { color: #61afef; }
 }
 
 /* Skills inside settings page */
+.skills-panel-heading {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 0 0 4px;
+}
+.skills-panel-heading h3 { margin: 0; }
+.skill-dependency-refresh { flex-shrink: 0; }
+.skill-dependency-refresh:disabled { opacity: .55; cursor: wait; }
+.skill-dependency-overview {
+  min-height: 22px; margin: 0 0 8px;
+  color: var(--faint); font-size: 12px; line-height: 1.5;
+}
+.skill-dependency-overview.is-loading { color: var(--muted); }
+.skill-dependency-overview.is-ready { color: var(--muted); }
+.skill-dependency-overview.is-error { color: var(--red); }
 .skills-layout-inner { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 0; height: 560px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .skills-sidebar-inner { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
 .skills-sidebar-inner .skill-list-scroll { flex: 1; overflow-y: auto; min-height: 0; }
 .skills-sidebar-inner > button { flex-shrink: 0; }
 .skills-detail-inner { padding: 16px; overflow: auto; background: var(--panel-3); }
+.skill-list-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.skill-dependency-sidebar-status {
+  width: 8px; height: 8px; margin-left: auto; flex: 0 0 auto;
+  border: 2px solid currentColor; border-radius: 50%;
+  background: transparent;
+}
+.skill-dependency-sidebar-status.is-ready { color: var(--green); background: var(--green); }
+.skill-dependency-sidebar-status.is-partial { color: var(--yellow); }
+.skill-dependency-sidebar-status.is-unavailable { color: var(--red); }
+.skill-dependency-card {
+  margin: 0 0 14px; padding: 12px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-2) 45%, var(--panel-3));
+}
+.skill-dependency-card-head,
+.skill-capability-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.skill-dependency-card-head { margin-bottom: 8px; }
+.skill-dependency-card-head .skill-detail-label { margin: 0; }
+.skill-dependency-status,
+.skill-capability-status {
+  flex: 0 0 auto; padding: 2px 7px;
+  border: 1px solid var(--line); border-radius: 999px;
+  font-size: 10px; font-weight: 700; line-height: 1.4;
+}
+.skill-dependency-status.is-ready,
+.skill-capability-status.is-ready {
+  color: var(--green); border-color: color-mix(in srgb, var(--green) 32%, var(--line));
+  background: color-mix(in srgb, var(--green-bg) 70%, transparent);
+}
+.skill-dependency-status.is-partial {
+  color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 32%, var(--line));
+  background: color-mix(in srgb, var(--yellow) 9%, transparent);
+}
+.skill-dependency-status.is-unavailable,
+.skill-capability-status.is-unavailable {
+  color: var(--red); border-color: color-mix(in srgb, var(--red) 32%, var(--line));
+  background: color-mix(in srgb, var(--red-bg) 70%, transparent);
+}
+.skill-capability-list { display: grid; gap: 7px; }
+.skill-capability-row {
+  padding-top: 7px; border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+}
+.skill-capability-name { color: var(--text); font-size: 12px; font-weight: 650; }
+.skill-dependency-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.skill-dependency-chip {
+  display: inline-flex; align-items: baseline; gap: 2px; max-width: 100%;
+  padding: 2px 6px; border: 1px solid var(--line); border-radius: 5px;
+  color: var(--muted); background: var(--panel); font-size: 10px; line-height: 1.45;
+}
+.skill-dependency-chip.is-ready { border-color: color-mix(in srgb, var(--green) 24%, var(--line)); }
+.skill-dependency-chip.is-missing {
+  color: var(--red); border-color: color-mix(in srgb, var(--red) 32%, var(--line));
+  background: color-mix(in srgb, var(--red-bg) 55%, var(--panel));
+}
+.skill-dependency-chip.is-missing.is-optional {
+  color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 32%, var(--line));
+  background: color-mix(in srgb, var(--yellow) 8%, var(--panel));
+}
+.skill-dependency-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-dependency-chip-version { color: var(--faint); white-space: nowrap; }
 
 /* ── Unified Settings Page ── */
 .settings-page-card {

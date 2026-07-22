@@ -11,6 +11,30 @@
     "writing-plans",
   ]);
   const EXPLICIT_ONLY_SET = new Set(EXPLICIT_ONLY_SKILLS);
+  const DEPENDENCY_CAPABILITY_KEYS = Object.freeze({
+    "advanced-cli": "skillDepCapAdvancedCli",
+    author: "skillDepCapAuthor",
+    bundle: "skillDepCapBundle",
+    charts: "skillDepCapCharts",
+    create: "skillDepCapCreate",
+    "create-edit": "skillDepCapCreateEdit",
+    excel: "skillDepCapExcel",
+    "extract-tables": "skillDepCapExtractTables",
+    "image-editing": "skillDepCapImageEditing",
+    image: "skillDepCapImage",
+    inspect: "skillDepCapInspect",
+    "node-server": "skillDepCapNodeServer",
+    ocr: "skillDepCapOcr",
+    pdf: "skillDepCapPdf",
+    powerpoint: "skillDepCapPowerpoint",
+    "python-server": "skillDepCapPythonServer",
+    read: "skillDepCapRead",
+    "read-edit": "skillDepCapReadEdit",
+    render: "skillDepCapRender",
+    scaffold: "skillDepCapScaffold",
+    spreadsheet: "skillDepCapSpreadsheet",
+    word: "skillDepCapWord",
+  });
 
   function rankMatchedSkills(skills = [], disabledSkills = new Set(), userMessage = "") {
     if (!userMessage || skills.length === 0) return [];
@@ -133,6 +157,11 @@
     let editingSkillName = null;
     let settingsSelectedSkillName = null;
     let settingsMemoryRequestId = 0;
+    let skillDependencySnapshot = null;
+    let skillDependencyByName = new Map();
+    let skillDependencyLoading = false;
+    let skillDependencyError = "";
+    let skillDependencyRequestId = 0;
     let bound = false;
 
     const byId = (id) => documentRef.getElementById(id);
@@ -669,7 +698,11 @@
     }
 
     function renderSkillsInSettings(container) {
-      container.innerHTML = `<h3 style="margin:0 0 10px">${t("skills")}</h3>
+      container.innerHTML = `<div class="skills-panel-heading">
+          <h3>${t("skills")}</h3>
+          <button id="settingsSkillDependencyRefresh" class="mini-btn skill-dependency-refresh" type="button">${t("skillDependencyCheck")}</button>
+        </div>
+        <div id="settingsSkillDependencyOverview" class="skill-dependency-overview" aria-live="polite"></div>
         <div class="skills-layout-inner">
           <div class="skills-sidebar-inner">
             <button id="settingsSkillAddBtn" style="display:flex;align-items:center;gap:4px;width:100%;padding:5px 12px;border:0;border-left:3px solid transparent;border-radius:0;background:transparent;color:var(--accent);font-size:13px;font-weight:600;cursor:pointer;flex-shrink:0" data-i18n="newSkill">+ 新建 Skill</button>
@@ -677,8 +710,121 @@
           </div>
           <div class="skills-detail-inner" id="settingsSkillsDetail"></div>
         </div>`;
+      renderSkillDependencyOverview();
       renderSettingsSkillsSidebar();
       byId("settingsSkillAddBtn").addEventListener("click", () => openSkillEditor(null));
+      byId("settingsSkillDependencyRefresh").addEventListener("click", () => {
+        loadSkillDependencyStatus({ force: true });
+      });
+      if (!skillDependencySnapshot && !skillDependencyLoading) loadSkillDependencyStatus();
+    }
+
+    function dependencyStatusLabel(status) {
+      if (status === "ready") return t("skillDependencyReady");
+      if (status === "partial") return t("skillDependencyPartial");
+      return t("skillDependencyUnavailable");
+    }
+
+    function dependencyCapabilityLabel(capabilityId) {
+      const key = DEPENDENCY_CAPABILITY_KEYS[capabilityId];
+      return key ? t(key) : capabilityId;
+    }
+
+    function renderSkillDependencyOverview() {
+      const overview = byId("settingsSkillDependencyOverview");
+      const refresh = byId("settingsSkillDependencyRefresh");
+      if (!overview) return;
+      if (refresh) refresh.disabled = skillDependencyLoading;
+      if (skillDependencyLoading) {
+        overview.className = "skill-dependency-overview is-loading";
+        overview.textContent = t("skillDependencyChecking");
+        return;
+      }
+      if (skillDependencyError) {
+        overview.className = "skill-dependency-overview is-error";
+        overview.textContent = t("skillDependencyProbeFailed", { error: skillDependencyError });
+        return;
+      }
+      if (!skillDependencySnapshot) {
+        overview.className = "skill-dependency-overview";
+        overview.textContent = "";
+        return;
+      }
+      const summary = skillDependencySnapshot.summary || {};
+      overview.className = "skill-dependency-overview is-ready";
+      overview.textContent = t("skillDependencySummary", {
+        declared: summary.declared || 0,
+        ready: summary.ready || 0,
+        partial: summary.partial || 0,
+        unavailable: summary.unavailable || 0,
+      });
+      const errorCount = Array.isArray(skillDependencySnapshot.errors) ? skillDependencySnapshot.errors.length : 0;
+      if (errorCount) overview.textContent += ` · ${t("skillDependencyManifestErrors", { count: errorCount })}`;
+    }
+
+    function renderDependencyRequirement(requirement, optional) {
+      const available = Boolean(requirement.available);
+      const version = requirement.detectedVersion ? ` ${requirement.detectedVersion}` : "";
+      const stateLabel = available ? t("skillDependencySatisfied") : t("skillDependencyMissing");
+      const kindLabel = optional ? t("skillDependencyOptional") : t("skillDependencyRequired");
+      const title = `${kindLabel} · ${stateLabel}`;
+      return `<span class="skill-dependency-chip ${available ? "is-ready" : "is-missing"}${optional ? " is-optional" : ""}" title="${escapeHtml(title)}">
+        <span class="skill-dependency-chip-name">${escapeHtml(requirement.name || requirement.id || "-")}</span>${version ? `<span class="skill-dependency-chip-version">${escapeHtml(version)}</span>` : ""}
+      </span>`;
+    }
+
+    function renderSkillDependencySection(skillName) {
+      const dependency = skillDependencyByName.get(skillName);
+      if (!dependency) return "";
+      const capabilities = Array.isArray(dependency.capabilities) ? dependency.capabilities : [];
+      return `<section class="skill-dependency-card">
+        <div class="skill-dependency-card-head">
+          <div class="skill-detail-label">${t("skillDependencyTitle")}</div>
+          <span class="skill-dependency-status is-${escapeHtml(dependency.status)}">${escapeHtml(dependencyStatusLabel(dependency.status))}</span>
+        </div>
+        <div class="skill-capability-list">${capabilities.map((capability) => {
+          const required = Array.isArray(capability.required) ? capability.required : [];
+          const optional = Array.isArray(capability.optional) ? capability.optional : [];
+          return `<div class="skill-capability-row">
+            <div class="skill-capability-head">
+              <span class="skill-capability-name">${escapeHtml(dependencyCapabilityLabel(capability.id))}</span>
+              <span class="skill-capability-status is-${capability.status === "ready" ? "ready" : "unavailable"}">${escapeHtml(dependencyStatusLabel(capability.status))}</span>
+            </div>
+            <div class="skill-dependency-chips">
+              ${required.map((item) => renderDependencyRequirement(item, false)).join("")}
+              ${optional.map((item) => renderDependencyRequirement(item, true)).join("")}
+            </div>
+          </div>`;
+        }).join("")}</div>
+      </section>`;
+    }
+
+    async function loadSkillDependencyStatus({ force = false } = {}) {
+      if (skillDependencyLoading) return skillDependencySnapshot;
+      if (skillDependencySnapshot && !force) return skillDependencySnapshot;
+      const requestId = ++skillDependencyRequestId;
+      skillDependencyLoading = true;
+      skillDependencyError = "";
+      renderSkillDependencyOverview();
+      try {
+        const snapshot = await apiJson("/api/skills/dependencies");
+        if (requestId !== skillDependencyRequestId) return skillDependencySnapshot;
+        if (!snapshot || !Array.isArray(snapshot.skills) || !snapshot.summary) {
+          throw new Error(t("skillDependencyInvalidResponse"));
+        }
+        skillDependencySnapshot = snapshot;
+        skillDependencyByName = new Map(snapshot.skills.map((item) => [item.name, item]));
+      } catch (error) {
+        if (requestId !== skillDependencyRequestId) return skillDependencySnapshot;
+        skillDependencyError = error?.message || String(error || t("fetchFailed"));
+      } finally {
+        if (requestId === skillDependencyRequestId) {
+          skillDependencyLoading = false;
+          renderSkillDependencyOverview();
+          renderSettingsSkillsSidebar(settingsSelectedSkillName);
+        }
+      }
+      return skillDependencySnapshot;
     }
 
     function renderSettingsSkillsSidebar(preferredName = settingsSelectedSkillName) {
@@ -689,8 +835,10 @@
       settingsSelectedSkillName = selectedSkill?.name || null;
       sidebar.innerHTML = sorted.length ? sorted.map((skill) => {
         const enabled = !state.disabledSkills.has(skill.name);
+        const dependency = skillDependencyByName.get(skill.name);
         return `<div class="skill-list-item${skill.name === settingsSelectedSkillName ? " active" : ""}" data-skill-name="${escapeHtml(skill.name)}">
-          <span class="dot ${enabled ? "on" : "off"}"></span><span>${escapeHtml(skill.name)}</span>
+          <span class="dot ${enabled ? "on" : "off"}"></span><span class="skill-list-name">${escapeHtml(skill.name)}</span>
+          ${dependency ? `<span class="skill-dependency-sidebar-status is-${escapeHtml(dependency.status)}" title="${escapeHtml(`${t("skillDependencyTitle")} · ${dependencyStatusLabel(dependency.status)}`)}"></span>` : ""}
         </div>`;
       }).join("") : `<div class="muted-line" style="padding:12px;font-size:12px">${t("noSkills")}</div>`;
       sidebar.querySelectorAll(".skill-list-item").forEach((item) => {
@@ -732,6 +880,7 @@
         </div>
       </div>
       ${EXPLICIT_ONLY_SET.has(skill.name) ? `<div class="skill-detail-note">${t("skillExplicitHint").replace("{name}", escapeHtml(skill.name))}</div>` : ""}
+      ${renderSkillDependencySection(skill.name)}
       <div class="skill-detail-section"><div class="skill-detail-label">${t("skillDesc")}</div><div class="skill-detail-value">${escapeHtml(skill.description || "-")}</div></div>
       <div class="skill-detail-section"><div class="skill-detail-label">${t("skillKeywords")}</div><div class="skill-detail-value">${escapeHtml((skill.keywords || []).join(", ") || "-")}</div></div>
       <div class="skill-detail-section"><div class="skill-detail-label">${t("skillTools")}</div><div class="skill-detail-value">${escapeHtml((skill.tools || []).join(", ") || "-")}</div></div>

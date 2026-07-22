@@ -9,12 +9,142 @@ import os
 import re
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import server
+
+
+class TestSkillDependencyOperations(unittest.TestCase):
+    def setUp(self):
+        with server._dependency_operation_lock:
+            server._dependency_operations.clear()
+
+    def tearDown(self):
+        with server._dependency_operation_lock:
+            server._dependency_operations.clear()
+
+    def _plan(self, fingerprint="plan-fingerprint"):
+        return {
+            "schemaVersion": 1,
+            "skill": "demo",
+            "capability": "runtime",
+            "action": "install",
+            "actionable": True,
+            "noChanges": False,
+            "blockedReasons": [],
+            "requirements": [],
+            "systemRequirements": [],
+            "locations": {"python": r"C:\managed\python", "node": r"C:\managed\node"},
+            "authorization": {
+                "scope": "managed_runtime",
+                "root": r"C:\managed",
+                "systemPackageManagers": False,
+                "pathChanges": False,
+                "globalWrappers": False,
+            },
+            "steps": [{
+                "id": "install-python-packages",
+                "type": "python",
+                "purpose": "install_packages",
+                "displayCommand": "python -m pip install demo",
+                "_argv": ["python", "-m", "pip", "install", "demo"],
+            }],
+            "commandSummaries": ["python -m pip install demo"],
+            "fingerprint": fingerprint,
+        }
+
+    def test_operation_is_idempotent_tracks_progress_and_hides_argv(self):
+        release = threading.Event()
+
+        def execute(plan, *, cancel_event, progress_callback, process_callback, timeout_seconds):
+            progress_callback({
+                "phase": "install_packages",
+                "currentStep": 1,
+                "completedSteps": 0,
+                "totalSteps": 1,
+                "step": server.public_dependency_operation_plan(plan["steps"][0]),
+            })
+            release.wait(timeout=3)
+            return {"ok": True, "completedSteps": 1, "totalSteps": 1}
+
+        with (
+            mock.patch.object(server, "preview_skill_dependency_operation", return_value=self._plan()) as preview,
+            mock.patch.object(server, "execute_dependency_operation_plan", side_effect=execute),
+            mock.patch.object(server, "get_single_skill_dependency_status", return_value={
+                "name": "demo", "status": "ready", "capabilities": [],
+            }),
+        ):
+            operation = server.create_skill_dependency_operation("demo", "runtime", "install", "plan-fingerprint")
+            duplicate = server.create_skill_dependency_operation("demo", "runtime", "install", "plan-fingerprint")
+            self.assertIs(operation, duplicate)
+            with self.assertRaisesRegex(ValueError, "already running"):
+                server.create_skill_dependency_operation("other", "runtime", "install", "plan-fingerprint")
+            preview.assert_called_once_with("demo", "runtime", "install")
+            deadline = time.time() + 2
+            while operation["status"] == "pending" and time.time() < deadline:
+                time.sleep(0.01)
+            snapshot = server._dependency_operation_snapshot(operation)
+            self.assertEqual(snapshot["status"], "running")
+            self.assertEqual(snapshot["currentCommand"], "python -m pip install demo")
+            self.assertNotIn("_argv", snapshot["plan"]["steps"][0])
+            release.set()
+            deadline = time.time() + 2
+            while operation["status"] != "completed" and time.time() < deadline:
+                time.sleep(0.01)
+
+        self.assertEqual(operation["status"], "completed")
+        self.assertEqual(operation["progress"], 100)
+        self.assertEqual(operation["result"]["dependency"]["status"], "ready")
+        dismissed = server.cancel_skill_dependency_operation(operation["id"])
+        self.assertTrue(server._dependency_operation_snapshot(dismissed)["dismissed"])
+        self.assertIsNone(server.get_skill_dependency_operation(operation["id"]))
+
+    def test_cancellation_reaches_terminal_state_and_is_retryable(self):
+        def execute(plan, *, cancel_event, progress_callback, process_callback, timeout_seconds):
+            cancel_event.wait(timeout=3)
+            return {"ok": False, "cancelled": True, "errorCode": "cancelled"}
+
+        with (
+            mock.patch.object(server, "preview_skill_dependency_operation", return_value=self._plan()),
+            mock.patch.object(server, "execute_dependency_operation_plan", side_effect=execute),
+        ):
+            operation = server.create_skill_dependency_operation("demo", "runtime", "install", "plan-fingerprint")
+            server.cancel_skill_dependency_operation(operation["id"])
+            deadline = time.time() + 2
+            while operation["status"] != "cancelled" and time.time() < deadline:
+                time.sleep(0.01)
+
+        snapshot = server._dependency_operation_snapshot(operation)
+        self.assertEqual(snapshot["status"], "cancelled")
+        self.assertTrue(snapshot["cancelRequested"])
+        self.assertTrue(snapshot["retryable"])
+
+    def test_failed_operation_keeps_safe_recovery_metadata(self):
+        with (
+            mock.patch.object(server, "preview_skill_dependency_operation", return_value=self._plan()),
+            mock.patch.object(server, "execute_dependency_operation_plan", return_value={
+                "ok": False,
+                "errorCode": "process_failed",
+                "error": "Dependency step failed with exit code 1.",
+                "failedStep": {"id": "install-python-packages", "displayCommand": "python -m pip install demo"},
+            }),
+        ):
+            operation = server.create_skill_dependency_operation("demo", "runtime", "install", "plan-fingerprint")
+            deadline = time.time() + 2
+            while operation["status"] not in server._DEPENDENCY_OPERATION_TERMINAL and time.time() < deadline:
+                time.sleep(0.01)
+
+        snapshot = server._dependency_operation_snapshot(operation)
+        self.assertEqual(snapshot["status"], "failed")
+        self.assertEqual(snapshot["errorCode"], "process_failed")
+        self.assertTrue(snapshot["retryable"])
+        self.assertNotIn("stdout", snapshot)
+        self.assertNotIn("stderr", snapshot)
 
 
 class TestUpdaterHelpers(unittest.TestCase):

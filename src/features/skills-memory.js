@@ -38,6 +38,12 @@
     "command-runtime": "skillDepCapCommandRuntime",
     word: "skillDepCapWord",
   });
+  const DEPENDENCY_ACTION_KEYS = Object.freeze({
+    install: "skillDependencyInstall",
+    repair: "skillDependencyRepair",
+    uninstall: "skillDependencyUninstall",
+  });
+  const ACTIVE_DEPENDENCY_OPERATION_STATUSES = new Set(["pending", "running"]);
 
   function rankMatchedSkills(skills = [], disabledSkills = new Set(), userMessage = "") {
     if (!userMessage || skills.length === 0) return [];
@@ -181,6 +187,13 @@
     let skillDependencyLoading = false;
     let skillDependencyError = "";
     let skillDependencyRequestId = 0;
+    let skillDependencyOperationsLoaded = false;
+    let skillDependencyOperationsLoading = false;
+    let skillDependencyOperationByKey = new Map();
+    let skillDependencyOperationPollers = new Set();
+    let skillDependencyOperationRechecks = new Set();
+    let skillDependencyPreview = null;
+    let skillDependencyPreviewRequestId = 0;
     let bound = false;
 
     const byId = (id) => documentRef.getElementById(id);
@@ -812,6 +825,7 @@
         loadSkillDependencyStatus({ force: true });
       });
       if (!skillDependencySnapshot && !skillDependencyLoading) loadSkillDependencyStatus();
+      loadSkillDependencyOperations();
     }
 
     function refreshSettingsLanguage(panel) {
@@ -843,6 +857,7 @@
     }
 
     function dependencyCapabilityLabel(capabilityId) {
+      if (capabilityId === "*") return t("skillDependencyAllCapabilities");
       const key = DEPENDENCY_CAPABILITY_KEYS[capabilityId];
       return key ? t(key) : capabilityId;
     }
@@ -890,10 +905,152 @@
       </span>`;
     }
 
+    function dependencyOperationKey(skillName, capabilityId) {
+      return `${skillName}\u0000${capabilityId}`;
+    }
+
+    function dependencyActionLabel(action) {
+      return t(DEPENDENCY_ACTION_KEYS[action] || "skillDependencyInstall");
+    }
+
+    function isActiveDependencyOperation(operation) {
+      return Boolean(operation && ACTIVE_DEPENDENCY_OPERATION_STATUSES.has(operation.status));
+    }
+
+    function activeDependencyOperation() {
+      return [...skillDependencyOperationByKey.values()].find(isActiveDependencyOperation) || null;
+    }
+
+    function rememberDependencyOperation(operation) {
+      if (!operation?.id || !operation.skill || !operation.capability) return;
+      const key = dependencyOperationKey(operation.skill, operation.capability);
+      const current = skillDependencyOperationByKey.get(key);
+      if (
+        current
+        && current.id !== operation.id
+        && String(current.createdAt || "") > String(operation.createdAt || "")
+      ) return;
+      if (current?.id === operation.id && Number(current.version || 0) > Number(operation.version || 0)) return;
+      skillDependencyOperationByKey.set(key, operation);
+    }
+
+    function forgetDependencyOperation(operationId) {
+      for (const [key, operation] of skillDependencyOperationByKey.entries()) {
+        if (operation?.id === operationId) skillDependencyOperationByKey.delete(key);
+      }
+    }
+
+    function dependencyOperationStatusLabel(operation) {
+      if (operation?.phase === "cancelling") return t("skillDependencyOperationCancelling");
+      if (operation?.phase === "rechecking") return t("skillDependencyOperationRechecking");
+      if (operation?.status === "completed") return t("skillDependencyOperationCompleted");
+      if (operation?.status === "failed") return t("statusFail");
+      if (operation?.status === "cancelled") return t("skillDependencyOperationCancelled");
+      if (operation?.status === "pending") return t("skillDependencyOperationPending");
+      return t("skillDependencyOperationRunning");
+    }
+
+    function renderDependencySystemHints(required) {
+      const missingCommands = required.filter((item) => item.type === "command" && !item.available);
+      if (!missingCommands.length) return "";
+      return `<div class="skill-dependency-system-hints">
+        <div class="skill-dependency-system-title">${escapeHtml(t("skillDependencySystemHintTitle"))}</div>
+        ${missingCommands.map((item) => `<div class="skill-dependency-system-hint">
+          <span>${escapeHtml(item.name || item.id || "-")}</span>
+          <code>${escapeHtml(item.installHint || t("skillDependencySystemHintFallback"))}</code>
+        </div>`).join("")}
+      </div>`;
+    }
+
+    function renderDependencyPlanPreview(skillName, capabilityId) {
+      const preview = skillDependencyPreview;
+      if (!preview || preview.skill !== skillName || preview.capability !== capabilityId) return "";
+      const actionLabel = capabilityId === "*"
+        ? t("skillDependencyInstallAll")
+        : dependencyActionLabel(preview.action);
+      if (preview.loading) {
+        return `<div class="skill-dependency-operation-plan is-loading" role="status">${escapeHtml(t("skillDependencyPlanLoading"))}</div>`;
+      }
+      if (preview.error) {
+        return `<div class="skill-dependency-operation-plan is-error" role="alert">
+          <div>${escapeHtml(t("skillDependencyOperationFailed", { error: preview.error }))}</div>
+          <div class="skill-dependency-operation-actions">
+            <button class="mini-btn" type="button" data-dependency-plan-close>${escapeHtml(t("skillDependencyCancelAction"))}</button>
+          </div>
+        </div>`;
+      }
+      const plan = preview.plan;
+      if (!plan) return "";
+      const managedTypes = new Set((plan.requirements || [])
+        .filter((item) => item.type === "python" || item.type === "node")
+        .map((item) => item.type));
+      const locations = [...managedTypes].map((type) => `<div><span>${type === "python" ? "Python" : "Node"}</span><code>${escapeHtml(plan.locations?.[type] || "-")}</code></div>`).join("");
+      const commands = (plan.commandSummaries || []).map((command) => `<code>${escapeHtml(command)}</code>`).join("");
+      const notice = plan.blockedReasons?.length
+        ? `<div class="skill-dependency-plan-notice is-error">${escapeHtml(t("skillDependencyOperationBlocked"))}</div>`
+        : (plan.noChanges ? `<div class="skill-dependency-plan-notice">${escapeHtml(t("skillDependencyNoManagedChanges"))}</div>` : "");
+      return `<div class="skill-dependency-operation-plan">
+        <div class="skill-dependency-operation-plan-head"><strong>${escapeHtml(t("skillDependencyPlanTitle"))}</strong><span>${escapeHtml(actionLabel)}</span></div>
+        <dl>
+          <div><dt>${escapeHtml(t("skillDependencyTargetCapability"))}</dt><dd>${escapeHtml(dependencyCapabilityLabel(capabilityId))}</dd></div>
+          <div><dt>${escapeHtml(t("skillDependencyInstallLocation"))}</dt><dd class="skill-dependency-plan-locations">${locations || "-"}</dd></div>
+          <div><dt>${escapeHtml(t("skillDependencyCommandSummary"))}</dt><dd class="skill-dependency-plan-commands">${commands || "-"}</dd></div>
+          <div><dt>${escapeHtml(t("skillDependencyAuthorizationScope"))}</dt><dd>${escapeHtml(t("skillDependencyAuthorizationManagedOnly"))}</dd></div>
+        </dl>
+        ${preview.action === "uninstall" ? `<div class="skill-dependency-plan-notice">${escapeHtml(t("skillDependencySharedPreserved"))}</div>` : ""}
+        ${capabilityId === "*" && (plan.systemRequirements || []).some((item) => !item.available) ? `<div class="skill-dependency-plan-notice">${escapeHtml(t("skillDependencySystemExcluded"))}</div>` : ""}
+        ${notice}
+        <div class="skill-dependency-operation-actions">
+          <button class="mini-btn primary-btn" type="button" data-dependency-plan-confirm ${!plan.actionable || preview.confirming ? "disabled" : ""}>${escapeHtml(t("skillDependencyConfirmAction"))}</button>
+          <button class="mini-btn" type="button" data-dependency-plan-close ${preview.confirming ? "disabled" : ""}>${escapeHtml(t("skillDependencyCancelAction"))}</button>
+        </div>
+      </div>`;
+    }
+
+    function renderDependencyOperationState(skillName, capabilityId) {
+      const operation = skillDependencyOperationByKey.get(dependencyOperationKey(skillName, capabilityId));
+      if (!operation) return "";
+      const active = isActiveDependencyOperation(operation);
+      const rechecking = skillDependencyOperationRechecks.has(operation.id);
+      const progress = Math.max(0, Math.min(100, Number(operation.progress || 0)));
+      const total = Number(operation.totalSteps || 0);
+      const done = Number(operation.completedSteps || 0);
+      const statusClass = active ? "is-running" : `is-${escapeHtml(operation.status || "failed")}`;
+      const operationError = operation.errorCode === "operation_unavailable"
+        ? t("skillDependencyOperationUnavailable")
+        : (operation.error || operation.errorCode || t("statusFail"));
+      const failure = operation.status === "failed"
+        ? `<div class="skill-dependency-operation-error">${escapeHtml(t("skillDependencyOperationFailed", { error: operationError }))}</div>`
+        : "";
+      const recovery = operation.retryable
+        ? `<div class="skill-dependency-recovery-hint">${escapeHtml(t("skillDependencyRecoveryHint"))}</div>`
+        : "";
+      return `<div class="skill-dependency-operation-state ${statusClass}" aria-live="polite">
+        <div class="skill-dependency-operation-state-head">
+          <strong>${escapeHtml(operation.capability === "*" ? t("skillDependencyInstallAll") : dependencyActionLabel(operation.action))}</strong>
+          <span>${escapeHtml(dependencyOperationStatusLabel(operation))}</span>
+        </div>
+        <div class="skill-dependency-progress"><span style="width:${progress}%"></span></div>
+        ${total ? `<div class="skill-dependency-operation-meta">${escapeHtml(t("skillDependencyOperationProgress", { done, total }))}</div>` : ""}
+        ${operation.currentCommand ? `<code class="skill-dependency-current-command">${escapeHtml(operation.currentCommand)}</code>` : ""}
+        ${failure}${recovery}
+        <div class="skill-dependency-operation-actions">
+          ${active ? `<button class="mini-btn" type="button" data-dependency-operation-cancel="${escapeHtml(operation.id)}" ${operation.cancelRequested ? "disabled" : ""}>${escapeHtml(t("skillDependencyCancelOperation"))}</button>` : ""}
+          ${operation.retryable ? `<button class="mini-btn" type="button" data-dependency-operation-retry="${escapeHtml(operation.action)}">${escapeHtml(t("skillDependencyRetryOperation"))}</button>` : ""}
+          ${!active ? `<button class="mini-btn" type="button" data-dependency-operation-recheck="${escapeHtml(operation.id)}" ${rechecking ? "disabled" : ""}>${escapeHtml(t(rechecking ? "skillDependencyChecking" : "skillDependencyCheck"))}</button>` : ""}
+        </div>
+      </div>`;
+    }
+
     function renderSkillDependencySection(skillName) {
       const dependency = skillDependencyByName.get(skillName);
       if (!dependency) return "";
       const capabilities = Array.isArray(dependency.capabilities) ? dependency.capabilities : [];
+      const allRequiredManaged = capabilities.flatMap((capability) => (
+        Array.isArray(capability.required) ? capability.required : []
+      )).filter((item) => item.type === "python" || item.type === "node");
+      const allRequiredManagedMissing = allRequiredManaged.some((item) => !item.available);
+      const operationRunning = Boolean(activeDependencyOperation());
       const detectedFrom = Array.isArray(dependency.detectedFrom) ? dependency.detectedFrom : [];
       const detectedTitle = detectedFrom.length
         ? t("skillDependencyDetectedFrom", { sources: detectedFrom.join("、") })
@@ -902,14 +1059,28 @@
         <div class="skill-dependency-card-head">
           <div class="skill-detail-label">${t("skillDependencyTitle")}</div>
           <div class="skill-dependency-card-meta">
+            ${allRequiredManaged.length ? `<button class="mini-btn" type="button" data-dependency-install-all ${!allRequiredManagedMissing || operationRunning ? "disabled" : ""}>${escapeHtml(t(allRequiredManagedMissing ? "skillDependencyInstallAll" : "skillDependencyAllManagedReady"))}</button>` : ""}
             ${dependency.manifestSource === "detected" ? `<span class="skill-dependency-source" title="${escapeHtml(detectedTitle)}">${escapeHtml(t("skillDependencyDetected"))}</span>` : ""}
             <span class="skill-dependency-status is-${escapeHtml(dependency.status)}">${escapeHtml(dependencyStatusLabel(dependency.status))}</span>
           </div>
         </div>
+        ${renderDependencyPlanPreview(skillName, "*")}
+        ${renderDependencyOperationState(skillName, "*")}
         <div class="skill-capability-list">${capabilities.map((capability) => {
           const required = Array.isArray(capability.required) ? capability.required : [];
           const optional = Array.isArray(capability.optional) ? capability.optional : [];
-          return `<div class="skill-capability-row">
+          const managedRequirements = [...required, ...optional]
+            .filter((item) => item.type === "python" || item.type === "node");
+          const missingRequiredManaged = required
+            .some((item) => (item.type === "python" || item.type === "node") && !item.available);
+          const missingOptionalManaged = optional
+            .some((item) => (item.type === "python" || item.type === "node") && !item.available);
+          const missingManaged = missingRequiredManaged || missingOptionalManaged;
+          const installActionKey = !missingRequiredManaged && missingOptionalManaged
+            ? "skillDependencyInstallOptional"
+            : "skillDependencyInstall";
+          const managedInstalled = managedRequirements.some((item) => item.source === "managed");
+          return `<div class="skill-capability-row" data-dependency-capability="${escapeHtml(capability.id)}">
             <div class="skill-capability-head">
               <span class="skill-capability-name">${escapeHtml(dependencyCapabilityLabel(capability.id))}</span>
               <span class="skill-capability-status is-${capability.status === "ready" ? "ready" : "unavailable"}">${escapeHtml(dependencyStatusLabel(capability.status))}</span>
@@ -918,6 +1089,14 @@
               ${required.map((item) => renderDependencyRequirement(item, false)).join("")}
               ${optional.map((item) => renderDependencyRequirement(item, true)).join("")}
             </div>
+            ${renderDependencySystemHints([...required, ...optional])}
+            ${managedRequirements.length ? `<div class="skill-dependency-capability-actions">
+              <button class="mini-btn" type="button" data-dependency-action="install" ${!missingManaged || operationRunning ? "disabled" : ""}>${escapeHtml(t(installActionKey))}</button>
+              <button class="mini-btn" type="button" data-dependency-action="repair" ${operationRunning ? "disabled" : ""}>${escapeHtml(t("skillDependencyRepair"))}</button>
+              <button class="mini-btn danger" type="button" data-dependency-action="uninstall" ${!managedInstalled || operationRunning ? "disabled" : ""}>${escapeHtml(t("skillDependencyUninstall"))}</button>
+            </div>` : ""}
+            ${renderDependencyPlanPreview(skillName, capability.id)}
+            ${renderDependencyOperationState(skillName, capability.id)}
           </div>`;
         }).join("")}</div>
       </section>`;
@@ -949,6 +1128,235 @@
         }
       }
       return skillDependencySnapshot;
+    }
+
+    function recalculateSkillDependencySummary() {
+      if (!skillDependencySnapshot) return;
+      const skills = Array.isArray(skillDependencySnapshot.skills) ? skillDependencySnapshot.skills : [];
+      skillDependencySnapshot.summary = {
+        declared: skills.length,
+        ready: skills.filter((item) => item.status === "ready").length,
+        partial: skills.filter((item) => item.status === "partial").length,
+        unavailable: skills.filter((item) => item.status === "unavailable").length,
+      };
+    }
+
+    function renderSelectedSkillDependencyDetail() {
+      const skill = (state.skills || []).find((item) => item.name === settingsSelectedSkillName);
+      if (skill) showSkillDetailInSettings(skill);
+    }
+
+    function applySingleSkillDependencyStatus(dependency) {
+      if (!dependency?.name) return;
+      skillDependencyByName.set(dependency.name, dependency);
+      if (skillDependencySnapshot) {
+        const skills = Array.isArray(skillDependencySnapshot.skills) ? skillDependencySnapshot.skills : [];
+        const index = skills.findIndex((item) => item.name === dependency.name);
+        if (index >= 0) skills[index] = dependency;
+        else skills.push(dependency);
+        skillDependencySnapshot.skills = skills;
+        recalculateSkillDependencySummary();
+      }
+      renderSkillDependencyOverview();
+      const sidebar = byId("settingsSkillsSidebar");
+      const scrollTop = sidebar?.scrollTop || 0;
+      renderSettingsSkillsSidebar(settingsSelectedSkillName);
+      if (sidebar) sidebar.scrollTop = scrollTop;
+    }
+
+    async function refreshSingleSkillDependencyStatus(skillName) {
+      try {
+        const dependency = await apiJson(`/api/skills/${encodeURIComponent(skillName)}/dependencies`);
+        applySingleSkillDependencyStatus(dependency);
+        return dependency;
+      } catch (error) {
+        showToast(t("skillDependencyProbeFailed", { error: error?.message || String(error || "") }), "error");
+        return null;
+      }
+    }
+
+    async function pollSkillDependencyOperation(operationId) {
+      if (!operationId || skillDependencyOperationPollers.has(operationId)) return;
+      skillDependencyOperationPollers.add(operationId);
+      try {
+        let operation = [...skillDependencyOperationByKey.values()].find((item) => item.id === operationId);
+        while (isActiveDependencyOperation(operation)) {
+          try {
+            const snapshot = await apiJson(`/api/skills/dependencies/operations/${encodeURIComponent(operationId)}?version=${Number(operation.version || 0)}&wait=20`);
+            rememberDependencyOperation(snapshot);
+            operation = snapshot;
+            if (operation.skill === settingsSelectedSkillName) renderSelectedSkillDependencyDetail();
+          } catch (_) {
+            try {
+              const response = await apiJson("/api/skills/dependencies/operations");
+              const recovered = (response?.operations || []).find((item) => item.id === operationId);
+              if (recovered) {
+                rememberDependencyOperation(recovered);
+                operation = recovered;
+                continue;
+              }
+              operation = {
+                ...operation,
+                status: "failed",
+                phase: "failed",
+                retryable: true,
+                errorCode: "operation_unavailable",
+                error: "",
+                version: Number(operation.version || 0) + 1,
+              };
+              rememberDependencyOperation(operation);
+              renderSelectedSkillDependencyDetail();
+              break;
+            } catch (_) {
+              await new Promise((resolve) => global.setTimeout(resolve, 1000));
+            }
+          }
+        }
+        if (operation?.result?.dependency) {
+          applySingleSkillDependencyStatus(operation.result.dependency);
+        } else if (operation?.skill) {
+          await refreshSingleSkillDependencyStatus(operation.skill);
+        }
+      } finally {
+        skillDependencyOperationPollers.delete(operationId);
+      }
+    }
+
+    async function loadSkillDependencyOperations() {
+      if (skillDependencyOperationsLoading || skillDependencyOperationsLoaded) return;
+      skillDependencyOperationsLoading = true;
+      try {
+        const response = await apiJson("/api/skills/dependencies/operations");
+        const operations = Array.isArray(response?.operations) ? response.operations : [];
+        operations.forEach(rememberDependencyOperation);
+        skillDependencyOperationsLoaded = true;
+        renderSelectedSkillDependencyDetail();
+        operations.filter(isActiveDependencyOperation).forEach((operation) => {
+          pollSkillDependencyOperation(operation.id);
+        });
+      } catch (_) {
+        skillDependencyOperationsLoaded = false;
+      } finally {
+        skillDependencyOperationsLoading = false;
+      }
+    }
+
+    async function openSkillDependencyPlan(skillName, capability, action) {
+      const requestId = ++skillDependencyPreviewRequestId;
+      skillDependencyPreview = { skill: skillName, capability, action, loading: true, confirming: false };
+      renderSelectedSkillDependencyDetail();
+      try {
+        const plan = await apiJson("/api/skills/dependencies/plan", {
+          method: "POST",
+          body: JSON.stringify({ skill: skillName, capability, action }),
+        });
+        if (requestId !== skillDependencyPreviewRequestId) return;
+        skillDependencyPreview = { skill: skillName, capability, action, plan, loading: false, confirming: false };
+      } catch (error) {
+        if (requestId !== skillDependencyPreviewRequestId) return;
+        skillDependencyPreview = {
+          skill: skillName,
+          capability,
+          action,
+          loading: false,
+          confirming: false,
+          error: error?.message || String(error || t("statusFail")),
+        };
+      }
+      if (skillName === settingsSelectedSkillName) renderSelectedSkillDependencyDetail();
+    }
+
+    async function startSkillDependencyOperation() {
+      const preview = skillDependencyPreview;
+      if (!preview?.plan?.actionable || preview.confirming) return;
+      preview.confirming = true;
+      renderSelectedSkillDependencyDetail();
+      try {
+        const operation = await apiJson("/api/skills/dependencies/operations", {
+          method: "POST",
+          body: JSON.stringify({
+            skill: preview.skill,
+            capability: preview.capability,
+            action: preview.action,
+            fingerprint: preview.plan.fingerprint,
+          }),
+        });
+        rememberDependencyOperation(operation);
+        skillDependencyPreview = null;
+        renderSelectedSkillDependencyDetail();
+        pollSkillDependencyOperation(operation.id);
+      } catch (error) {
+        if (skillDependencyPreview === preview) {
+          preview.confirming = false;
+          preview.error = error?.message || String(error || t("statusFail"));
+          renderSelectedSkillDependencyDetail();
+        }
+      }
+    }
+
+    async function cancelSkillDependencyOperation(operationId) {
+      try {
+        const operation = await apiJson(`/api/skills/dependencies/operations/${encodeURIComponent(operationId)}`, {
+          method: "DELETE",
+        });
+        rememberDependencyOperation(operation);
+        renderSelectedSkillDependencyDetail();
+        pollSkillDependencyOperation(operation.id);
+      } catch (error) {
+        showToast(t("skillDependencyOperationFailed", { error: error?.message || String(error || "") }), "error");
+      }
+    }
+
+    async function recheckAndDismissSkillDependencyOperation(skillName, operationId) {
+      if (!operationId || skillDependencyOperationRechecks.has(operationId)) return;
+      skillDependencyOperationRechecks.add(operationId);
+      renderSelectedSkillDependencyDetail();
+      try {
+        const dependency = await refreshSingleSkillDependencyStatus(skillName);
+        if (!dependency) return;
+        const operation = await apiJson(`/api/skills/dependencies/operations/${encodeURIComponent(operationId)}`, {
+          method: "DELETE",
+        });
+        if (operation.dismissed) forgetDependencyOperation(operationId);
+      } catch (error) {
+        showToast(t("skillDependencyOperationFailed", { error: error?.message || String(error || "") }), "error");
+      } finally {
+        skillDependencyOperationRechecks.delete(operationId);
+        renderSelectedSkillDependencyDetail();
+      }
+    }
+
+    function bindSkillDependencyInteractions(panel, skillName) {
+      panel.querySelector("[data-dependency-install-all]")?.addEventListener("click", () => {
+        openSkillDependencyPlan(skillName, "*", "install");
+      });
+      panel.querySelectorAll("[data-dependency-action]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const capability = button.closest("[data-dependency-capability]")?.dataset.dependencyCapability;
+          if (capability) openSkillDependencyPlan(skillName, capability, button.dataset.dependencyAction);
+        });
+      });
+      panel.querySelector("[data-dependency-plan-close]")?.addEventListener("click", () => {
+        skillDependencyPreviewRequestId += 1;
+        skillDependencyPreview = null;
+        renderSelectedSkillDependencyDetail();
+      });
+      panel.querySelector("[data-dependency-plan-confirm]")?.addEventListener("click", startSkillDependencyOperation);
+      panel.querySelectorAll("[data-dependency-operation-cancel]").forEach((button) => {
+        button.addEventListener("click", () => cancelSkillDependencyOperation(button.dataset.dependencyOperationCancel));
+      });
+      panel.querySelectorAll("[data-dependency-operation-retry]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const capability = button.closest("[data-dependency-capability]")?.dataset.dependencyCapability;
+          if (capability) openSkillDependencyPlan(skillName, capability, button.dataset.dependencyOperationRetry);
+        });
+      });
+      panel.querySelectorAll("[data-dependency-operation-recheck]").forEach((button) => {
+        button.addEventListener("click", () => recheckAndDismissSkillDependencyOperation(
+          skillName,
+          button.dataset.dependencyOperationRecheck,
+        ));
+      });
     }
 
     function renderSettingsSkillsSidebar(preferredName = settingsSelectedSkillName) {
@@ -1016,6 +1424,7 @@
       });
       byId("settingsSkillEdit").addEventListener("click", () => openSkillEditor(skill));
       byId("settingsSkillDelete").addEventListener("click", () => deleteSkillConfirm(skill.name, "settingsSkillDelete"));
+      bindSkillDependencyInteractions(panel, skill.name);
     }
 
     function bind() {

@@ -16,6 +16,17 @@
 
 ## 2026-07-23 · Codex
 
+### 2026-07-23 04:35 Code：Skill 依赖设置页操作闭环（隔离运行时）
+
+- **隔离运行时闭环**：完成 `/api/skills/dependencies` 下安装、修复、卸载、进度、失败恢复与“重新检查”链路的服务端状态机；安装/修复仅在 `data/runtime` 隔离环境内执行 `pip` 与 `npm`，支持中断、超时、输出脱敏与失败原因透传，并支持重试。
+- **系统依赖边界强化**：系统级依赖检测改为只读 `installHint` 与标准路径搜索，不再触发系统包管理器、PATH 修改或全局包装器创建。
+- **一键与可选依赖操作**：新增“安装缺少的必需依赖”入口（按 Skill 聚合一次安装），并保留可选依赖手动安装入口；缺失项状态按必需/可选分层展示。
+- **卸载与安全隔离**：提供“移除依赖/卸载”入口并限制作用域于托管运行时；Python 卸载支持半安装恢复，Node 卸载仅清理托管环境中的安装目录与可执行入口，不影响系统全局与共享依赖。
+- **前端体验收口**：添加操作卡片、进度回显、失败后可重试、取消、清空通知、重新检查后刷新状态；中英文即时切换不退化，系统级黄色提示保留。
+- **验收与测试**：前端与后端回归继续补齐到 672 项、226 个 subtests 通过；`node --check` 覆盖关键前端模块；`git diff --check` 通过；用户完成手工验收后确认安装恢复、重装重检、可选依赖标注与执行入口行为符合预期。
+
+**涉及文件**：`skill_dependencies.py`、`server.py`、`src/core/i18n.js`、`src/features/skills-memory.js`、`styles.css`、`tests/test_frontend_modules.py`、`tests/test_p2_coverage.py`、`tests/test_routes.py`、`tests/test_server.py`、`tests/test_skill_dependencies.py`、`.gitignore`
+
 ### 2026-07-23 02:02 Code：建立跨任务开发交接快照
 
 - **最小接手上下文**：新增 `docs/development-handoff.md`，集中导航当前 Git 基线、近期稳定能力、Skills 依赖管理的推荐下一阶段、后续 Agent 路线、验证/提交规则及环境安全注意事项；明确 `CHANGELOG.md` 与 `TODO.md` 仍是唯一事实源，交接快照必须与现场 Git 状态复核。

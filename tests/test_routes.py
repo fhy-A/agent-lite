@@ -143,6 +143,79 @@ class TestHealthAndConfig(TestServerFixture):
         self.assertEqual(status, 200)
         self.assertEqual(data, expected)
 
+    def test_single_skill_dependency_route_refreshes_only_the_selected_skill(self):
+        expected = {"name": "docx", "status": "ready", "capabilities": []}
+        with mock.patch.object(server_mod, "get_single_skill_dependency_status", return_value=expected) as check:
+            status, data = _req("GET", "/api/skills/docx/dependencies")
+        self.assertEqual(status, 200)
+        self.assertEqual(data, expected)
+        check.assert_called_once_with("docx")
+
+    def test_dependency_plan_route_never_exposes_executable_arguments(self):
+        plan = {
+            "skill": "docx",
+            "capability": "create",
+            "action": "install",
+            "actionable": True,
+            "steps": [{
+                "id": "install-python",
+                "displayCommand": "python -m pip install demo",
+                "_argv": ["python", "-m", "pip", "install", "demo"],
+            }],
+            "fingerprint": "preview-fingerprint",
+        }
+        with mock.patch.object(server_mod, "preview_skill_dependency_operation", return_value=plan) as preview:
+            status, data = _req("POST", "/api/skills/dependencies/plan", json={
+                "skill": "docx", "capability": "create", "action": "install",
+            })
+        self.assertEqual(status, 200)
+        self.assertEqual(data["fingerprint"], "preview-fingerprint")
+        self.assertNotIn("_argv", data["steps"][0])
+        preview.assert_called_once_with("docx", "create", "install")
+
+    def test_dependency_operation_start_poll_and_cancel_routes(self):
+        condition = threading.Condition(threading.RLock())
+        operation = {
+            "id": "dependency-operation",
+            "skill": "docx",
+            "capability": "create",
+            "action": "install",
+            "status": "completed",
+            "phase": "completed",
+            "progress": 100,
+            "currentStep": 1,
+            "completedSteps": 1,
+            "totalSteps": 1,
+            "currentCommand": "python -m pip install demo",
+            "createdAt": "2026-07-23T10:00:00",
+            "startedAt": "2026-07-23T10:00:00",
+            "finishedAt": "2026-07-23T10:00:01",
+            "version": 3,
+            "cancelRequested": False,
+            "errorCode": "",
+            "error": "",
+            "failedStep": None,
+            "result": {"dependency": {"name": "docx", "status": "ready", "capabilities": []}},
+            "plan": {"fingerprint": "confirmed", "steps": [{"displayCommand": "python -m pip install demo", "_argv": ["python"]}]},
+            "condition": condition,
+        }
+        with (
+            mock.patch.object(server_mod, "create_skill_dependency_operation", return_value=operation) as create,
+            mock.patch.object(server_mod, "get_skill_dependency_operation", return_value=operation),
+            mock.patch.object(server_mod, "cancel_skill_dependency_operation", return_value=operation),
+        ):
+            post_status, posted = _req("POST", "/api/skills/dependencies/operations", json={
+                "skill": "docx", "capability": "create", "action": "install", "fingerprint": "confirmed",
+            })
+            get_status, fetched = _req("GET", "/api/skills/dependencies/operations/dependency-operation")
+            delete_status, cancelled = _req("DELETE", "/api/skills/dependencies/operations/dependency-operation")
+        self.assertEqual((post_status, get_status, delete_status), (201, 200, 200))
+        self.assertEqual(posted["id"], "dependency-operation")
+        self.assertEqual(fetched["status"], "completed")
+        self.assertNotIn("_argv", fetched["plan"]["steps"][0])
+        self.assertEqual(cancelled["id"], "dependency-operation")
+        create.assert_called_once_with("docx", "create", "install", "confirmed")
+
     def test_config_get(self):
         status, data = _req("GET", "/api/config")
         self.assertEqual(status, 200)

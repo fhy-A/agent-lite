@@ -1,4 +1,5 @@
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -46,6 +47,15 @@ class TestDependencyManifest(unittest.TestCase):
             manifest["capabilities"][1]["required"][0]["installHint"],
             "Windows PowerShell: winget install --id Demo.Cli --exact",
         )
+
+    def test_rejects_dependency_names_that_can_escape_managed_runtimes(self):
+        for dep_type, name in (("node", "../outside"), ("python", "../../outside"), ("command", "bin/tool")):
+            payload = _manifest()
+            payload["capabilities"]["create"]["required"] = [{"type": dep_type, "name": name}]
+            with self.subTest(dep_type=dep_type), self.assertRaisesRegex(
+                dependencies.DependencyManifestError, "invalid dependency name"
+            ):
+                dependencies.normalize_manifest(payload, expected_skill="demo")
 
 
 class TestDependencyDiscovery(unittest.TestCase):
@@ -383,6 +393,52 @@ class TestDependencyInspection(unittest.TestCase):
         self.assertEqual(result["node:demo-node"]["detectedVersion"], "1.2.3")
         self.assertEqual(result["node:demo-node"]["source"], "managed")
 
+    def test_windows_command_probe_finds_standard_install_locations(self):
+        requirements = [
+            dependencies._normalize_requirement({"type": "command", "name": "tesseract"}),
+            dependencies._normalize_requirement({"type": "command", "name": "qpdf"}),
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            tesseract = root / "Tesseract-OCR" / "tesseract.exe"
+            qpdf = root / "qpdf 12.3.2" / "bin" / "qpdf.exe"
+            tesseract.parent.mkdir(parents=True)
+            qpdf.parent.mkdir(parents=True)
+            tesseract.write_text("", encoding="utf-8")
+            qpdf.write_text("", encoding="utf-8")
+            with (
+                mock.patch.object(dependencies.sys, "platform", "win32"),
+                mock.patch.object(dependencies.shutil, "which", return_value=None),
+                mock.patch.object(dependencies, "_windows_registered_path", return_value=""),
+                mock.patch.dict(dependencies.os.environ, {
+                    "ProgramFiles": str(root),
+                    "ProgramFiles(x86)": "",
+                    "LOCALAPPDATA": str(root / "local"),
+                }),
+            ):
+                result = dependencies._probe_commands(requirements, root / "data")
+
+        self.assertTrue(result["command:tesseract"]["available"])
+        self.assertEqual(Path(result["command:tesseract"]["executable"]), tesseract)
+        self.assertTrue(result["command:qpdf"]["available"])
+        self.assertEqual(Path(result["command:qpdf"]["executable"]), qpdf)
+
+    def test_command_probe_reads_fresh_registered_path_without_mutating_process_path(self):
+        calls = []
+
+        def which(name, path=None):
+            calls.append((name, path))
+            return r"C:\FreshTool\demo.exe" if path == "fresh-registered-path" else None
+
+        with (
+            mock.patch.object(dependencies.shutil, "which", side_effect=which),
+            mock.patch.object(dependencies, "_windows_registered_path", return_value="fresh-registered-path"),
+        ):
+            executable = dependencies._system_command_path("demo")
+
+        self.assertEqual(executable, r"C:\FreshTool\demo.exe")
+        self.assertEqual(calls, [("demo", None), ("demo", "fresh-registered-path")])
+
     def test_invalid_manifest_is_reported_without_hiding_valid_skills(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -409,6 +465,372 @@ class TestDependencyInspection(unittest.TestCase):
         self.assertEqual(result["summary"], {"declared": 1, "ready": 1, "partial": 0, "unavailable": 0})
         self.assertEqual(result["skills"], [ready])
         self.assertEqual(result["errors"][0]["name"], "broken")
+
+
+class TestDependencyOperations(unittest.TestCase):
+    def _runtime_tools(self, root):
+        host_python = root / "host-python.exe"
+        npm = root / "npm.cmd"
+        host_python.write_text("", encoding="utf-8")
+        npm.write_text("", encoding="utf-8")
+
+        def which(name):
+            if name in {"python", "python3"}:
+                return str(host_python)
+            if name in {"npm", "npm.cmd"}:
+                return str(npm)
+            return None
+
+        return host_python, npm, which
+
+    def test_install_plan_targets_only_managed_python_and_node_runtimes(self):
+        inspection = {
+            "name": "demo",
+            "capabilities": [{
+                "id": "create",
+                "required": [
+                    {
+                        "id": "python:requests", "type": "python", "name": "requests",
+                        "minimumVersion": "2.28", "available": False, "installed": False,
+                        "source": "", "reason": "not_installed",
+                    },
+                    {
+                        "id": "node:docx", "type": "node", "name": "docx",
+                        "version": "9.5.0", "available": False, "installed": False,
+                        "source": "", "reason": "not_installed",
+                    },
+                    {
+                        "id": "command:pandoc", "type": "command", "name": "pandoc",
+                        "available": False, "installed": False, "source": "",
+                        "installHint": "Windows PowerShell: winget install --id JohnMacFarlane.Pandoc --exact",
+                    },
+                ],
+                "optional": [],
+            }],
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _, _, which = self._runtime_tools(root)
+            with mock.patch.object(dependencies.shutil, "which", side_effect=which):
+                plan = dependencies.build_dependency_operation_plan(
+                    inspection,
+                    data_dir=root / "data",
+                    capability_id="create",
+                    action="install",
+                )
+
+        self.assertTrue(plan["actionable"])
+        self.assertEqual([step["id"] for step in plan["steps"]], [
+            "create-python-runtime", "install-python-packages", "prepare-node-runtime", "install-node-packages",
+        ])
+        external_steps = [step for step in plan["steps"] if "_argv" in step]
+        self.assertTrue(all(isinstance(step["_argv"], list) for step in external_steps))
+        self.assertFalse(any("winget" in part for step in external_steps for part in step["_argv"]))
+        self.assertEqual(plan["systemRequirements"][0]["installHint"], inspection["capabilities"][0]["required"][2]["installHint"])
+        self.assertIn(str(Path(temp) / "data" / "runtime"), plan["authorization"]["root"])
+        public = dependencies.public_dependency_operation_plan(plan)
+        self.assertTrue(public["fingerprint"])
+        self.assertTrue(all("_argv" not in step for step in public["steps"]))
+        self.assertFalse(public["authorization"]["systemPackageManagers"])
+        self.assertFalse(public["authorization"]["pathChanges"])
+        self.assertFalse(public["authorization"]["globalWrappers"])
+
+    def test_windows_venv_path_recovers_after_runtime_creation(self):
+        inspection = {
+            "name": "demo",
+            "capabilities": [{
+                "id": "inspect",
+                "required": [{
+                    "id": "python:markitdown",
+                    "type": "python",
+                    "name": "markitdown",
+                    "available": False,
+                    "installed": False,
+                    "source": "system",
+                    "reason": "not_installed",
+                }],
+                "optional": [],
+            }],
+        }
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(dependencies.sys, "platform", "win32"):
+            data_dir = Path(temp) / "data"
+            scripts_python = data_dir / "runtime" / "python" / "Scripts" / "python.exe"
+            scripts_python.parent.mkdir(parents=True)
+            scripts_python.write_text("", encoding="utf-8")
+            plan = dependencies.build_dependency_operation_plan(
+                inspection,
+                data_dir=data_dir,
+                capability_id="inspect",
+                action="install",
+            )
+            self.assertEqual(dependencies._managed_python_path(data_dir), scripts_python)
+            self.assertEqual([step["id"] for step in plan["steps"]], ["install-python-packages"])
+            self.assertEqual(Path(plan["steps"][0]["_argv"][0]), scripts_python)
+
+    def test_settings_operations_include_optional_managed_dependencies(self):
+        inspection = {
+            "name": "demo",
+            "capabilities": [{
+                "id": "create",
+                "required": [{
+                    "id": "node:required-package", "type": "node", "name": "required-package",
+                    "available": True, "source": "managed",
+                }],
+                "optional": [{
+                    "id": "node:optional-package", "type": "node", "name": "optional-package",
+                    "available": False, "source": "", "reason": "not_installed",
+                }],
+            }],
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _, _, which = self._runtime_tools(root)
+            with mock.patch.object(dependencies.shutil, "which", side_effect=which):
+                install = dependencies.build_dependency_operation_plan(
+                    inspection, data_dir=root / "data", capability_id="create", action="install",
+                )
+                repair = dependencies.build_dependency_operation_plan(
+                    inspection, data_dir=root / "data", capability_id="create", action="repair",
+                )
+                uninstall = dependencies.build_dependency_operation_plan(
+                    inspection, data_dir=root / "data", capability_id="create", action="uninstall",
+                )
+
+        install_step = next(step for step in install["steps"] if step["id"] == "install-node-packages")
+        repair_step = next(step for step in repair["steps"] if step["id"] == "repair-node-packages")
+        self.assertIn("optional-package", install_step["_argv"])
+        self.assertIn("required-package", repair_step["_argv"])
+        self.assertIn("optional-package", repair_step["_argv"])
+        self.assertEqual(uninstall["steps"][0]["_packageNames"], ["required-package"])
+        operations = {item["id"]: item for item in install["requirements"]}
+        self.assertTrue(operations["node:optional-package"]["optional"])
+
+    def test_install_all_only_includes_missing_required_managed_dependencies(self):
+        inspection = {
+            "name": "demo",
+            "capabilities": [
+                {
+                    "id": "create",
+                    "required": [{
+                        "id": "node:already-ready", "type": "node", "name": "already-ready",
+                        "available": True, "source": "managed",
+                    }],
+                    "optional": [{
+                        "id": "node:optional-package", "type": "node", "name": "optional-package",
+                        "available": False, "source": "", "reason": "not_installed",
+                    }],
+                },
+                {
+                    "id": "inspect",
+                    "required": [{
+                        "id": "python:missing-python", "type": "python", "name": "missing-python",
+                        "available": False, "source": "system", "reason": "not_installed",
+                    }],
+                    "optional": [],
+                },
+                {
+                    "id": "render",
+                    "required": [{
+                        "id": "command:renderer", "type": "command", "name": "renderer",
+                        "available": False, "source": "", "reason": "not_installed",
+                        "installHint": "Install Renderer outside Code",
+                    }],
+                    "optional": [],
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _, _, which = self._runtime_tools(root)
+            with mock.patch.object(dependencies.shutil, "which", side_effect=which):
+                plan = dependencies.build_dependency_operation_plan(
+                    inspection, data_dir=root / "data", capability_id="*", action="install",
+                )
+
+        operations = {item["id"]: item["operation"] for item in plan["requirements"]}
+        self.assertEqual(plan["capabilities"], ["create", "inspect", "render"])
+        self.assertEqual(operations["node:already-ready"], "satisfied")
+        self.assertEqual(operations["python:missing-python"], "install")
+        self.assertNotIn("node:optional-package", operations)
+        self.assertEqual(plan["systemRequirements"][0]["operation"], "user_install")
+        self.assertFalse(any(
+            "already-ready" in part or "optional-package" in part or "renderer" in part
+            for step in plan["steps"] for part in step.get("_argv", [])
+        ))
+        python_step = next(step for step in plan["steps"] if step["id"] == "install-python-packages")
+        self.assertIn("missing-python", python_step["_argv"])
+        with self.assertRaisesRegex(dependencies.DependencyManifestError, "only support install"):
+            dependencies.build_dependency_operation_plan(
+                inspection, data_dir=root / "data", capability_id="*", action="repair",
+            )
+
+    def test_repair_reinstalls_all_required_managed_packages(self):
+        inspection = {
+            "name": "demo",
+            "capabilities": [{
+                "id": "runtime",
+                "required": [
+                    {"id": "python:demo", "type": "python", "name": "demo", "available": True, "source": "system"},
+                    {"id": "node:demo-node", "type": "node", "name": "demo-node", "available": True, "source": "app"},
+                ],
+                "optional": [],
+            }],
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            managed_python = dependencies._managed_python_path(root / "data")
+            managed_python.parent.mkdir(parents=True)
+            managed_python.write_text("", encoding="utf-8")
+            _, _, which = self._runtime_tools(root)
+            with mock.patch.object(dependencies.shutil, "which", side_effect=which):
+                plan = dependencies.build_dependency_operation_plan(
+                    inspection,
+                    data_dir=root / "data",
+                    capability_id="runtime",
+                    action="repair",
+                )
+
+        python_step = next(step for step in plan["steps"] if step["type"] == "python")
+        node_step = next(step for step in plan["steps"] if step["id"] == "repair-node-packages")
+        self.assertIn("--force-reinstall", python_step["_argv"])
+        self.assertIn("--force", node_step["_argv"])
+        self.assertNotIn("create-python-runtime", [step["id"] for step in plan["steps"]])
+        self.assertTrue(all(item["operation"] == "repair" for item in plan["requirements"]))
+
+    def test_uninstall_preserves_shared_and_non_managed_dependencies(self):
+        inspection = {
+            "name": "demo",
+            "capabilities": [{
+                "id": "runtime",
+                "required": [
+                    {"id": "python:shared", "type": "python", "name": "shared", "available": True, "source": "managed"},
+                    {"id": "node:exclusive", "type": "node", "name": "exclusive", "available": True, "source": "managed"},
+                    {"id": "node:external", "type": "node", "name": "external", "available": True, "source": "app"},
+                ],
+                "optional": [],
+            }],
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _, _, which = self._runtime_tools(root)
+            with mock.patch.object(dependencies.shutil, "which", side_effect=which):
+                plan = dependencies.build_dependency_operation_plan(
+                    inspection,
+                    data_dir=root / "data",
+                    capability_id="runtime",
+                    action="uninstall",
+                    shared_requirement_ids={"python:shared"},
+                )
+
+        operations = {item["id"]: item["operation"] for item in plan["requirements"]}
+        self.assertEqual(operations["python:shared"], "preserve_shared")
+        self.assertEqual(operations["node:external"], "preserve_external")
+        self.assertEqual(operations["node:exclusive"], "uninstall")
+        self.assertEqual(len(plan["steps"]), 1)
+        self.assertEqual(plan["steps"][0]["id"], "uninstall-node-packages")
+        self.assertEqual(plan["steps"][0]["_operation"], "remove_node_packages")
+        self.assertEqual(plan["steps"][0]["_packageNames"], ["exclusive"])
+        self.assertNotIn("_argv", plan["steps"][0])
+
+    def test_python_operations_use_distribution_name(self):
+        inspection = {
+            "name": "demo",
+            "capabilities": [{
+                "id": "runtime",
+                "required": [{
+                    "id": "python:demo_import",
+                    "type": "python",
+                    "name": "demo_import",
+                    "importName": "demo_import",
+                    "distribution": "demo-distribution",
+                    "available": True,
+                    "source": "managed",
+                }],
+                "optional": [],
+            }],
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            data_dir = Path(temp) / "data"
+            managed_python = dependencies._managed_python_path(data_dir)
+            managed_python.parent.mkdir(parents=True)
+            managed_python.write_text("", encoding="utf-8")
+            plan = dependencies.build_dependency_operation_plan(
+                inspection,
+                data_dir=data_dir,
+                capability_id="runtime",
+                action="uninstall",
+            )
+
+        self.assertEqual(plan["steps"][0]["_argv"][-1], "demo-distribution")
+
+    def test_node_uninstall_precisely_removes_target_and_its_bins(self):
+        with tempfile.TemporaryDirectory() as temp:
+            node_root = Path(temp) / "runtime" / "node"
+            node_modules = node_root / "node_modules"
+            target = node_modules / "target-package"
+            unrelated = node_modules / "unrelated-package"
+            bin_root = node_modules / ".bin"
+            target.mkdir(parents=True)
+            unrelated.mkdir()
+            bin_root.mkdir()
+            (target / "package.json").write_text(json.dumps({
+                "name": "target-package", "version": "1.0.0", "bin": {"target-cli": "cli.js"},
+            }), encoding="utf-8")
+            (unrelated / "package.json").write_text(json.dumps({
+                "name": "unrelated-package", "version": "2.0.0",
+            }), encoding="utf-8")
+            for suffix in ("", ".cmd", ".ps1"):
+                (bin_root / f"target-cli{suffix}").write_text("shim", encoding="utf-8")
+            (bin_root / "unrelated-cli.cmd").write_text("keep", encoding="utf-8")
+            (node_modules / ".package-lock.json").write_text("{}", encoding="utf-8")
+            plan = {
+                "actionable": True,
+                "steps": [{
+                    "id": "uninstall-node-packages",
+                    "purpose": "uninstall_packages",
+                    "displayCommand": "remove managed Node packages: target-package",
+                    "_operation": "remove_node_packages",
+                    "_nodeRoot": str(node_root),
+                    "_packageNames": ["target-package"],
+                }],
+            }
+
+            result = dependencies.execute_dependency_operation_plan(plan, timeout_seconds=10)
+            runtime_manifest = json.loads((node_root / "package.json").read_text(encoding="utf-8"))
+
+            self.assertTrue(result["ok"])
+            self.assertFalse(target.exists())
+            self.assertTrue(unrelated.is_dir())
+            self.assertTrue((bin_root / "unrelated-cli.cmd").is_file())
+            self.assertTrue(all(not (bin_root / f"target-cli{suffix}").exists() for suffix in ("", ".cmd", ".ps1")))
+            self.assertFalse((node_modules / ".package-lock.json").exists())
+            self.assertEqual(runtime_manifest["dependencies"], {"unrelated-package": "2.0.0"})
+
+    def test_executor_runs_argument_arrays_and_reports_step_progress(self):
+        progress = []
+        with tempfile.TemporaryDirectory() as temp:
+            plan = {
+                "actionable": True,
+                "steps": [{
+                    "id": "safe-step",
+                    "type": "python",
+                    "purpose": "install_packages",
+                    "displayCommand": "python validation",
+                    "_argv": [sys.executable, "-c", "print('ok')"],
+                    "_cwd": temp,
+                }],
+            }
+            result = dependencies.execute_dependency_operation_plan(
+                plan,
+                progress_callback=progress.append,
+                timeout_seconds=10,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["completedSteps"], 1)
+        self.assertEqual(progress[0]["phase"], "install_packages")
+        self.assertEqual(progress[-1]["phase"], "step_completed")
+        self.assertNotIn("_argv", progress[0]["step"])
 
 
 if __name__ == "__main__":

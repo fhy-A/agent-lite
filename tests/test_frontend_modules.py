@@ -1647,6 +1647,69 @@ process.stdout.write(JSON.stringify({staleBrowserValueCleared, keyUpdated, edito
         ):
             self.assertIn(selector, STYLE_SOURCE)
 
+    def test_skill_dependency_settings_operations_are_scoped_recoverable_and_localized(self):
+        operation_start = SKILLS_MEMORY_SOURCE.index("function recalculateSkillDependencySummary")
+        bind_start = SKILLS_MEMORY_SOURCE.index("function bindSkillDependencyInteractions", operation_start)
+        operation_source = SKILLS_MEMORY_SOURCE[operation_start:bind_start]
+        self.assertIn('apiJson("/api/skills/dependencies/plan"', operation_source)
+        self.assertIn('apiJson("/api/skills/dependencies/operations"', operation_source)
+        self.assertIn("fingerprint: preview.plan.fingerprint", operation_source)
+        self.assertIn('method: "DELETE"', operation_source)
+        self.assertIn("pollSkillDependencyOperation(operation.id)", operation_source)
+        self.assertIn("operation.result.dependency", operation_source)
+        self.assertIn("refreshSingleSkillDependencyStatus(operation.skill)", operation_source)
+        self.assertIn("function recheckAndDismissSkillDependencyOperation", operation_source)
+        self.assertIn("if (operation.dismissed) forgetDependencyOperation(operationId)", operation_source)
+        self.assertIn('data-dependency-operation-recheck="${escapeHtml(operation.id)}"', SKILLS_MEMORY_SOURCE)
+        self.assertNotIn("run_command", operation_source)
+
+        self.assertIn("function renderDependencySystemHints(required)", SKILLS_MEMORY_SOURCE)
+        self.assertIn("item.installHint || t(\"skillDependencySystemHintFallback\")", SKILLS_MEMORY_SOURCE)
+        self.assertIn('data-dependency-action="install"', SKILLS_MEMORY_SOURCE)
+        self.assertIn('data-dependency-action="repair"', SKILLS_MEMORY_SOURCE)
+        self.assertIn('data-dependency-action="uninstall"', SKILLS_MEMORY_SOURCE)
+        self.assertIn("loadSkillDependencyOperations();", SKILLS_MEMORY_SOURCE)
+        self.assertIn("let skillDependencyOperationByKey = new Map()", SKILLS_MEMORY_SOURCE)
+        self.assertIn("const managedRequirements = [...required, ...optional]", SKILLS_MEMORY_SOURCE)
+        self.assertIn("const missingRequiredManaged = required", SKILLS_MEMORY_SOURCE)
+        self.assertIn("const missingOptionalManaged = optional", SKILLS_MEMORY_SOURCE)
+        self.assertIn('? "skillDependencyInstallOptional"', SKILLS_MEMORY_SOURCE)
+        self.assertIn("const allRequiredManaged = capabilities.flatMap", SKILLS_MEMORY_SOURCE)
+        self.assertIn('data-dependency-install-all', SKILLS_MEMORY_SOURCE)
+        self.assertIn('openSkillDependencyPlan(skillName, "*", "install")', SKILLS_MEMORY_SOURCE)
+        self.assertIn("settingsSelectedSkillName", operation_source)
+        self.assertIn("renderSettingsSkillsSidebar(settingsSelectedSkillName)", operation_source)
+
+        for key in (
+            "skillDependencyInstall",
+            "skillDependencyInstallOptional",
+            "skillDependencyRepair",
+            "skillDependencyUninstall",
+            "skillDependencyPlanTitle",
+            "skillDependencyAuthorizationManagedOnly",
+            "skillDependencyOperationRunning",
+            "skillDependencyOperationCompleted",
+            "skillDependencyOperationCancelled",
+            "skillDependencyRetryOperation",
+            "skillDependencySystemHintTitle",
+            "skillDependencySharedPreserved",
+            "skillDependencyInstallAll",
+            "skillDependencyAllManagedReady",
+            "skillDependencyAllCapabilities",
+            "skillDependencySystemExcluded",
+        ):
+            self.assertEqual(I18N_SOURCE.count(f"{key}:"), 2)
+
+        for selector in (
+            ".skill-dependency-capability-actions",
+            ".skill-dependency-system-hints",
+            ".skill-dependency-operation-plan",
+            ".skill-dependency-operation-state",
+            ".skill-dependency-progress",
+            ".skill-dependency-operation-actions",
+        ):
+            self.assertIn(selector, STYLE_SOURCE)
+
     def test_skill_editor_can_save_validated_dependency_manifests(self):
         self.assertIn('id="skillDependencyEditor"', INDEX_SOURCE)
         self.assertIn('id="skillEditDependencies"', INDEX_SOURCE)

@@ -20,11 +20,14 @@ import time
 import webbrowser
 
 from skill_dependencies import (
+    build_dependency_operation_plan,
     DependencyManifestError,
+    execute_dependency_operation_plan,
     inspect_skill_dependencies,
     inspect_skill_directory,
     load_skill_manifest,
     normalize_manifest,
+    public_dependency_operation_plan,
     resolve_skill_manifest,
 )
 
@@ -70,6 +73,9 @@ _json_write_lock = threading.RLock()
 _edit_apply_lock = threading.RLock()
 _model_runtime_runs = {}
 _model_runtime_lock = threading.RLock()
+_dependency_operations = {}
+_dependency_operation_lock = threading.RLock()
+_DEPENDENCY_OPERATION_TERMINAL = {"completed", "failed", "cancelled"}
 _MODEL_RUNTIME_TERMINAL_TTL = 30 * 60
 _MODEL_RUNTIME_ACTIVE_TTL = 6 * 60 * 60
 _agent_runs = {}
@@ -3770,7 +3776,7 @@ def _skill_requirement_for_api(requirement):
     return {
         field: requirement[field]
         for field in (
-            "type", "name", "version", "minimumVersion", "importName", "distribution"
+            "type", "name", "version", "minimumVersion", "importName", "distribution", "installHint"
         )
         if requirement.get(field)
     }
@@ -3889,6 +3895,290 @@ def get_single_skill_dependency_status(name, capability=""):
         data_dir=DATA_DIR,
         capability_id=capability,
     )
+
+
+def _shared_skill_dependency_ids(skill_dir_name, capability_id):
+    """Return dependencies declared outside the selected capability.
+
+    Uninstall operations preserve both required and optional declarations in
+    every other capability so one settings action cannot break another Skill.
+    """
+    shared = set()
+    if not SKILLS_DIR.is_dir():
+        return shared
+    bundled_skills_dir = APP_DIR / "data" / "skills"
+    for skill_dir in SKILLS_DIR.iterdir():
+        if not skill_dir.is_dir() or not (skill_dir / "SKILL.md").is_file():
+            continue
+        try:
+            manifest = resolve_skill_manifest(skill_dir, bundled_skills_dir)
+        except DependencyManifestError:
+            continue
+        if not manifest:
+            continue
+        for capability in manifest.get("capabilities") or []:
+            if skill_dir.name == skill_dir_name and capability.get("id") == capability_id:
+                continue
+            for group in ("required", "optional"):
+                for requirement in capability.get(group) or []:
+                    if requirement.get("type") in {"python", "node"}:
+                        name = (
+                            requirement.get("distribution") or requirement["name"]
+                            if requirement.get("type") == "python"
+                            else requirement["name"]
+                        )
+                        shared.add(f"{requirement['type']}:{name}")
+    return shared
+
+
+def preview_skill_dependency_operation(name, capability, action):
+    skill = read_skill(name)
+    inspection = inspect_skill_directory(
+        SKILLS_DIR / skill["dir"],
+        bundled_skills_dir=APP_DIR / "data" / "skills",
+        app_dir=APP_DIR,
+        data_dir=DATA_DIR,
+        capability_id="" if capability == "*" else capability,
+    )
+    plan = build_dependency_operation_plan(
+        inspection,
+        data_dir=DATA_DIR,
+        capability_id=capability,
+        action=action,
+        shared_requirement_ids=_shared_skill_dependency_ids(skill["dir"], capability),
+    )
+    return plan
+
+
+def _dependency_operation_snapshot(operation):
+    return {
+        "id": operation["id"],
+        "skill": operation["skill"],
+        "capability": operation["capability"],
+        "action": operation["action"],
+        "status": operation["status"],
+        "phase": operation.get("phase", ""),
+        "progress": operation.get("progress", 0),
+        "currentStep": operation.get("currentStep", 0),
+        "completedSteps": operation.get("completedSteps", 0),
+        "totalSteps": operation.get("totalSteps", 0),
+        "currentCommand": operation.get("currentCommand", ""),
+        "createdAt": operation.get("createdAt", ""),
+        "startedAt": operation.get("startedAt", ""),
+        "finishedAt": operation.get("finishedAt", ""),
+        "version": operation.get("version", 0),
+        "cancelRequested": bool(operation.get("cancelRequested")),
+        "errorCode": operation.get("errorCode", ""),
+        "error": operation.get("error", ""),
+        "failedStep": operation.get("failedStep"),
+        "retryable": operation["status"] in {"failed", "cancelled"},
+        "dismissed": bool(operation.get("dismissed")),
+        "plan": public_dependency_operation_plan(operation["plan"]),
+        "result": operation.get("result"),
+    }
+
+
+def _update_dependency_operation(operation, **changes):
+    with operation["condition"]:
+        operation.update(changes)
+        operation["version"] = int(operation.get("version", 0)) + 1
+        operation["condition"].notify_all()
+
+
+def _dependency_operation_worker(operation):
+    _update_dependency_operation(
+        operation,
+        status="running",
+        phase="preparing",
+        progress=2,
+        startedAt=now_iso(),
+    )
+
+    def on_progress(progress):
+        total = max(1, int(progress.get("totalSteps") or operation.get("totalSteps") or 1))
+        completed = int(progress.get("completedSteps") or 0)
+        step = progress.get("step") or {}
+        percent = min(92, 5 + int((completed / total) * 85))
+        _update_dependency_operation(
+            operation,
+            phase=progress.get("phase") or "running",
+            progress=percent,
+            currentStep=int(progress.get("currentStep") or 0),
+            completedSteps=completed,
+            totalSteps=total,
+            currentCommand=step.get("displayCommand") or "",
+        )
+
+    def on_process(process):
+        with operation["condition"]:
+            operation["_process"] = process
+
+    try:
+        result = execute_dependency_operation_plan(
+            operation["plan"],
+            cancel_event=operation["cancelEvent"],
+            progress_callback=on_progress,
+            process_callback=on_process,
+            timeout_seconds=MAX_DEPENDENCY_COMMAND_SECONDS,
+        )
+        if result.get("cancelled"):
+            _update_dependency_operation(
+                operation,
+                status="cancelled",
+                phase="cancelled",
+                errorCode="cancelled",
+                error="",
+                finishedAt=now_iso(),
+            )
+            return
+        if not result.get("ok"):
+            _update_dependency_operation(
+                operation,
+                status="failed",
+                phase="failed",
+                errorCode=result.get("errorCode") or "operation_failed",
+                error=result.get("error") or "Dependency operation failed.",
+                failedStep=result.get("failedStep"),
+                finishedAt=now_iso(),
+            )
+            return
+        _update_dependency_operation(operation, phase="rechecking", progress=96)
+        rechecked = get_single_skill_dependency_status(operation["skill"])
+        _update_dependency_operation(
+            operation,
+            status="completed",
+            phase="completed",
+            progress=100,
+            completedSteps=operation.get("totalSteps", 0),
+            result={"dependency": rechecked},
+            finishedAt=now_iso(),
+        )
+    except Exception as exc:
+        _update_dependency_operation(
+            operation,
+            status="failed",
+            phase="failed",
+            errorCode="operation_error",
+            error=str(exc),
+            finishedAt=now_iso(),
+        )
+    finally:
+        with operation["condition"]:
+            operation["_process"] = None
+
+
+def create_skill_dependency_operation(name, capability, action, fingerprint):
+    supplied_fingerprint = str(fingerprint or "").strip()
+    with _dependency_operation_lock:
+        active = next((
+            item for item in _dependency_operations.values()
+            if item.get("status") not in _DEPENDENCY_OPERATION_TERMINAL
+        ), None)
+        if active:
+            if (
+                active["skill"] == name
+                and active["capability"] == capability
+                and active["action"] == action
+                and active["plan"].get("fingerprint") == supplied_fingerprint
+            ):
+                return active
+            raise ValueError("Another dependency operation is already running.")
+
+    plan = preview_skill_dependency_operation(name, capability, action)
+    if not supplied_fingerprint or supplied_fingerprint != plan.get("fingerprint"):
+        raise ValueError("Dependency state changed. Review and confirm the operation plan again.")
+    if plan.get("blockedReasons"):
+        raise ValueError("Dependency operation is blocked by a missing local runtime.")
+    if not plan.get("actionable"):
+        raise ValueError("Dependency operation has no managed-runtime changes to apply.")
+
+    with _dependency_operation_lock:
+        active = next((
+            item for item in _dependency_operations.values()
+            if item.get("status") not in _DEPENDENCY_OPERATION_TERMINAL
+        ), None)
+        if active:
+            if (
+                active["skill"] == name
+                and active["capability"] == capability
+                and active["action"] == action
+                and active["plan"].get("fingerprint") == supplied_fingerprint
+            ):
+                return active
+            raise ValueError("Another dependency operation is already running.")
+        operation_id = uuid.uuid4().hex
+        condition = threading.Condition(threading.RLock())
+        operation = {
+            "id": operation_id,
+            "skill": name,
+            "capability": capability,
+            "action": action,
+            "status": "pending",
+            "phase": "pending",
+            "progress": 0,
+            "currentStep": 0,
+            "completedSteps": 0,
+            "totalSteps": len(plan.get("steps") or []),
+            "currentCommand": "",
+            "createdAt": now_iso(),
+            "startedAt": "",
+            "finishedAt": "",
+            "version": 1,
+            "cancelRequested": False,
+            "errorCode": "",
+            "error": "",
+            "failedStep": None,
+            "result": None,
+            "plan": plan,
+            "condition": condition,
+            "cancelEvent": threading.Event(),
+            "_process": None,
+        }
+        _dependency_operations[operation_id] = operation
+        if len(_dependency_operations) > 50:
+            terminal = sorted(
+                (
+                    item for item in _dependency_operations.values()
+                    if item.get("status") in _DEPENDENCY_OPERATION_TERMINAL
+                ),
+                key=lambda item: item.get("createdAt", ""),
+            )
+            for old in terminal[:max(0, len(_dependency_operations) - 50)]:
+                _dependency_operations.pop(old["id"], None)
+    threading.Thread(target=_dependency_operation_worker, args=(operation,), daemon=True).start()
+    return operation
+
+
+def get_skill_dependency_operation(operation_id):
+    with _dependency_operation_lock:
+        return _dependency_operations.get(str(operation_id or ""))
+
+
+def list_skill_dependency_operations(skill_name=""):
+    with _dependency_operation_lock:
+        operations = list(_dependency_operations.values())
+    if skill_name:
+        operations = [item for item in operations if item.get("skill") == skill_name]
+    operations.sort(key=lambda item: item.get("createdAt", ""), reverse=True)
+    return [_dependency_operation_snapshot(item) for item in operations[:20]]
+
+
+def cancel_skill_dependency_operation(operation_id):
+    with _dependency_operation_lock:
+        operation = _dependency_operations.get(str(operation_id or ""))
+        if not operation:
+            return None
+        if operation.get("status") in _DEPENDENCY_OPERATION_TERMINAL:
+            _dependency_operations.pop(operation["id"], None)
+            operation["dismissed"] = True
+            return operation
+    operation["cancelEvent"].set()
+    _update_dependency_operation(
+        operation,
+        cancelRequested=True,
+        phase="cancelling",
+    )
+    return operation
 
 
 def read_skill(name, brief=False):
@@ -6575,8 +6865,33 @@ class CodeHandler(BaseHTTPRequestHandler):
             if route == "/api/memory-context":
                 self.send_json(load_memory_context())
                 return
+            if route == "/api/skills/dependencies/operations":
+                skill_name = (query.get("skill") or [""])[0]
+                self.send_json({"operations": list_skill_dependency_operations(skill_name)})
+                return
+            if route.startswith("/api/skills/dependencies/operations/"):
+                operation_id = route.rsplit("/", 1)[-1]
+                operation = get_skill_dependency_operation(operation_id)
+                if not operation:
+                    self.send_json({"error": "Dependency operation not found"}, 404)
+                    return
+                version = max(0, int((query.get("version") or [0])[0] or 0))
+                wait_seconds = max(0.0, min(float((query.get("wait") or [0])[0] or 0), 30.0))
+                with operation["condition"]:
+                    if (
+                        operation.get("version", 0) <= version
+                        and operation.get("status") not in _DEPENDENCY_OPERATION_TERMINAL
+                        and wait_seconds > 0
+                    ):
+                        operation["condition"].wait(timeout=wait_seconds)
+                self.send_json(_dependency_operation_snapshot(operation))
+                return
             if route == "/api/skills/dependencies":
                 self.send_json(get_skill_dependency_status())
+                return
+            if route.startswith("/api/skills/") and route.endswith("/dependencies"):
+                skill_name = parse.unquote(route[len("/api/skills/"):-len("/dependencies")]).strip("/")
+                self.send_json(get_single_skill_dependency_status(skill_name))
                 return
             if route.startswith("/api/skills/") and route.endswith("/file"):
                 # GET /api/skills/{name}/file?path=references/xxx.md
@@ -6803,6 +7118,25 @@ class CodeHandler(BaseHTTPRequestHandler):
             if self.path == "/api/skills":
                 self.create_skill_handler()
                 return
+            if self.path == "/api/skills/dependencies/plan":
+                body = self.read_body_json()
+                plan = preview_skill_dependency_operation(
+                    (body.get("skill") or "").strip(),
+                    (body.get("capability") or "").strip(),
+                    (body.get("action") or "").strip(),
+                )
+                self.send_json(public_dependency_operation_plan(plan))
+                return
+            if self.path == "/api/skills/dependencies/operations":
+                body = self.read_body_json()
+                operation = create_skill_dependency_operation(
+                    (body.get("skill") or "").strip(),
+                    (body.get("capability") or "").strip(),
+                    (body.get("action") or "").strip(),
+                    body.get("fingerprint") or "",
+                )
+                self.send_json(_dependency_operation_snapshot(operation), 201)
+                return
             if self.path == "/api/tools/use_skill":
                 self.tool_use_skill()
                 return
@@ -6905,6 +7239,14 @@ class CodeHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         try:
+            if self.path.startswith("/api/skills/dependencies/operations/"):
+                operation_id = parse.urlparse(self.path).path.rsplit("/", 1)[-1]
+                operation = cancel_skill_dependency_operation(operation_id)
+                if not operation:
+                    self.send_json({"error": "Dependency operation not found"}, 404)
+                else:
+                    self.send_json(_dependency_operation_snapshot(operation))
+                return
             if self.path.startswith("/api/agent/runs/"):
                 run_id = parse.urlparse(self.path).path.rsplit("/", 1)[-1]
                 run = _cancel_agent_run(run_id)

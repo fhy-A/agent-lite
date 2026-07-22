@@ -445,7 +445,11 @@ class TestSkillsCRUD(unittest.TestCase):
                     {"type": "python", "name": "requests", "minimumVersion": "2.0"},
                 ],
                 "optional": [
-                    {"type": "command", "name": "git"},
+                    {
+                        "type": "command",
+                        "name": "git",
+                        "installHint": "Windows PowerShell: winget install --id Git.Git --exact",
+                    },
                 ],
             },
         }

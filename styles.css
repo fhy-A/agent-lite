@@ -4778,6 +4778,7 @@ body.theme-dark .syn-fn { color: #61afef; }
 .skill-dependency-card-head { margin-bottom: 8px; }
 .skill-dependency-card-head .skill-detail-label { margin: 0; }
 .skill-dependency-card-meta { display: inline-flex; align-items: center; gap: 8px; }
+.skill-dependency-card-meta .mini-btn { white-space: nowrap; }
 .skill-dependency-source {
   flex: 0 0 auto; padding: 2px 7px;
   border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line)); border-radius: 999px;
@@ -4825,6 +4826,69 @@ body.theme-dark .syn-fn { color: #61afef; }
 }
 .skill-dependency-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .skill-dependency-chip-version { color: var(--faint); white-space: nowrap; }
+.skill-dependency-capability-actions {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;
+}
+.skill-dependency-capability-actions .mini-btn:disabled,
+.skill-dependency-operation-actions .mini-btn:disabled { opacity: .5; cursor: not-allowed; }
+.skill-dependency-system-hints {
+  display: grid; gap: 6px; margin-top: 8px; padding: 8px 9px;
+  border: 1px solid color-mix(in srgb, var(--yellow) 34%, var(--line)); border-radius: 7px;
+  background: color-mix(in srgb, var(--yellow) 7%, var(--panel));
+}
+.skill-dependency-system-title { color: var(--yellow); font-size: 11px; font-weight: 700; }
+.skill-dependency-system-hint { display: grid; gap: 4px; min-width: 0; color: var(--muted); font-size: 11px; }
+.skill-dependency-system-hint code,
+.skill-dependency-current-command,
+.skill-dependency-plan-locations code,
+.skill-dependency-plan-commands code {
+  display: block; max-width: 100%; padding: 4px 6px; overflow-wrap: anywhere;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent); border-radius: 5px;
+  background: var(--panel); color: var(--text); font: 10.5px/1.5 Consolas, "Cascadia Mono", monospace;
+}
+.skill-dependency-operation-plan,
+.skill-dependency-operation-state {
+  display: grid; gap: 8px; margin-top: 9px; padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
+  color: var(--muted); font-size: 11px; line-height: 1.5;
+}
+.skill-dependency-operation-plan.is-loading { color: var(--muted); }
+.skill-dependency-operation-plan.is-error,
+.skill-dependency-operation-state.is-failed { border-color: color-mix(in srgb, var(--red) 36%, var(--line)); }
+.skill-dependency-operation-state.is-completed { border-color: color-mix(in srgb, var(--green) 34%, var(--line)); }
+.skill-dependency-operation-state.is-cancelled { border-color: color-mix(in srgb, var(--yellow) 32%, var(--line)); }
+.skill-dependency-operation-plan-head,
+.skill-dependency-operation-state-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.skill-dependency-operation-plan-head strong,
+.skill-dependency-operation-state-head strong { color: var(--text); font-size: 11.5px; }
+.skill-dependency-operation-plan-head span,
+.skill-dependency-operation-state-head span { color: var(--accent); font-weight: 650; }
+.skill-dependency-operation-plan dl { display: grid; gap: 7px; margin: 0; }
+.skill-dependency-operation-plan dl > div { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px; }
+.skill-dependency-operation-plan dt { color: var(--faint); }
+.skill-dependency-operation-plan dd { min-width: 0; margin: 0; color: var(--text); }
+.skill-dependency-plan-locations,
+.skill-dependency-plan-commands { display: grid; gap: 5px; }
+.skill-dependency-plan-locations > div { display: grid; gap: 3px; }
+.skill-dependency-plan-locations > div > span { color: var(--faint); font-size: 10px; }
+.skill-dependency-plan-notice,
+.skill-dependency-recovery-hint { color: var(--muted); }
+.skill-dependency-plan-notice.is-error,
+.skill-dependency-operation-error { color: var(--red); }
+.skill-dependency-operation-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.skill-dependency-progress {
+  height: 4px; overflow: hidden; border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 75%, transparent);
+}
+.skill-dependency-progress > span {
+  display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .2s ease;
+}
+.skill-dependency-operation-state.is-completed .skill-dependency-progress > span { background: var(--green); }
+.skill-dependency-operation-state.is-failed .skill-dependency-progress > span { background: var(--red); }
+.skill-dependency-operation-meta { color: var(--faint); font-size: 10px; }
 
 /* ── Unified Settings Page ── */
 .settings-page-card {

@@ -4,6 +4,7 @@ data/agent-runs/
 data/attachments/
 data/file-backups/
 data/config.json
+data/runtime/
 
 # Python
 __pycache__/

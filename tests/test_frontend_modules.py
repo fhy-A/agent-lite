@@ -75,6 +75,26 @@ class TestFrontendCoreModules(unittest.TestCase):
         ):
             self.assertEqual(I18N_SOURCE.count(f"{field}:"), 2)
 
+    def test_workbar_gate_keeps_api_key_phrase_on_its_own_line(self):
+        for key in ("connectWorkbarDescPrimary", "connectWorkbarDescSecondary"):
+            self.assertEqual(I18N_SOURCE.count(f"{key}:"), 2)
+        self.assertNotIn("connectWorkbarDesc:", I18N_SOURCE)
+        self.assertIn('class="${expired || unavailable ? "" : "platform-auth-description"}"', SETTINGS_SOURCE)
+        self.assertIn('t("connectWorkbarDescPrimary")', SETTINGS_SOURCE)
+        self.assertIn('t("connectWorkbarDescSecondary")', SETTINGS_SOURCE)
+        self.assertIn(".platform-auth-description span { display: block; }", STYLE_SOURCE)
+
+    def test_legacy_onboarding_is_removed_from_startup(self):
+        self.assertNotIn('id="onboardingOverlay"', INDEX_SOURCE)
+        self.assertNotIn(".onboarding-overlay", STYLE_SOURCE)
+        self.assertNotIn("function shouldShowOnboarding(", SETTINGS_SOURCE)
+        self.assertNotIn("function showOnboarding(", SETTINGS_SOURCE)
+        self.assertNotIn("shouldShowOnboarding", APP_SOURCE)
+        self.assertNotIn("showOnboarding", APP_SOURCE)
+        self.assertNotRegex(I18N_SOURCE, r"\bobo(?:Welcome|Feat|Start|Step)")
+        self.assertIn('localStorage.removeItem("code-onboarding")', APP_SOURCE)
+        self.assertIn('localStorage.removeItem("agent-lite-onboarding")', APP_SOURCE)
+
     def test_composer_controls_do_not_implicitly_submit_prompt(self):
         form_start = INDEX_SOURCE.index('<form id="chatForm"')
         form_end = INDEX_SOURCE.index("</form>", form_start)
@@ -2306,9 +2326,6 @@ process.stdout.write(JSON.stringify({
             "function setUpdateNotice(",
             "async function checkForUpdates(",
             "function renderUpdatePanel(",
-            "function shouldShowOnboarding(",
-            "function markOnboardingDone(",
-            "function showOnboarding(",
             "function getPlatformUrl(",
             "function getPlatformAuth(",
             "function savePlatformAuth(",

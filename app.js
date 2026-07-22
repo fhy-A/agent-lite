@@ -66,7 +66,7 @@ function upgradeStaticIcons() {
   if (cwdIcon) cwdIcon.innerHTML = uiIcon("folderOpen");
   const explorerArrow = document.querySelector(".explorer-arrow");
   if (explorerArrow) explorerArrow.innerHTML = '<svg class="ui-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 10 4 4 4-4"/></svg>';
-  document.querySelectorAll(".icon-btn, .onboarding-close").forEach((el) => {
+  document.querySelectorAll(".icon-btn").forEach((el) => {
     el.innerHTML = uiIcon("close");
     if (!el.getAttribute("aria-label")) el.setAttribute("aria-label", el.title || "关闭");
   });
@@ -941,8 +941,6 @@ const {
   applyTheme,
   checkForUpdates,
   initializePlatformAuth,
-  shouldShowOnboarding,
-  showOnboarding,
   syncPlatformKeysSilently,
 } = settingsFeature;
 settingsFeature.bind();
@@ -9917,7 +9915,7 @@ async function init() {
       "pinned", "model", "base-url", "temperature", "max-tokens",
       "thinking", "tool-preset", "recent-folders", "sort-mode", "sort-asc",
       "theme", "platform-url", "update-seen-settings",
-      "update-seen-page", "onboarding"
+      "update-seen-page"
     ];
     let migrated = 0;
     for (const k of keyMap) {
@@ -9932,6 +9930,8 @@ async function init() {
   })();
 
   migrateLegacyKeyConfig(localStorage);
+  localStorage.removeItem("code-onboarding");
+  localStorage.removeItem("agent-lite-onboarding");
 
   bindAuthorizationPanel();
   bindUserInputPanel();
@@ -10043,9 +10043,6 @@ async function init() {
   // Check releases in the background. Update failures must never delay or
   // interrupt startup; the settings indicators appear only for a newer build.
   void checkForUpdates({ silent: true });
-
-  // Show onboarding if first launch or version changed
-  if (shouldShowOnboarding()) { showOnboarding(); }
 
   await refreshSessions();
 

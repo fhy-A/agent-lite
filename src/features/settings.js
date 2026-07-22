@@ -307,13 +307,18 @@
       const validating = reason === "validating";
       const unavailable = reason === "unavailable";
       const expired = reason === "expired";
+      const description = expired
+        ? t("workbarSessionExpired")
+        : unavailable
+          ? t("workbarUnavailable")
+          : `<span>${t("connectWorkbarDescPrimary")}</span><span>${t("connectWorkbarDescSecondary")}</span>`;
       const overlay = documentRef.createElement("div");
       overlay.id = "platformAuthGate";
       overlay.className = "platform-auth-gate";
       overlay.innerHTML = `<section class="platform-auth-card" role="dialog" aria-modal="true" aria-labelledby="platformAuthTitle">
         <div class="platform-auth-brand"><span class="platform-auth-mark" aria-hidden="true">W</span><span>Workbar</span></div>
         <h1 id="platformAuthTitle">${t("connectWorkbarTitle")}</h1>
-        <p>${expired ? t("workbarSessionExpired") : unavailable ? t("workbarUnavailable") : t("connectWorkbarDesc")}</p>
+        <p class="${expired || unavailable ? "" : "platform-auth-description"}">${description}</p>
         ${validating ? `<div class="platform-auth-progress"><span class="platform-auth-spinner" aria-hidden="true"></span>${t("validatingWorkbar")}</div>` : `<button id="platformAuthAction" class="platform-auth-action" type="button">${unavailable ? t("retryValidation") : t("connectWorkbarAction")}</button>`}
         <small>${t("workbarAuthHint")}</small>
       </section>`;
@@ -1016,58 +1021,6 @@
       return true;
     }
 
-    function shouldShowOnboarding() {
-      return !storage?.getItem("code-onboarding");
-    }
-
-    function markOnboardingDone() {
-      storage?.setItem("code-onboarding", "1");
-    }
-
-    function showOnboarding() {
-      const overlay = byId("onboardingOverlay");
-      if (!overlay) return;
-      overlay.classList.remove("hidden");
-      let step = 0;
-      const steps = [
-        { title: t("oboWelcome"), desc: t("oboWelcomeDesc"), features: [String.fromCodePoint(0x1F4D6) + " " + t("oboFeat1"), String.fromCodePoint(0x1F527) + " " + t("oboFeat2"), String.fromCodePoint(0x1F4BB) + " " + t("oboFeat3"), String.fromCodePoint(0x1F512) + " " + t("oboFeat4")] },
-        { title: `1/4 ${t("oboStep1")}`, desc: t("oboStep1Desc"), items: [t("oboStep1Item1"), t("oboStep1Item2"), t("oboStep1Item3")], tip: t("oboStep1Tip") },
-        { title: `2/4 ${t("oboStep2")}`, desc: t("oboStep2Desc"), items: [t("oboStep2Item1"), t("oboStep2Item2")], tip: t("oboStep2Tip") },
-        { title: `3/4 ${t("oboStep3")}`, desc: t("oboStep3Desc"), example: `"${t("oboStep3Example")}"` },
-        { title: `4/4 ${t("oboStep4")}`, desc: t("oboStep4Desc"), table: [[String.fromCodePoint(0x1F6E1) + " Plan", t("oboStep4Item1")], [String.fromCodePoint(0x270B) + " Accept Edits", t("oboStep4Item2")], [String.fromCodePoint(0x26A1) + " Auto", t("oboStep4Item3")]], tip: t("oboStep4Tip") },
-      ];
-
-      function close() {
-        overlay.classList.add("hidden");
-        markOnboardingDone();
-      }
-
-      function render() {
-        const data = steps[step];
-        byId("onboardingDots").innerHTML = steps.map((_, index) => `<span class="onboarding-dot${index === step ? " active" : ""}"></span>`).join("");
-        let html = data.title ? `<h2>${data.title}</h2>` : "";
-        if (data.desc) html += `<p class="obo-desc">${data.desc}</p>`;
-        if (data.features) html += `<div class="obo-features">${data.features.map((feature) => `<div class="obo-feat-item">${feature}</div>`).join("")}</div>`;
-        if (data.items) html += `<ol>${data.items.map((item) => `<li>${item}</li>`).join("")}</ol>`;
-        if (data.example) html += `<p style="background:var(--panel-2);border-radius:8px;padding:12px 16px;font-style:italic;color:var(--accent)">${data.example}</p>`;
-        if (data.tip) html += `<div class="obo-tip">${data.tip}</div>`;
-        if (data.table) html += `<table>${data.table.map((row) => `<tr><td>${row[0]}</td><td>${row[1]}</td></tr>`).join("")}</table>`;
-        byId("onboardingBody").innerHTML = html;
-        let buttons = step > 0 ? `<button class="mini-btn" id="oboBack">${t("oboBack")}</button>` : `<button class="mini-btn" id="oboSkipAll">${t("oboSkip")}</button>`;
-        buttons += step < steps.length - 1
-          ? `<button class="mini-btn primary-btn" id="oboNext">${step === 0 ? t("oboStart") : t("oboNext")}</button>`
-          : `<button class="mini-btn primary-btn" id="oboDone">${t("oboDone")}</button>`;
-        byId("onboardingActions").innerHTML = buttons;
-        byId("oboBack")?.addEventListener("click", () => { step -= 1; render(); });
-        byId("oboNext")?.addEventListener("click", () => { step += 1; render(); });
-        byId("oboSkipAll")?.addEventListener("click", close);
-        byId("oboDone")?.addEventListener("click", close);
-      }
-
-      byId("onboardingClose").onclick = close;
-      render();
-    }
-
     function switchSettingsPanel(panel) {
       documentRef.querySelectorAll(".settings-nav-item").forEach((element) => {
         element.classList.toggle("active", element.dataset.panel === panel);
@@ -1185,8 +1138,6 @@
       saveKeyConfig,
       serializeKeys,
       openSettingsPage,
-      shouldShowOnboarding,
-      showOnboarding,
       syncKeysFromPlatform,
       syncPlatformKeysSilently,
       switchSettingsPanel,

@@ -1,362 +1,273 @@
 # Code Agent 改造执行方案
 
-> 基于 [Codex/Claude Code Agent 设计分析报告](./codex-claude-code-agent-design-analysis.md)  
-> 版本：v1.0 · 2026-07-21
+> 基于 [Codex / Claude Code Agent 设计分析报告](./codex-claude-code-agent-design-analysis.md)
+>
+> 版本：v2.0 · 2026-07-22
+>
+> 实现基线：Code v0.5.6
 
 ---
 
-## 一、改造目标
+## 一、目标与边界
 
-将 code 的子 Agent 从「无差别后台自动 dispatch」升级为「可控、可配置、可参数化」的委托模式，同时为后续自动化任务和 Workflow 编排预留扩展点。
+下一阶段不再重做已经稳定的服务端 AgentRun，而是在其上解决两个真实缺口：
+
+1. 主任务运行期间，用户追加消息目前会无差别转成后台 AgentRun，容易把本应等待主任务上下文的补充说明提前执行。
+2. 模型委托子任务和用户并行任务得到的上下文过于精简，缺少统一、可预算、可审计的上下文契约。
+
+完成上述基础后，再增加结构化规划能力。Cron、Monitor 和 Workflow 属于更后期的自动化层，不应先于消息路由与上下文契约开发。
+
+本方案坚持以下边界：
+
+- 主任务、模型委托子任务和用户追加消息是三种不同语义，不再统称为“子 Agent”。
+- 权限仍由 `read / plan / accept / bypass` 四种硬策略决定，不新增重复的 `collaboration_mode`。
+- 不依赖关键词正则猜测用户是否想并行；并行必须由明确的 UI 或命令表达。
+- 不默认复制完整会话历史，不向子任务传递 API Key、授权 Token、内部凭据或模型隐藏推理。
+- 所有新增状态都必须可持久化、可恢复、可取消，并保持刷新和服务重启安全。
 
 ---
 
-## 二、分轮执行计划
+## 二、v0.5.6 当前架构基线
 
-### 第一轮：快速修复 + 基础（~3h）
+### 2.1 主 AgentRun
 
-#### 改造 1：explicitRequestOnly 模式
+- 四种权限模式的新任务均由服务端 AgentRun 连续完成模型调用和工具执行。
+- 浏览器只负责创建、观察事件、展示问卷与授权决定，并在服务重启后重新注入内存态凭据。
+- AgentRun 持久化消息、事件游标、轮次、工具执行、授权状态、用量和终态。
+- 同一个 `clientRequestId` 可幂等复用，刷新或丢失创建响应不会重复请求上游模型。
 
-**目标**：默认不自动 dispatch 子 Agent，只在用户/Skill 显式要求时才启用。
+### 2.2 模型委托子任务
 
-**现状**：
+- 主模型只有显式调用 `task` 工具时才会创建 Child AgentRun。
+- Child AgentRun 继承父任务的模型、权限与工具策略，但移除 `task` 和 `request_user_input`，不允许递归委托或直接弹问卷。
+- 同一模型轮次最多并发 3 个 Child AgentRun，超出部分等待槽位，工具结果仍按模型原始调用顺序回填。
+- 子任务授权由父任务代理；取消父任务会取消子任务；用量只合并一次。
+- 当前子任务上下文只有专用 system prompt 和 `task.prompt`，不会自动继承父会话历史。
+
+### 2.3 用户运行中追加消息
+
+- 当当前会话正在流式运行时，用户再次发送消息，前端会立即创建独立后台 AgentRun。
+- 后台任务全局最多并发 3 个、单会话最多 2 个，默认超时 10 分钟。
+- 后台任务有独立的模型、权限、思考强度、计时、用量、授权和恢复检查点。
+- 当前提示仅包含主任务开头约 150 字和新消息，无法可靠理解完整上下文。
+- 这条链路是当前最需要调整的部分；它与模型主动调用 `task` 不是同一问题。
+
+---
+
+## 三、分阶段执行计划
+
+### 阶段 1：运行中追加消息路由
+
+#### 目标
+
+将“运行时新消息自动后台执行”改为“默认排队给主 Agent，用户可明确选择并行”。
+
+#### 产品行为
+
+```text
+主任务运行中再次发送消息
+  ├─ 普通发送              → 加入当前会话主队列（默认）
+  ├─ /parallel <任务>      → 创建独立后台 AgentRun
+  └─ 发送菜单选择“并行处理” → 创建独立后台 AgentRun
 ```
-用户发消息 → dispatchBackgroundSubAgent(msg)
-  → 不管主Agent在干什么，直接创建子Agent处理
-  → 子Agent只能拿到精简摘要，缺乏上下文判断
-```
 
-**目标行为**：
-```
-用户发消息 → 检查 dispatch 模式
-  ├─ "explicit"（默认）→ 排队等主Agent空闲
-  ├─ "auto"            → 当前行为（自动后台dispatch）
-  └─ "off"             → 禁用，所有消息等主Agent
-```
+不增加基于“子 Agent、并行、后台”等关键词的自动分类器。文本内容不应隐式改变执行方式。
 
-**改动文件**：
+#### 主队列契约
+
+每条排队消息至少保存：
+
+- 稳定消息 ID 与 `clientRequestId`
+- 原始文本和图片引用
+- 提交时间
+- 提交时选择的模型、权限模式、思考强度和工具预设
+- 状态：`queued / starting / running / completed / cancelled / failed`
+
+主任务结束后按 FIFO 启动下一条消息。新任务使用“最新已完成会话上下文 + 发送时配置快照”，既能看到前一任务结果，也不会被用户之后切换模型或模式影响。
+
+#### UI 反馈
+
+- 消息旁显示“等待当前任务完成”。
+- 用户可以取消尚未启动的排队消息。
+- 并行消息沿用现有紧凑回复引用、独立状态和计时。
+- 停止当前主任务不能误删后续排队消息；清空会话必须明确处理整个队列。
+
+#### 主要改动位置
 
 | 文件 | 改动 |
-|------|------|
-| `app.js` | `dispatchBackgroundSubAgent` 入口加模式判断；加 `_subAgentDispatchMode` 状态字段 |
-| `settings.js` | 设置面板加 "子Agent调度" 下拉选项 |
-| `i18n.js` | 新增 `subAgentDispatchMode` / `subAgentExplicit` / `subAgentAuto` / `subAgentOff` 键 |
-| `index.html` | 设置面板加对应的 `<select>` |
+|---|---|
+| `app.js` | 拆分普通排队与显式并行入口；新增持久队列投影与自动前进逻辑 |
+| `agent-runtime.js` | 复用现有稳定 `clientRequestId` 创建与恢复协议 |
+| `src/ui/messages.js` | 展示排队状态、取消入口和并行回复引用 |
+| `src/core/i18n.js` | 增加队列和并行操作的中英文文案 |
+| `tests/` | 覆盖 FIFO、刷新恢复、配置快照、取消和显式并行 |
 
-**核心代码**（`app.js`）：
+#### 验收标准
 
-```js
-// 在 dispatchBackgroundSubAgent 入口处
-const SUB_AGENT_MODES = {
-  explicit: "explicit",  // 默认：仅显式触发
-  auto: "auto",          // 当前行为
-  off: "off",            // 禁用
-};
-
-function shouldDispatchToSubAgent(msg, ctx) {
-  const mode = state._subAgentDispatchMode || "explicit";
-  if (mode === "off") return false;
-  if (mode === "auto") return true;
-  // explicit: only dispatch if user/skill explicitly requests it
-  if (ctx?.explicitSubAgent) return true;
-  if (isExplicitSubAgentTrigger(msg)) return true;
-  return false;
-}
-
-function isExplicitSubAgentTrigger(msg) {
-  // User typed something like "让子Agent帮我..." or used a skill that declares subAgent: true
-  const text = getMsgText(msg) || "";
-  const skill = matchSkillTrigger(text);
-  if (skill?.subAgent) return true;
-  return /子.?agent|后台.*处理|并行|委托|分头/.test(text);
-}
-```
-
-**测试点**：
-- 默认模式下用户发消息 → 不 dispatch，排队等主Agent
-- 用户说"让子Agent查一下文档" → dispatch
-- auto 模式 → 行为与当前一致
-- off 模式 → 永远不 dispatch
+1. 主任务运行时普通发送 3 条消息，三条均按顺序等待，不创建后台 AgentRun。
+2. `/parallel` 或明确的并行操作只创建对应的一条后台 AgentRun。
+3. 刷新页面后主队列、后台任务和当前主任务分别恢复，不重复请求。
+4. 排队消息启动时能看到上一任务最终结果。
+5. 模型、权限和思考强度使用消息发送时快照。
+6. 取消排队消息不影响正在运行的主任务或其他后台任务。
 
 ---
 
-#### 改造 4：collaboration_mode 会话标记
+### 阶段 2：统一委托上下文契约
 
-**目标**：给每个 session 加 `mode` 字段，控制 Agent 行为倾向。
+#### 目标
 
-**模式定义**：
+为模型 `task` 委托与用户显式并行任务提供同一个受预算约束的 Context Envelope，避免只传一句 prompt，也避免无上限复制全部历史。
 
-| mode | 含义 | System Prompt 注入 |
-|------|------|--------------------|
-| `default` | 正常模式 | 无额外约束 |
-| `plan` | 仅规划，不执行 | "You are in plan mode. Do NOT make any file changes. Only propose and explain." |
-| `auto` | 自动执行，少确认 | "You are in auto mode. Proceed with changes without asking unless the operation is irreversible." |
+#### Context Envelope 建议结构
 
-**改动文件**：
-
-| 文件 | 改动 |
-|------|------|
-| `app.js` | `buildRunContext` 读取 session mode；`sendMessage` 传递 mode 给 system prompt |
-| `server.py` | session 存储 schema 加 `mode` 字段（默认 `"default"`） |
-| `i18n.js` | 新增 `collabModeDefault` / `collabModePlan` / `collabModeAuto` |
-| `index.html` | 输入框旁加 mode 切换下拉 |
-
-**核心代码**（`app.js`）：
-
-```js
-// buildRunContext
-const COLLAB_MODES = ["default", "plan", "auto"];
-
-function buildRunContext(sessionId) {
-  // ...existing logic...
-  const sessionMode = getSessionMode(sessionId) || "default";
-  return {
-    // ...existing fields...
-    collaborationMode: sessionMode,
-  };
-}
-
-// sendMessage → buildModelRequestPayload
-function injectModeDirective(systemPrompt, mode) {
-  if (mode === "plan") {
-    return systemPrompt + "\n\n**MODE: PLAN ONLY.** Do not make any file changes. "
-      + "Propose edits, explain your reasoning, but do NOT call write_file, delete_file, "
-      + "or any command that modifies the filesystem.";
-  }
-  if (mode === "auto") {
-    return systemPrompt + "\n\n**MODE: AUTO.** Proceed with changes without asking "
-      + "for confirmation unless an operation is irreversible (rm -rf, dropping tables, etc.).";
-  }
-  return systemPrompt;
+```json
+{
+  "objective": "当前子任务目标",
+  "parentObjective": "父任务目标摘要",
+  "currentStage": "父任务当前执行阶段",
+  "project": {
+    "root": "项目根目录",
+    "relevantFiles": []
+  },
+  "conversation": {
+    "summary": "已确认事实与决策",
+    "recentVisibleTurns": []
+  },
+  "policy": {
+    "permissionProfile": "read|plan|accept|bypass",
+    "allowedTools": []
+  },
+  "constraints": [],
+  "expectedOutput": "结果格式与验证要求"
 }
 ```
 
-**测试点**：
-- plan 模式下 Agent 不会调用 write_file
-- auto 模式下权限审批自动通过
-- session 重载后 mode 保持
+#### 上下文选择原则
+
+- 默认传递结构化摘要和少量相关可见轮次，而不是完整消息数组。
+- 最近轮次必须过滤 UI 内部标记、错误恢复残留、重复工具投影和敏感字段。
+- API Key、Workbar access token、Authorization 头、请求原文凭据和隐藏推理永不进入 Envelope。
+- Envelope 有独立 Token 预算；超限时先压缩最近轮次，再减少文件证据，最后保留目标、决策和约束。
+- 只有用户明确要求完整上下文且预算允许时，才可使用 full 模式；full 仍要执行安全过滤。
+- Envelope 版本写入 AgentRun，便于恢复、测试和以后迁移。
+
+#### 实现方向
+
+- 在服务端建立统一的 `build_delegation_context(...)`，作为长期唯一事实源。
+- 模型 `task` 工具可增加可选的 `contextHint`，但不能让模型直接选择敏感字段。
+- 用户并行任务由前端提交任务语义，服务端结合会话快照生成 Envelope。
+- Child AgentRun 记录 Envelope 摘要、版本和预算使用，不保存凭据。
+
+#### 验收标准
+
+1. 子任务能引用父任务已经确认的文件、决策和约束。
+2. 无关长历史不会显著增加输入 Token。
+3. 安全测试确认 Key、Token 和授权头不会进入持久化 Envelope。
+4. 同一 Envelope 在刷新和服务重启后保持一致。
+5. 上下文超限时按确定规则降级，并留下可观测原因。
 
 ---
 
-### 第二轮：子 Agent 能力升级（~7h）
+### 阶段 3：结构化规划任务能力
 
-#### 改造 2：fork_turns 上下文参数化
+#### 目标
 
-**目标**：子 Agent 的上下文继承不再是固定的精简摘要，改为可配置。
+在现有 AgentRun 和 `task` 工具之上增加持久化计划，而不是另建一套浏览器 Workflow 引擎。
 
-**上下文模式**：
+#### 最小计划模型
 
-| 模式 | fork_turns 值 | 行为 |
-|------|--------------|------|
-| `summary`（默认） | — | 当前行为：精简摘要 |
-| `all` | `"all"` | 完整消息历史 fork |
-| `last-N` | 正整数 | 最近 N 条消息 |
-
-**改动文件**：
-
-| 文件 | 改动 |
-|------|------|
-| `app.js` | `dispatchBackgroundSubAgent` 接受 `contextMode` 参数；`buildSubAgentContext` 根据模式构造消息列表 |
-| `agent-runtime.js` | 子 Agent 创建时传递 `fork_turns` / `contextMode` |
-| `server.py` | 子 Agent session 创建接口支持 `contextMode` 参数 |
-
-**核心代码**（`app.js`）：
-
-```js
-async function dispatchBackgroundSubAgent(userMsg, options = {}) {
-  const contextMode = options.contextMode || state._subAgentContextMode || "summary";
-
-  let inheritedMessages;
-  if (contextMode === "all") {
-    // Full fork: clone all messages except internal markers
-    inheritedMessages = state.messages
-      .filter(m => !isInternalMessage(m) && !m.meta?.kind?.startsWith("error-"))
-      .map(m => sanitizeForSubAgent(m));
-  } else if (typeof contextMode === "number") {
-    // Last N messages
-    inheritedMessages = state.messages.slice(-contextMode)
-      .filter(m => !isInternalMessage(m))
-      .map(m => sanitizeForSubAgent(m));
-  } else {
-    // summary mode (default): compact the conversation
-    inheritedMessages = await buildContextSummary(state.messages);
-  }
-
-  const subCtx = buildSubAgentContext(userMsg, inheritedMessages, options);
-  // ...rest of dispatch logic...
-}
-
-function sanitizeForSubAgent(msg) {
-  // Strip UI-only fields but keep role/content/thought/tool info
-  return {
-    role: msg.role,
-    content: msg.content,
-    thought: msg.thought,
-    meta: {
-      action: msg.meta?.action,
-      path: msg.meta?.path,
-      toolCalls: msg.meta?.toolCalls,
-    },
-  };
-}
-```
-
-**测试点**：
-- `contextMode: "all"` → 子 Agent 能看到完整历史
-- `contextMode: 10` → 子 Agent 只能看到最近 10 条
-- `contextMode: "summary"` → 行为与当前一致
-- 不同模式下的子 Agent 输出质量对比
-
----
-
-#### 改造 6：并发槽位管理
-
-**目标**：限制同时活跃的子 Agent 数量，防止资源耗尽。
-
-**当前问题**：
-- 后台 dispatch 无上限，快速连续发消息可能创建大量子 Agent
-- 每个子 Agent 持有独立 session 和 API 连接
-
-**目标行为**：
-- 最多 3 个并发子 Agent 槽位
-- 超出的请求排队（FIFO）
-- 槽位释放在 Agent 完成后自动触发
-
-**改动文件**：
-
-| 文件 | 改动 |
-|------|------|
-| `app.js` | `state._subAgentSlots` 槽位管理器；`dispatchBackgroundSubAgent` 入队逻辑 |
-| `agent-runtime.js` | 子 Agent 完成/失败时回调释放槽位 |
-
-**核心代码**（`app.js`）：
-
-```js
-const MAX_SUB_AGENT_SLOTS = 3;
-
-function ensureSubAgentSlots() {
-  if (!state._subAgentSlots) {
-    state._subAgentSlots = {
-      active: new Map(),     // slotId → { agentRunId, sessionId, startedAt }
-      queue: [],             // pending dispatch items
-      max: MAX_SUB_AGENT_SLOTS,
-    };
-  }
-  return state._subAgentSlots;
-}
-
-async function dispatchBackgroundSubAgent(userMsg, options = {}) {
-  const slots = ensureSubAgentSlots();
-
-  if (slots.active.size >= slots.max) {
-    // Queue the dispatch
-    return new Promise((resolve) => {
-      slots.queue.push({ userMsg, options, resolve });
-    });
-  }
-
-  return await executeSubAgentDispatch(userMsg, options);
-}
-
-function releaseSubAgentSlot(slotId) {
-  const slots = ensureSubAgentSlots();
-  slots.active.delete(slotId);
-
-  // Dequeue next pending dispatch
-  if (slots.queue.length > 0 && slots.active.size < slots.max) {
-    const next = slots.queue.shift();
-    executeSubAgentDispatch(next.userMsg, next.options)
-      .then(next.resolve);
+```json
+{
+  "planId": "...",
+  "objective": "...",
+  "steps": [
+    {
+      "id": "step-1",
+      "title": "...",
+      "dependsOn": [],
+      "status": "pending|running|blocked|completed|failed",
+      "assignee": "main|child",
+      "evidence": [],
+      "attempts": 0
+    }
+  ],
+  "budget": {
+    "maxRounds": 0,
+    "maxChildRuns": 0,
+    "deadlineAt": ""
   }
 }
 ```
 
-**测试点**：
-- 同时 dispatch 5 个消息 → 3 个立即执行，2 个排队
-- 子 Agent 完成后 → 槽位释放，队列前进
-- 用户取消 → 槽位清理
-- 跨 session 的槽位隔离
+#### 调度原则
+
+- 只有依赖全部完成的步骤才能进入 ready 状态。
+- 独立 ready 步骤可以复用现有 3 个 Child AgentRun 槽位并行执行。
+- 计划更新通过 AgentRun 事件持久化，浏览器只做投影。
+- 每个步骤必须记录验证证据，不以“模型说完成了”作为唯一完成条件。
+- 达到轮次、子任务或时间预算时暂停并向用户说明，而不是无限循环。
+
+#### 验收标准
+
+1. 刷新和服务重启后计划状态、依赖和证据保持一致。
+2. 不满足依赖的步骤不会提前执行。
+3. 并行步骤遵守现有并发上限，失败后按明确重试策略处理。
+4. 用户可暂停、继续或取消计划，不影响其他会话。
+5. 计划完成后给出步骤、改动、验证与未解决事项摘要。
 
 ---
 
-### 第三轮（按需）：自动化 + Workflow（~28h+）
+### 阶段 4（按需）：自动化与 Workflow
 
-#### 改造 3：/cron 定时任务
+只有阶段 1～3 稳定后再评估：
 
-**设计概要**：
-- 前端 `/cron` 命令 + 设置面板
-- Python 端 `Scheduler` 线程（`threading.Timer` + 队列）
-- 持久化到 `data/cron_jobs.json`
-- 支持 cron 表达式 + heartbeat 间隔
+- `/cron`：持久化定时任务和周期性任务。
+- Monitor：命令输出、文件变化或接口状态的事件驱动监控。
+- Workflow：在结构化计划之上提供串行、并行、循环和多评审模板。
+- Worktree 隔离：仅用于确实会产生冲突的并行写任务。
 
-**改造 5：Workflow 脚本**
-
-**设计概要**：
-- 轻量版，不实现完整 DSL
-- 前端 `/workflow` 命令接受简化的任务描述
-- parser 拆分 `step1 || step2 || step3`（并行）和 `step1 → step2 → step3`（串行）
-- 每个 step 作为一个独立 agent() 调用
+不直接执行任意 JavaScript DSL，不使用 `eval`，不让浏览器成为自动化任务的唯一执行宿主。
 
 ---
 
-## 三、风险矩阵
+## 四、已完成或不再实施的旧方案
 
-| 风险 | 概率 | 影响 | 缓解措施 |
-|------|------|------|---------|
-| 子Agent模式切换导致已有session行为异常 | 低 | 中 | 新字段默认值 = 当前行为，向后兼容 |
-| fork_turns: "all" 导致 API token 超限 | 中 | 中 | 加 token 计数器，超限自动降级为 summary |
-| 并发槽位死锁 | 低 | 高 | 加超时自动释放（5min）；用户可手动清理 |
-| collaboration_mode 与权限策略冲突 | 低 | 低 | mode 是"软约束"（system prompt 注入），权限策略是"硬约束"（工具拦截） |
-| 定时任务在 dev 模式下行为不一致 | 中 | 低 | 加 `--no-cron` flag；dev 模式默认禁用 cron |
-| Workflow 脚本注入风险 | 高 | 高 | 必须沙盒执行，不能直接 eval |
-
----
-
-## 四、回滚策略
-
-每个改造独立封装，可通过 settings 开关回退：
-
-| 改造 | 回退方式 |
-|------|---------|
-| explicitRequestOnly | 设置面板切回 "auto" 模式 |
-| fork_turns | 子 Agent 选项切回 "summary" |
-| /cron | 删除所有 cron job 即停止 |
-| collaboration_mode | 切回 "default" |
-| 并发槽位 | 设置 `MAX_SUB_AGENT_SLOTS = 999`（无限制） |
-| Workflow | 不用 `/workflow` 命令即可 |
+| 旧方案 | 当前决定 |
+|---|---|
+| 浏览器侧子 Agent 并发槽位 | 已由后台任务全局 3 / 单会话 2，以及服务端模型委托并发 3 实现 |
+| `collaboration_mode: default/plan/auto` | 不实施；与现有 `read / plan / accept / bypass` 权限重复 |
+| 默认 `fork_turns: all` | 不实施；改为有预算和安全过滤的 Context Envelope |
+| 关键词触发子 Agent | 不实施；显式 UI 或 `/parallel` 才表示并行 |
+| 浏览器 Workflow 负责持久化 | 不实施；服务端 AgentRun 是状态和恢复的唯一事实源 |
+| 递归 Agent Tree | 暂不实施；保持一层 Child AgentRun，降低授权和写冲突复杂度 |
 
 ---
 
-## 五、验收标准
+## 五、风险矩阵
 
-### 第一轮验收
-
-1. ✅ 默认模式下，用户连续发 3 条消息 → 全部排队等主Agent，不创建子Agent
-2. ✅ 用户说"让子Agent帮我查" → 创建子Agent
-3. ✅ 设置面板可切换 explicit/auto/off
-4. ✅ plan 模式下 Agent 拒绝 write_file 调用
-5. ✅ auto 模式下编辑自动审批
-
-### 第二轮验收
-
-1. ✅ 子Agent 在 fork_turns: "all" 模式下能引用完整对话历史
-2. ✅ 同时 dispatch 5 个消息 → 3 个活跃 + 2 个排队
-3. ✅ 子Agent 完成后槽位正确释放
-4. ✅ 现有测试全部通过
+| 风险 | 影响 | 缓解措施 |
+|---|---|---|
+| 主队列恢复后重复启动 | 高 | 稳定 `clientRequestId`、原子状态迁移、服务端幂等创建 |
+| 排队消息配置与当前 UI 不一致 | 中 | 提交时保存模型、权限、思考强度和工具预设快照 |
+| 上下文摘要遗漏关键决策 | 高 | 结构化决策字段、相关轮次证据、可观察降级原因 |
+| Envelope 泄漏敏感信息 | 高 | 服务端白名单序列化、凭据字段拒绝测试、持久化快照审计 |
+| 并行写入同一文件冲突 | 高 | 保留内容哈希/mtime 校验，必要时串行化或后续引入 worktree |
+| 计划无限循环或成本失控 | 高 | 轮次、子任务、时间预算与用户可见暂停状态 |
+| 队列 UI 过度复杂 | 中 | 第一版只提供等待、取消和显式并行，不做拖拽和优先级 |
 
 ---
 
-## 六、时间线
+## 六、执行顺序
 
+```text
+阶段 1：运行中追加消息路由
+  ↓ 自动测试 + 前端人工时序验收 + 独立提交
+阶段 2：统一委托上下文契约
+  ↓ 安全/Token/恢复测试 + 独立提交
+阶段 3：结构化规划任务能力
+  ↓ 依赖/并发/预算/恢复测试 + 独立提交
+阶段 4：Cron / Monitor / Workflow（按需）
 ```
-Week 1, Day 1-2:  第一轮（explicitRequestOnly + collaboration_mode）
-                   预计 3h 开发 + 1h 测试 = 4h
 
-Week 1, Day 3-4:  第二轮（fork_turns + 并发槽位）
-                   预计 7h 开发 + 2h 测试 = 9h
-
-Week 1, Day 5:    代码审查 + 全量回归测试 + 文档更新
-                   预计 3h
-
-Week 2+:           第三轮按需启动
-```
+每个阶段继续遵守项目的协作规范：一次只做一个阶段，先验证，涉及视觉或时序时等待人工确认，验收后更新 `CHANGELOG.md` / `TODO.md` 并独立提交。

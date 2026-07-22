@@ -16,6 +16,16 @@
 
 ## 2026-07-22 · Codex
 
+### 2026-07-22 09:52 Code：Agent 架构文档与路线基线更新
+
+- **实现基线校准**：将 Agent 设计分析和执行方案统一升级到 Code v0.5.6，明确区分服务端主 AgentRun、模型显式 `task` Child AgentRun 与用户运行期追加消息三个通道；删除“尚无并发”等已失效判断，不再重复规划已完成的服务端执行、恢复、授权代理和并发底座。
+- **后续路线收敛**：下一阶段确定为“普通追加消息默认排队、明确操作显式并行”，随后建立服务端白名单生成的 `Context Envelope`，再实现带依赖、预算和验证证据的结构化计划；Cron、Monitor、Workflow 与 worktree 隔离后置评估。
+- **设计边界明确**：继续使用 `read / plan / accept / bypass` 四种权限策略，不新增重叠的 `collaboration_mode`；不使用关键词正则猜测并行意图，不默认复制完整会话，不向子任务传递 Key、授权 Token 或隐藏推理。
+- **TODO 清理**：移除已完成项和过期的“上线前”描述，按 Workbar 上线后收口、Code 核心能力、规划与自动化重新整理未完成工作；补充企业邮箱、登录融合新手指引、运行期消息路由和委托上下文契约。
+- **验证**：三份文档 UTF-8、关键章节与相对链接检查通过，`TODO.md` 不再包含已完成勾选、旧品牌名或过期阶段标题；`git diff --check` 通过。
+
+**涉及文件**：`docs/agent-refactoring-execution-plan.md`、`docs/codex-claude-code-agent-design-analysis.md`、`TODO.md`、`CHANGELOG.md`
+
 ### 2026-07-22 09:34 Code：v0.5.6 发布准备
 
 - **版本与文档**：统一将 `VERSION`、Windows 文件元数据和 README 升级到 `0.5.6`；更新 Windows 快速开始流程和测试徽章，新增 `docs/releases/v0.5.6.md`，完整说明 Workbar 登录、Key 生命周期、设置页重构、稳定性改进和升级注意事项。

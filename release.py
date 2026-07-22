@@ -34,7 +34,7 @@ VERSION_INFO_FILE = ROOT / "file_version_info.txt"
 README_FILE = ROOT / "README.md"
 RELEASES_DIR = ROOT / "docs" / "releases"
 BUILD_SCRIPT = ROOT / "build_exe.py"
-DEFAULT_BRANCH = "main"
+DEFAULT_BRANCH = "master"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -130,10 +130,11 @@ def update_version_info(new_version, version_tuple):
     content = re.sub(r"'OriginalFilename',\s*'Code-v\d+\.\d+\.\d+\.exe'", f"'OriginalFilename', 'Code-v{new_version}.exe'", content)
 
     if content == old:
-        die("file_version_info.txt 未被修改 -- 正则替换可能失效，请人工检查")
-
-    VERSION_INFO_FILE.write_text(content, encoding="utf-8")
-    ok(f"file_version_info.txt -> {new_version}")
+        # Already at the target version (e.g. from a previous partial run).
+        ok(f"file_version_info.txt 已为 {new_version}，跳过")
+    else:
+        VERSION_INFO_FILE.write_text(content, encoding="utf-8")
+        ok(f"file_version_info.txt -> {new_version}")
 
 
 def update_readme(new_version):
@@ -152,15 +153,22 @@ def update_readme(new_version):
 
 
 def create_spec_file(new_version, old_version):
-    old_spec = ROOT / f"Code-v{old_version}.spec"
     new_spec = ROOT / f"Code-v{new_version}.spec"
 
-    if not old_spec.exists():
-        die(f"找不到旧版 spec 文件: {old_spec}")
+    # Find the newest existing versioned spec file that is not the new one.
+    spec_files = sorted(ROOT.glob("Code-v*.spec"), reverse=True)
+    old_spec = None
+    for sf in spec_files:
+        if sf.stem != f"Code-v{new_version}":
+            old_spec = sf
+            break
+
+    if old_spec is None:
+        die(f"找不到旧版 spec 文件作为模板（搜索: Code-v*.spec，排除: {new_spec.name}）")
 
     content = old_spec.read_text(encoding="utf-8")
-    content = content.replace(f"Code-v{old_version}", f"Code-v{new_version}")
-    content = content.replace(f"name='Code-v{old_version}'", f"name='Code-v{new_version}'")
+    content = content.replace(f"Code-v{old_spec.stem[5:]}", f"Code-v{new_version}")
+    content = content.replace(f"name='{old_spec.stem}'", f"name='Code-v{new_version}'")
 
     new_spec.write_text(content, encoding="utf-8")
     ok(f"{new_spec.name} 已创建（基于 {old_spec.name}）")

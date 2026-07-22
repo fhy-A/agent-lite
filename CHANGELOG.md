@@ -16,6 +16,15 @@
 
 ## 2026-07-22 · Codex
 
+### 2026-07-22 09:34 Code：v0.5.6 发布准备
+
+- **版本与文档**：统一将 `VERSION`、Windows 文件元数据和 README 升级到 `0.5.6`；更新 Windows 快速开始流程和测试徽章，新增 `docs/releases/v0.5.6.md`，完整说明 Workbar 登录、Key 生命周期、设置页重构、稳定性改进和升级注意事项。
+- **发行构建**：使用 Python `3.12.10` 与 PyInstaller `6.21.0` 生成 Windows x64 单文件 `Code-v0.5.6.exe`；内置 `VERSION`、文件名、FileVersion、ProductVersion、OriginalFilename 及关键前端资源核验一致。
+- **产物校验**：EXE 大小 `31,042,747 bytes`（`29.60 MiB`），SHA-256 为 `9A02E73E82079D1FF9C424E0E5D631407B2D1881102F5B3C5271346C1EBFBD47`，签名状态 `NotSigned`。
+- **验证**：发布核心 JavaScript/Python 语法检查通过；定向回归 254 项、6 个 subtests 通过；发布前完整回归沿用本阶段最新结果 614 项、208 个 subtests 通过。
+
+**涉及文件**：`VERSION`、`file_version_info.txt`、`README.md`、`docs/releases/v0.5.6.md`、`CHANGELOG.md`
+
 ### 2026-07-22 09:23 Code：登录入口与旧版新手指引收口
 
 - **登录台文案排版**：将 Workbar 登录说明拆成稳定的两行结构，明确把“并同步 API Key。”完整放在第二行，并同步中英文文案，避免不同窗口宽度下只剩 `Key` 单独换行。

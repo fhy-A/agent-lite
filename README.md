@@ -12,10 +12,10 @@
 <p align="center">让 AI 真正进入你的项目，而不是停在对话框里。</p>
 
 <p align="center">
-  <a href="https://github.com/fhy-A/Code/releases/latest"><img src="https://img.shields.io/badge/version-0.5.4-2563EB" alt="Version 0.5.4"></a>
+  <a href="https://github.com/fhy-A/Code/releases/latest"><img src="https://img.shields.io/badge/version-0.5.6-2563EB" alt="Version 0.5.6"></a>
   <img src="https://img.shields.io/badge/platform-Windows-0078D4" alt="Windows">
   <img src="https://img.shields.io/badge/python-3.12+-3776AB" alt="Python 3.12+">
-  <img src="https://img.shields.io/badge/tests-488%20passed-16A34A" alt="488 tests passed">
+  <img src="https://img.shields.io/badge/tests-614%20passed-16A34A" alt="614 tests passed">
   <a href="docs/LICENSE"><img src="https://img.shields.io/badge/license-MIT-6B7280" alt="MIT License"></a>
 </p>
 
@@ -62,7 +62,7 @@ Code 当前聚焦三个目标：
     └── OpenAI 兼容代理
               │
               ▼
-       New API 或其他兼容网关
+          Workbar API 网关
 ```
 
 前端负责展示与交互，本地服务负责模型请求、任务状态、会话数据和工具执行。模型 API Key 只用于请求，不写入持久化的任务运行状态。
@@ -73,10 +73,10 @@ Code 当前聚焦三个目标：
 
 ### Windows 单文件版
 
-1. 从 [GitHub Releases](https://github.com/fhy-A/Code/releases/latest) 下载 `Code-v0.5.4.exe`。
+1. 从 [GitHub Releases](https://github.com/fhy-A/Code/releases/latest) 下载 `Code-v0.5.6.exe`。
 2. 双击运行。Code 会常驻系统托盘，并打开 `http://127.0.0.1:3010/`。
-3. 在设置中填写模型网关地址和 API Key，刷新模型列表。
-4. 选择一个项目目录，在输入框中直接描述任务。
+3. 按页面提示登录 Workbar；Code 会同步账号下的 API Key 并刷新可用模型。
+4. 选择一个项目目录，在输入框中直接描述任务。模型服务地址固定为 `https://workbar.ai`。
 
 > v0.5.4 是首次使用 Code 名称发布的版本。旧版测试用户请退出 Agent Lite 后重新下载；首次运行会迁移原有用户数据与浏览器设置。
 
@@ -199,6 +199,7 @@ python build_exe.py
 ## 文档与路线
 
 - [使用指南](docs/GUIDE.md)
+- [v0.5.6 发布说明](docs/releases/v0.5.6.md)
 - [v0.5.4 发布说明](docs/releases/v0.5.4.md)
 - [会话 JSONL 迁移说明](docs/session-jsonl-migration.md)
 - [服务端 Agent 循环迁移计划](docs/SERVER_AGENT_LOOP_PLAN.md)

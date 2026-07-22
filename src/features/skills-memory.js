@@ -24,15 +24,18 @@
     image: "skillDepCapImage",
     inspect: "skillDepCapInspect",
     "node-server": "skillDepCapNodeServer",
+    "node-runtime": "skillDepCapNodeRuntime",
     ocr: "skillDepCapOcr",
     pdf: "skillDepCapPdf",
     powerpoint: "skillDepCapPowerpoint",
     "python-server": "skillDepCapPythonServer",
+    "python-runtime": "skillDepCapPythonRuntime",
     read: "skillDepCapRead",
     "read-edit": "skillDepCapReadEdit",
     render: "skillDepCapRender",
     scaffold: "skillDepCapScaffold",
     spreadsheet: "skillDepCapSpreadsheet",
+    "command-runtime": "skillDepCapCommandRuntime",
     word: "skillDepCapWord",
   });
 
@@ -129,11 +132,25 @@
     const tools = Array.isArray(skill?.tools)
       ? skill.tools.map((tool) => String(tool || "").trim()).filter(Boolean)
       : [];
-    if (!tools.length) return body;
+    const dependencyCapabilities = skill?.dependencyCapabilities || {};
+    const dependencyCapabilityIds = Object.keys(dependencyCapabilities);
+    const dependencyPolicy = dependencyCapabilityIds.length
+      ? [
+        `Dependency gate: before first use of this Skill in the current task, call check_skill_dependencies with name "${skill.name}" as a standalone tool call. Available capabilities: ${dependencyCapabilityIds.join(", ")}.`,
+        dependencyCapabilityIds.length > 1
+          ? "Choose only the capability needed by the current task and pass it as capability. If the user only asked for a dependency report, omit capability, summarize the returned statuses, and stop. Never install every capability."
+          : `Use capability "${dependencyCapabilityIds[0]}" when checking or re-checking this Skill.`,
+        "If required Python or Node dependencies are missing, install only the declared items using the returned managed-runtime plan after authorization.",
+        "System-command dependencies must be installed by the user outside Code. Present supplied installHints verbatim, but never execute them, modify PATH, or create global command wrappers with run_command, propose_edit, or write_file; explain the missing command and wait.",
+        "Re-run check_skill_dependencies for the same selected capability after installation and continue only when that capability is ready.",
+        "When the dependency result reports a managed runtime, execute Skill scripts with its Python executable or NODE_PATH instead of assuming the system runtime can import those packages.",
+      ].join("\n")
+      : "";
     return [
-      `Preferred tools: ${tools.join(", ")}`,
-      "Tool guidance only; this does not expand the current mode's permissions.",
-      "Do not call task unless it is listed above or the user explicitly requests delegation.",
+      tools.length ? `Preferred tools: ${tools.join(", ")}` : "",
+      tools.length ? "Tool guidance only; this does not expand the current mode's permissions." : "",
+      tools.length ? "Do not call task unless it is listed above or the user explicitly requests delegation." : "",
+      dependencyPolicy,
       body,
     ].filter(Boolean).join("\n");
   }
@@ -155,6 +172,8 @@
     if (!(state.disabledSkills instanceof Set)) state.disabledSkills = new Set(state.disabledSkills || []);
 
     let editingSkillName = null;
+    let editingSkillDependencyOriginal = "";
+    let editingSkillDependencySource = "";
     let settingsSelectedSkillName = null;
     let settingsMemoryRequestId = 0;
     let skillDependencySnapshot = null;
@@ -183,10 +202,18 @@
         skill.body = full.body || "";
         skill.path = full.path || "";
         skill.resources = full.resources || {};
+        skill.dependencyCapabilities = full.dependencyCapabilities || {};
+        skill.dependencyManifestSource = full.dependencyManifestSource || "";
+        skill.dependencyDetectedFrom = full.dependencyDetectedFrom || [];
+        skill.dependencyManifestError = full.dependencyManifestError || "";
       } catch {
         skill.body = "";
         skill.path = "";
         skill.resources = {};
+        skill.dependencyCapabilities = {};
+        skill.dependencyManifestSource = "";
+        skill.dependencyDetectedFrom = [];
+        skill.dependencyManifestError = "";
       }
       return skill;
     }
@@ -298,12 +325,45 @@
       byId("skillEditKeywords").value = skill ? (skill.keywords || []).join(", ") : "";
       byId("skillEditTools").value = skill ? (skill.tools || []).join(", ") : "";
       byId("skillEditBody").value = skill ? (skill.body || "") : "";
+      const dependencies = skill?.dependencyCapabilities || {};
+      const dependencyText = Object.keys(dependencies).length ? JSON.stringify(dependencies, null, 2) : "";
+      editingSkillDependencyOriginal = dependencyText;
+      editingSkillDependencySource = skill?.dependencyManifestSource || "";
+      byId("skillEditDependencies").value = dependencyText;
+      const dependencyEditor = byId("skillDependencyEditor");
+      if (dependencyEditor) {
+        dependencyEditor.open = Boolean(
+          skill?.dependencyManifestError
+          || (dependencyText && !["detected", "bundled"].includes(editingSkillDependencySource))
+        );
+      }
+      const dependencyNotice = byId("skillDependencyEditorNotice");
+      if (dependencyNotice) {
+        const sources = Array.isArray(skill?.dependencyDetectedFrom)
+          ? skill.dependencyDetectedFrom.join("、")
+          : "";
+        dependencyNotice.textContent = editingSkillDependencySource === "detected"
+          ? t("skillDependencyDetectedEditorNotice", {
+            sources: sources || t("skillDependencyDetectedSourceFallback"),
+          })
+          : "";
+        dependencyNotice.classList.toggle("hidden", editingSkillDependencySource !== "detected");
+      }
+      const dependencyError = byId("skillDependencyEditorError");
+      if (dependencyError) {
+        dependencyError.textContent = skill?.dependencyManifestError
+          ? t("skillDependencyManifestInvalid", { error: skill.dependencyManifestError })
+          : "";
+        dependencyError.classList.toggle("hidden", !skill?.dependencyManifestError);
+      }
       byId("skillEditorModal").classList.remove("hidden");
     }
 
     function closeSkillEditor() {
       byId("skillEditorModal")?.classList.add("hidden");
       editingSkillName = null;
+      editingSkillDependencyOriginal = "";
+      editingSkillDependencySource = "";
     }
 
     async function saveSkillEdit() {
@@ -312,9 +372,24 @@
       const keywords = byId("skillEditKeywords").value.trim();
       const tools = byId("skillEditTools").value.trim();
       const body = byId("skillEditBody").value.trim();
+      const dependencyText = byId("skillEditDependencies").value.trim();
       if (!name || !body) {
         showToast(t("fillRequired"), "error");
         return;
+      }
+      let dependencies = {};
+      if (dependencyText) {
+        try {
+          dependencies = JSON.parse(dependencyText);
+          if (!dependencies || Array.isArray(dependencies) || typeof dependencies !== "object") {
+            throw new Error("capabilities must be an object");
+          }
+        } catch (error) {
+          showToast(`${t("skillDependencyJsonInvalid")}：${error.message}`, "error");
+          byId("skillDependencyEditor").open = true;
+          byId("skillEditDependencies").focus();
+          return;
+        }
       }
       const conflict = state.skills.find((skill) => skill.name === name && skill.name !== editingSkillName);
       if (conflict) {
@@ -322,13 +397,30 @@
         return;
       }
       try {
-        if (editingSkillName && editingSkillName !== name) {
-          await apiJson(`/api/skills?name=${encodeURIComponent(editingSkillName)}`, { method: "DELETE" });
+        const payload = {
+          name,
+          originalName: editingSkillName || "",
+          description,
+          keywords,
+          tools,
+          body,
+        };
+        const inheritedDependencySource = ["detected", "bundled"].includes(editingSkillDependencySource);
+        if (!inheritedDependencySource || dependencyText !== editingSkillDependencyOriginal) {
+          payload.dependencies = dependencies;
         }
         await apiJson("/api/skills", {
           method: "POST",
-          body: JSON.stringify({ name, description, keywords, tools, body }),
+          body: JSON.stringify(payload),
         });
+        if (editingSkillName && editingSkillName !== name && state.disabledSkills.has(editingSkillName)) {
+          state.disabledSkills.delete(editingSkillName);
+          state.disabledSkills.add(name);
+          storage?.setItem("code-disabled-skills", JSON.stringify([...state.disabledSkills]));
+        }
+        skillDependencySnapshot = null;
+        skillDependencyByName = new Map();
+        skillDependencyError = "";
         await loadSkills();
         closeSkillEditor();
         renderSkillsList();
@@ -340,6 +432,7 @@
         } else {
           showSkillDetail(null);
         }
+        if (byId("settingsSkillsDetail")) loadSkillDependencyStatus({ force: true });
       } catch (error) {
         showToast(`${t("saveFailed")}：${error.message}`, "error");
       }
@@ -801,10 +894,17 @@
       const dependency = skillDependencyByName.get(skillName);
       if (!dependency) return "";
       const capabilities = Array.isArray(dependency.capabilities) ? dependency.capabilities : [];
+      const detectedFrom = Array.isArray(dependency.detectedFrom) ? dependency.detectedFrom : [];
+      const detectedTitle = detectedFrom.length
+        ? t("skillDependencyDetectedFrom", { sources: detectedFrom.join("、") })
+        : t("skillDependencyDetectedHint");
       return `<section class="skill-dependency-card">
         <div class="skill-dependency-card-head">
           <div class="skill-detail-label">${t("skillDependencyTitle")}</div>
-          <span class="skill-dependency-status is-${escapeHtml(dependency.status)}">${escapeHtml(dependencyStatusLabel(dependency.status))}</span>
+          <div class="skill-dependency-card-meta">
+            ${dependency.manifestSource === "detected" ? `<span class="skill-dependency-source" title="${escapeHtml(detectedTitle)}">${escapeHtml(t("skillDependencyDetected"))}</span>` : ""}
+            <span class="skill-dependency-status is-${escapeHtml(dependency.status)}">${escapeHtml(dependencyStatusLabel(dependency.status))}</span>
+          </div>
         </div>
         <div class="skill-capability-list">${capabilities.map((capability) => {
           const required = Array.isArray(capability.required) ? capability.required : [];
@@ -929,6 +1029,18 @@
       byId("closeSkillEditor")?.addEventListener("click", closeSkillEditor);
       byId("cancelSkillEdit")?.addEventListener("click", closeSkillEditor);
       byId("saveSkillEdit")?.addEventListener("click", saveSkillEdit);
+      byId("skillDependencyTemplate")?.addEventListener("click", () => {
+        const input = byId("skillEditDependencies");
+        if (!input || input.value.trim()) return;
+        input.value = JSON.stringify({
+          default: {
+            required: [{ type: "python", name: "package-name" }],
+            optional: [{ type: "command", name: "command-name" }],
+          },
+        }, null, 2);
+        byId("skillDependencyEditor").open = true;
+        input.focus();
+      });
       byId("skillEditorModal")?.addEventListener("click", (event) => {
         if (event.target === event.currentTarget) closeSkillEditor();
       });

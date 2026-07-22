@@ -19,7 +19,14 @@ import threading
 import time
 import webbrowser
 
-from skill_dependencies import inspect_skill_dependencies
+from skill_dependencies import (
+    DependencyManifestError,
+    inspect_skill_dependencies,
+    inspect_skill_directory,
+    load_skill_manifest,
+    normalize_manifest,
+    resolve_skill_manifest,
+)
 
 try:
     import pystray
@@ -57,6 +64,7 @@ MAX_TOOL_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_SEARCH_FILE_BYTES = 1024 * 1024
 MAX_SEARCH_RESULTS = 100
 MAX_COMMAND_SECONDS = 30
+MAX_DEPENDENCY_COMMAND_SECONDS = 300
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 _json_write_lock = threading.RLock()
 _edit_apply_lock = threading.RLock()
@@ -2333,12 +2341,41 @@ def _execute_agent_pending_tools(run):
                     if not safe:
                         raise ValueError(reason)
                     permission_profile = run.get("permission_profile", "read")
+                    command_root, _ = resolve_project_path("")
+                    dependency_install_kind = dependency_install_command_kind(
+                        command,
+                        project_root=command_root,
+                    )
+                    dependency_install = dependency_install_kind == "managed"
                     execution["command"] = command
                     execution["description"] = str(arguments.get("description") or "")
+                    execution["dependencyInstall"] = dependency_install
+                    execution["dependencyInstallKind"] = dependency_install_kind
                     execution["nonReplayable"] = True
-                    command_root, _ = resolve_project_path("")
                     execution["cwd"] = str(command_root)
-                    if permission_profile == "accept" and not resuming_command:
+                    if dependency_install_kind in {"system", "environment"}:
+                        blocked_reason = (
+                            "Persistent dependency environment changes must be completed by the user "
+                            "outside Code. Do not modify PATH or create global command wrappers; "
+                            "report the detected command path and wait for the user."
+                            if dependency_install_kind == "environment"
+                            else
+                            "System dependency installation must be completed by the user outside Code. "
+                            "Do not retry with another package manager or installer script; explain the "
+                            "missing command and wait for the user."
+                        )
+                        raise ValueError(
+                            blocked_reason
+                        )
+                    if (
+                        not resuming_command
+                        and _agent_repeated_command_count(run, command, exclude_call_id=call_id) >= 2
+                    ):
+                        raise ValueError(
+                            "Repeated command blocked after two identical attempts. Stop retrying and "
+                            "report the result or ask the user for help."
+                        )
+                    if (permission_profile == "accept" or dependency_install) and not resuming_command:
                         pending_authorization = _agent_command_authorization_request(run, call)
                         execution["status"] = "waiting_authorization"
                         execution["result"] = None
@@ -3726,6 +3763,81 @@ def load_project_context():
 
 # ── Skills ───────────────────────────────────────────
 
+_SKILL_DEPENDENCIES_UNSET = object()
+
+
+def _skill_requirement_for_api(requirement):
+    return {
+        field: requirement[field]
+        for field in (
+            "type", "name", "version", "minimumVersion", "importName", "distribution"
+        )
+        if requirement.get(field)
+    }
+
+
+def _skill_capabilities_for_api(manifest):
+    return {
+        capability["id"]: {
+            "required": [
+                _skill_requirement_for_api(item)
+                for item in capability.get("required", [])
+            ],
+            "optional": [
+                _skill_requirement_for_api(item)
+                for item in capability.get("optional", [])
+            ],
+        }
+        for capability in manifest.get("capabilities", [])
+    }
+
+
+def _build_skill_dependency_manifest(skill_name, capabilities):
+    if capabilities in (None, ""):
+        return None
+    if not isinstance(capabilities, dict):
+        raise DependencyManifestError("dependency capabilities must be an object")
+    if not capabilities:
+        return None
+    normalized = normalize_manifest({
+        "schemaVersion": 1,
+        "skill": skill_name,
+        "capabilities": capabilities,
+    }, expected_skill=skill_name)
+    return {
+        "schemaVersion": normalized["schemaVersion"],
+        "skill": normalized["skill"],
+        "capabilities": _skill_capabilities_for_api(normalized),
+    }
+
+
+def _read_skill_dependency_details(skill_dir):
+    try:
+        manifest = resolve_skill_manifest(
+            skill_dir,
+            bundled_skills_dir=APP_DIR / "data" / "skills",
+        )
+    except DependencyManifestError as exc:
+        return {
+            "dependencyCapabilities": {},
+            "dependencyManifestError": str(exc),
+        }
+    if not manifest:
+        return {"dependencyCapabilities": {}}
+    return {
+        "dependencyCapabilities": _skill_capabilities_for_api(manifest),
+        "dependencyManifestSource": manifest.get("source", "local"),
+        "dependencyDetectedFrom": manifest.get("detectedFrom", []),
+    }
+
+
+def _write_skill_dependency_manifest(skill_dir, manifest):
+    path = skill_dir / "dependencies.json"
+    if manifest is None:
+        path.unlink(missing_ok=True)
+        return
+    write_json(path, manifest)
+
 def list_skills(brief=False):
     """List all installed skills. brief=True returns metadata only (no body)."""
     skills = []
@@ -3751,6 +3863,7 @@ def list_skills(brief=False):
                 item["body"] = body.strip()
                 item["path"] = str(skill_md.resolve())
                 item["resources"] = _list_skill_resources(skill_dir)
+                item.update(_read_skill_dependency_details(skill_dir))
             skills.append(item)
         except Exception:
             pass
@@ -3764,6 +3877,17 @@ def get_skill_dependency_status():
         bundled_skills_dir=APP_DIR / "data" / "skills",
         app_dir=APP_DIR,
         data_dir=DATA_DIR,
+    )
+
+
+def get_single_skill_dependency_status(name, capability=""):
+    skill = read_skill(name)
+    return inspect_skill_directory(
+        SKILLS_DIR / skill["dir"],
+        bundled_skills_dir=APP_DIR / "data" / "skills",
+        app_dir=APP_DIR,
+        data_dir=DATA_DIR,
+        capability_id=capability,
     )
 
 
@@ -3792,6 +3916,7 @@ def read_skill(name, brief=False):
                     item["body"] = body.strip()
                     item["path"] = str(skill_md.resolve())
                     item["resources"] = _list_skill_resources(skill_dir)
+                    item.update(_read_skill_dependency_details(skill_dir))
                 return item
         except Exception:
             pass
@@ -3806,7 +3931,7 @@ def _list_skill_resources(skill_dir):
         if entry.name.startswith(".") or entry.name == "__pycache__":
             continue
         if entry.is_file():
-            if entry.name != "SKILL.md":
+            if entry.name not in {"SKILL.md", "dependencies.json"}:
                 root_files.append(entry.name)
             continue
         if not entry.is_dir():
@@ -3868,13 +3993,46 @@ def execute_use_skill_tool(body):
             "action": "use_skill",
             "error": f"Skill '{skill_name}' not found. Available: {', '.join(available) or 'none'}",
         }
-    return {
+    result = {
         "ok": True,
         "action": "use_skill",
         "name": skill["name"],
         "description": skill["description"],
         "body": skill["body"],
         "tools": skill.get("tools", []),
+    }
+    if skill.get("dependencyCapabilities"):
+        result["dependencies"] = get_single_skill_dependency_status(skill["name"])
+    return result
+
+
+def execute_check_skill_dependencies_tool(body):
+    body = dict(body or {})
+    skill_name = (body.get("name") or "").strip()
+    capability = (body.get("capability") or "").strip()
+    if not skill_name:
+        raise ValueError("skill name is required")
+    try:
+        status = get_single_skill_dependency_status(skill_name, capability)
+    except DependencyManifestError as exc:
+        return {
+            "ok": False,
+            "action": "check_skill_dependencies",
+            "skill": skill_name,
+            "error": str(exc),
+        }
+    except ValueError:
+        available = [skill["name"] for skill in list_skills(brief=True)]
+        return {
+            "ok": False,
+            "action": "check_skill_dependencies",
+            "error": f"Skill '{skill_name}' not found. Available: {', '.join(available) or 'none'}",
+        }
+    return {
+        "ok": True,
+        "action": "check_skill_dependencies",
+        "skill": skill_name,
+        **status,
     }
 
 
@@ -3927,22 +4085,87 @@ def match_skills(user_message):
     return [skill for score, skill in candidates if score == best_score]
 
 
-def create_skill(name, description, body_text, tools="", keywords=""):
-    """Create a new skill directory with SKILL.md."""
+def create_skill(name, description, body_text, tools="", keywords="", dependencies=None):
+    """Create a new skill directory with SKILL.md and an optional dependency manifest."""
     safe = re.sub(r"[^a-zA-Z0-9_-]", "", name)[:32]
     if not safe:
         raise ValueError("invalid skill name")
     skill_dir = SKILLS_DIR / safe
     if skill_dir.exists():
         raise ValueError("skill already exists")
-    skill_dir.mkdir(parents=True)
+    dependency_manifest = _build_skill_dependency_manifest(safe, dependencies)
     meta = {"name": safe, "description": description}
     if tools:
         meta["tools"] = tools
     if keywords:
         meta["keywords"] = keywords
     content = build_memory_file(meta, body_text)
-    (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
+    skill_dir.mkdir(parents=True)
+    try:
+        _atomic_write_edit_text(skill_dir / "SKILL.md", content)
+        _write_skill_dependency_manifest(skill_dir, dependency_manifest)
+    except Exception:
+        shutil.rmtree(skill_dir, ignore_errors=True)
+        raise
+    return read_skill(safe)
+
+
+def update_skill(
+    original_name,
+    name,
+    description,
+    body_text,
+    tools="",
+    keywords="",
+    dependencies=_SKILL_DEPENDENCIES_UNSET,
+):
+    """Update a Skill in place, preserving packaged resources when it is renamed."""
+    original_safe = re.sub(r"[^a-zA-Z0-9_-]", "", original_name)[:32]
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "", name)[:32]
+    if not original_safe or not safe:
+        raise ValueError("invalid skill name")
+    source_dir = SKILLS_DIR / original_safe
+    target_dir = SKILLS_DIR / safe
+    if not source_dir.is_dir():
+        raise ValueError("skill not found")
+    if target_dir != source_dir and target_dir.exists():
+        raise ValueError("skill already exists")
+
+    dependency_manifest = _SKILL_DEPENDENCIES_UNSET
+    if dependencies is not _SKILL_DEPENDENCIES_UNSET:
+        dependency_manifest = _build_skill_dependency_manifest(safe, dependencies)
+    elif target_dir != source_dir:
+        try:
+            existing = load_skill_manifest(
+                source_dir,
+                bundled_skills_dir=APP_DIR / "data" / "skills",
+            )
+        except DependencyManifestError:
+            existing = None
+        if existing:
+            dependency_manifest = _build_skill_dependency_manifest(
+                safe,
+                _skill_capabilities_for_api(existing),
+            )
+
+    meta = {"name": safe, "description": description}
+    if tools:
+        meta["tools"] = tools
+    if keywords:
+        meta["keywords"] = keywords
+    content = build_memory_file(meta, body_text)
+
+    renamed = target_dir != source_dir
+    if renamed:
+        source_dir.rename(target_dir)
+    try:
+        _atomic_write_edit_text(target_dir / "SKILL.md", content)
+        if dependency_manifest is not _SKILL_DEPENDENCIES_UNSET:
+            _write_skill_dependency_manifest(target_dir, dependency_manifest)
+    except Exception:
+        if renamed and target_dir.exists() and not source_dir.exists():
+            target_dir.rename(source_dir)
+        raise
     return read_skill(safe)
 
 
@@ -4981,12 +5204,36 @@ def execute_run_command_tool(
             "blocked": True,
             "error": reason,
         }
-    try:
-        timeout_seconds = int(body.get("timeout") or MAX_COMMAND_SECONDS)
-    except (TypeError, ValueError):
-        timeout_seconds = MAX_COMMAND_SECONDS
-    timeout_seconds = max(1, min(timeout_seconds, MAX_COMMAND_SECONDS))
     root, _ = resolve_project_path("")
+    dependency_install_kind = dependency_install_command_kind(command, project_root=root)
+    if dependency_install_kind in {"system", "environment"}:
+        blocked_reason = (
+            "Persistent dependency environment changes must be completed by the user outside Code. "
+            "Do not modify PATH or create global command wrappers."
+            if dependency_install_kind == "environment"
+            else
+            "System dependency installation must be completed by the user outside Code. "
+            "Do not retry with another package manager or installer script."
+        )
+        return {
+            "ok": False,
+            "action": "run_command",
+            "command": command,
+            "blocked": True,
+            "userCooperationRequired": True,
+            "dependencyInstallKind": dependency_install_kind,
+            "error": blocked_reason,
+        }
+    timeout_cap = (
+        MAX_DEPENDENCY_COMMAND_SECONDS
+        if dependency_install_kind == "managed"
+        else MAX_COMMAND_SECONDS
+    )
+    try:
+        timeout_seconds = int(body.get("timeout") or timeout_cap)
+    except (TypeError, ValueError):
+        timeout_seconds = timeout_cap
+    timeout_seconds = max(1, min(timeout_seconds, timeout_cap))
     process = None
     output_lock = threading.Lock()
     output = {"stdout": "", "stderr": "", "stdoutChars": 0, "stderrChars": 0}
@@ -5256,6 +5503,22 @@ _SERVER_TOOL_DEFINITIONS = {
             },
         },
     },
+    "check_skill_dependencies": {
+        "type": "function",
+        "function": {
+            "name": "check_skill_dependencies",
+            "description": "Check one installed Skill's dependencies for the capability needed by the current task. For multi-capability Skills, omit capability only to inspect statuses, then choose one capability; never install every capability. Python/Node packages may use the returned managed-runtime plan after authorization. System-command dependencies must be installed by the user outside Code: present supplied installHints but do not execute them, modify PATH, or create global wrappers. Call again after installation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Installed Skill name."},
+                    "capability": {"type": "string", "description": "Only the capability needed for the current task. Omit only to inspect available capability statuses without installing anything."},
+                },
+                "required": ["name"],
+                "additionalProperties": False,
+            },
+        },
+    },
     "read_skill_resource": {
         "type": "function",
         "function": {
@@ -5360,7 +5623,7 @@ _SERVER_TOOL_DEFINITIONS = {
         "type": "function",
         "function": {
             "name": "run_command",
-            "description": "Run a low-risk command for inspection, tests, builds, or version-control queries.",
+            "description": "Run a low-risk command for inspection, tests, builds, or version-control queries. Managed Python/Node dependency installs require authorization. System package-manager installs, persistent PATH changes, and global command wrappers are blocked and must be completed by the user outside Code.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -5440,6 +5703,13 @@ SERVER_TOOL_REGISTRY = {
     "use_skill": {
         "execute": execute_use_skill_tool,
         "definition": _SERVER_TOOL_DEFINITIONS["use_skill"],
+        "effect": "read",
+        "idempotent": True,
+        "background": True,
+    },
+    "check_skill_dependencies": {
+        "execute": execute_check_skill_dependencies_tool,
+        "definition": _SERVER_TOOL_DEFINITIONS["check_skill_dependencies"],
         "effect": "read",
         "idempotent": True,
         "background": True,
@@ -5762,6 +6032,102 @@ def is_safe_command(command):
     if DENIED_COMMAND_PATTERN.search(normalized):
         return False, "命令包含写入、删除、重定向或危险操作，已被安全策略拦截"
     return True, ""
+
+
+def _dependency_install_text_kind(value):
+    """Classify install intent found directly in a command or installer script."""
+    normalized = re.sub(r"[^a-z0-9_.-]+", " ", str(value or "").strip().lower())
+    system_patterns = (
+        r"\b(?:choco|winget)\b(?:\s+\S+){0,24}?\s+install\b",
+        r"\b(?:apt|apt-get|dnf|yum|pacman|brew)\b(?:\s+\S+){0,24}?\s+install\b",
+    )
+    if any(re.search(pattern, normalized) for pattern in system_patterns):
+        return "system"
+    managed_patterns = (
+        r"\bpython(?:3)?(?:\.exe)?\s+-m\s+(?:pip\s+install|venv)\b",
+        r"\bpip3?(?:\.exe)?\s+install\b",
+        r"\b(?:npm(?:\.cmd)?\s+install|pnpm\s+(?:install|add)|yarn\s+add|bun\s+add)\b",
+    )
+    if any(re.search(pattern, normalized) for pattern in managed_patterns):
+        return "managed"
+    return ""
+
+
+def _dependency_environment_change_text(value):
+    raw = str(value or "").strip().lower()
+    if re.search(r"\[environment\]\s*::\s*setenvironmentvariable\s*\(\s*['\"]path['\"]", raw):
+        return True
+    if re.search(r"\bsetx(?:\.exe)?\s+(?:/m\s+)?path\b", raw):
+        return True
+    writes_file = re.search(r"\b(?:set-content|out-file|new-item|copy-item|move-item)\b", raw)
+    global_wrapper = (
+        ("appdata" in raw or "programdata" in raw)
+        and re.search(r"\.(?:cmd|bat|ps1)\b", raw)
+    )
+    return bool(writes_file and global_wrapper)
+
+
+def _referenced_command_scripts(command, project_root):
+    if not project_root:
+        return []
+    root = Path(project_root).resolve()
+    pattern = re.compile(
+        r'''(?i)(?:"([^"]+\.(?:py|ps1|cmd|bat|vbs))"|'([^']+\.(?:py|ps1|cmd|bat|vbs))'|([a-z0-9_./\\:-]+\.(?:py|ps1|cmd|bat|vbs)))'''
+    )
+    paths = []
+    for match in pattern.finditer(str(command or "")):
+        raw_path = next((group for group in match.groups() if group), "")
+        candidate = Path(raw_path)
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        try:
+            candidate = candidate.resolve()
+            candidate.relative_to(root)
+        except (OSError, ValueError):
+            continue
+        if candidate.is_file() and candidate.stat().st_size <= 256 * 1024:
+            paths.append(candidate)
+    return paths
+
+
+def dependency_install_command_kind(command, project_root=None):
+    """Return managed/system for direct or project-local wrapped install commands."""
+    direct = _dependency_install_text_kind(command)
+    if direct:
+        return direct
+    if _dependency_environment_change_text(command):
+        return "environment"
+    for script_path in _referenced_command_scripts(command, project_root):
+        try:
+            script_text = script_path.read_text(encoding="utf-8-sig", errors="replace")
+            script_kind = _dependency_install_text_kind(script_text)
+        except OSError:
+            continue
+        if script_kind:
+            return script_kind
+        if _dependency_environment_change_text(script_text):
+            return "environment"
+    return ""
+
+
+def command_requires_dependency_authorization(command):
+    """Managed package/runtime installation always remains an explicit user decision."""
+    return dependency_install_command_kind(command) == "managed"
+
+
+def _agent_repeated_command_count(run, command, *, exclude_call_id=""):
+    normalized = re.sub(r"\s+", " ", str(command or "").strip()).casefold()
+    if not normalized:
+        return 0
+    return sum(
+        1
+        for call_id, execution in (run.get("tool_executions") or {}).items()
+        if call_id != exclude_call_id
+        and isinstance(execution, dict)
+        and execution.get("name") == "run_command"
+        and re.sub(r"\s+", " ", str(execution.get("command") or "").strip()).casefold()
+        == normalized
+    )
 
 def open_native_folder_picker(root):
     """Open a native folder browser dialog and return the selected path."""
@@ -6440,6 +6806,9 @@ class CodeHandler(BaseHTTPRequestHandler):
             if self.path == "/api/tools/use_skill":
                 self.tool_use_skill()
                 return
+            if self.path == "/api/tools/check_skill_dependencies":
+                self.tool_check_skill_dependencies()
+                return
             if self.path == "/api/tools/read_skill_resource":
                 self.tool_read_skill_resource()
                 return
@@ -6594,18 +6963,46 @@ class CodeHandler(BaseHTTPRequestHandler):
     def create_skill_handler(self):
         body = self.read_body_json()
         name = (body.get("name") or "").strip()
+        original_name = (body.get("originalName") or "").strip()
         desc = (body.get("description") or "").strip()
         body_text = (body.get("body") or "").strip()
         tools = (body.get("tools") or "").strip()
         keywords = (body.get("keywords") or "").strip()
+        dependencies = body.get("dependencies", _SKILL_DEPENDENCIES_UNSET)
         if not name:
             raise ValueError("skill name is required")
         if not body_text:
             raise ValueError("skill body is required")
-        self.send_json(create_skill(name, desc, body_text, tools, keywords), 201)
+        if original_name:
+            result = update_skill(
+                original_name,
+                name,
+                desc,
+                body_text,
+                tools,
+                keywords,
+                dependencies,
+            )
+            self.send_json(result)
+            return
+        self.send_json(
+            create_skill(
+                name,
+                desc,
+                body_text,
+                tools,
+                keywords,
+                None if dependencies is _SKILL_DEPENDENCIES_UNSET else dependencies,
+            ),
+            201,
+        )
 
     def tool_use_skill(self):
         result = execute_registered_tool("use_skill", self.read_body_json())
+        self.send_json(result, 200 if result.get("ok") else 400)
+
+    def tool_check_skill_dependencies(self):
+        result = execute_registered_tool("check_skill_dependencies", self.read_body_json())
         self.send_json(result, 200 if result.get("ok") else 400)
 
     def tool_read_skill_resource(self):

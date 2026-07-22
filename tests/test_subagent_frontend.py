@@ -58,7 +58,7 @@ class TestSubAgentFrontend(unittest.TestCase):
         self.assertGreaterEqual(self.source.count('window.AgentRuntime.watchAgentRun'), 2)
 
     def test_plan_mode_can_delegate_without_mutation_tools(self):
-        self.assertIn('plan: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "task", "use_skill", "read_skill_resource"])', self.source)
+        self.assertIn('plan: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "task", "use_skill", "check_skill_dependencies", "read_skill_resource"])', self.source)
         self.assertIn('.filter((tool) => !["task", "request_user_input"].includes(tool.function?.name))', self.source)
 
     def test_authorization_panel_groups_main_and_subagents(self):

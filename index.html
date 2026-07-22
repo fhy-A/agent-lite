@@ -360,7 +360,7 @@
 
     <!-- Skill editor modal -->
     <div class="settings-modal hidden" id="skillEditorModal">
-      <div class="modal-card" style="width:520px">
+      <div class="modal-card skill-editor-card">
         <header>
           <h2 id="skillEditorTitle" data-i18n="newSkillTitle">新建 Skill</h2>
           <button id="closeSkillEditor" class="icon-btn" type="button">×</button>
@@ -370,6 +370,16 @@
         <label class="field"><span data-i18n="skillKeywordsLabel">关键词（逗号分隔）</span><input id="skillEditKeywords" data-i18n="skillKeywordsPlaceholder" placeholder="review, 审查, bug" autocomplete="off" /></label>
         <label class="field"><span data-i18n="skillToolsLabel">工具（逗号分隔）</span><input id="skillEditTools" data-i18n="skillToolsPlaceholder" placeholder="read_file, search_files" autocomplete="off" /></label>
         <label class="field"><span data-i18n="skillBodyLabel">正文（Markdown）</span><textarea id="skillEditBody" rows="8" class="skill-edit-body" data-i18n="skillBodyPlaceholder" placeholder="Skill 的具体规范、流程、输出格式..." spellcheck="false"></textarea></label>
+        <details class="skill-dependency-editor" id="skillDependencyEditor">
+          <summary><span data-i18n="skillDependencyEditorTitle">依赖清单（高级）</span><span class="skill-dependency-editor-badge">JSON</span></summary>
+          <p data-i18n="skillDependencyEditorHint">标准依赖文件、脚本导入和 SKILL.md 中明确的安装命令会自动识别；仅在需要补充或覆盖时编辑。保存清单不会立即安装，模型会在首次使用前预检并按权限与你协作。</p>
+          <div class="skill-dependency-editor-actions">
+            <button id="skillDependencyTemplate" class="mini-btn" type="button" data-i18n="skillDependencyTemplate">插入示例</button>
+          </div>
+          <div id="skillDependencyEditorNotice" class="skill-dependency-editor-notice hidden"></div>
+          <textarea id="skillEditDependencies" rows="9" class="skill-dependency-json" data-i18n="skillDependencyEditorPlaceholder" placeholder='例如 {&quot;default&quot;:{&quot;required&quot;:[{&quot;type&quot;:&quot;python&quot;,&quot;name&quot;:&quot;requests&quot;}]}}' spellcheck="false"></textarea>
+          <div id="skillDependencyEditorError" class="skill-dependency-editor-error hidden" role="alert"></div>
+        </details>
         <footer class="confirm-actions">
           <button id="cancelSkillEdit" class="ghost-btn" type="button" data-i18n="cancel">取消</button>
           <button id="saveSkillEdit" class="danger-btn" type="button" data-i18n="save">保存</button>

@@ -14,6 +14,19 @@
 
 ---
 
+## 2026-07-23 · Codex
+
+### 2026-07-23 01:47 Code：Skill 依赖协作闭环与模型选择启动恢复
+
+- **依赖发现与能力级预检**：扩展 `dependencies.json` 清单和设置页编辑、状态展示能力，并可从 `requirements`、`pyproject.toml`、`package.json`、Python/JavaScript/TypeScript 导入及 `SKILL.md` 中的明确安装命令自动识别候选依赖；多能力 Skill 必须指定能力后才进入安装流程，避免一次安装无关依赖。
+- **首次使用协作安装**：Skill 首次使用时按能力检查依赖；Python 与 Node 依赖仅可在 Code 管理的隔离运行时内、经用户授权后安装。系统级依赖改为提供可读的 `installHint` 并与用户协作完成，不由模型直接执行系统包管理器。
+- **安装安全边界**：阻止 `winget`、`choco`、`apt` 等系统安装命令、项目内包装安装脚本、全局包装器和 PATH 修改；增加相同安装命令重复执行上限、超时上限及安装提示返回，降低模型陷入依赖修复循环或污染用户环境的风险。
+- **DOCX 依赖口径**：为 Pandoc、LibreOffice、Poppler 补充明确的 Windows 安装提示；`/docx` 可按创建、读取、渲染等能力分别报告就绪状态，不再把可选能力缺失误判为整个 Skill 不可用。
+- **模型选择恢复**：应用初始化在静默同步前恢复上次选择的模型；模型列表成功加载后继续沿用可用选择，仅在该模型确认不可用时回退到未选择。网络失败或空列表不会误删本地选择。
+- **验证**：Python、JavaScript 语法检查和 `git diff --check` 通过；定向回归 274 项、29 个 subtests，通过；排除独立运行式 Skills 路由脚本后的主测试集 640 项、42 个 subtests，通过；内置 Skills 13 项、181 个 subtests，通过；18 项路由检查零失败。用户重启 Code 后确认模型选择恢复与回退行为正常。
+
+**涉及文件**：`app.js`、`server.py`、`skill_dependencies.py`、`index.html`、`styles.css`、`src/core/i18n.js`、`src/features/skills-memory.js`、`data/skills/docx/dependencies.json`、`tests/test_agent_runtime.py`、`tests/test_frontend_modules.py`、`tests/test_p0_stability.py`、`tests/test_p2_coverage.py`、`tests/test_routes.py`、`tests/test_server.py`、`tests/test_skill_dependencies.py`、`tests/test_subagent_frontend.py`、`CHANGELOG.md`、`TODO.md`
+
 ## 2026-07-22 · Codex
 
 ### 2026-07-22 21:11 Code：设置页实时语言刷新与 Workbar 账号文案收口

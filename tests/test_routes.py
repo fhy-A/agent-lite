@@ -169,7 +169,7 @@ class TestFileTools(TestServerFixture):
     def test_registry_declares_read_interaction_and_proposal_effects(self):
         self.assertEqual(set(server_mod.SERVER_TOOL_REGISTRY), {
             "request_user_input", "list_files", "read_file", "search_files", "glob_files",
-            "web_fetch", "use_skill", "read_skill_resource", "save_memory", "run_command",
+            "web_fetch", "use_skill", "check_skill_dependencies", "read_skill_resource", "save_memory", "run_command",
             "propose_edit", "write_file", "delete_file", "task",
         })
         interaction = server_mod.SERVER_TOOL_REGISTRY["request_user_input"]
@@ -178,7 +178,7 @@ class TestFileTools(TestServerFixture):
         self.assertFalse(interaction["background"])
         for name in (
             "list_files", "read_file", "search_files", "glob_files",
-            "web_fetch", "use_skill", "read_skill_resource",
+            "web_fetch", "use_skill", "check_skill_dependencies", "read_skill_resource",
         ):
             spec = server_mod.SERVER_TOOL_REGISTRY[name]
             self.assertEqual(spec["effect"], "read")
@@ -234,6 +234,7 @@ class TestFileTools(TestServerFixture):
 
         cases = [
             ("use_skill", {"name": "registered-skill"}),
+            ("check_skill_dependencies", {"name": "registered-skill"}),
             ("read_skill_resource", {
                 "skill": "registered-skill",
                 "file": "references/guide.md",

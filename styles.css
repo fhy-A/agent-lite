@@ -4657,10 +4657,65 @@ body.theme-dark .syn-fn { color: #61afef; }
 
 #skillEditorModal { z-index: 30; }
 
+.skill-editor-card { width: min(620px, 94vw); }
+
 .skill-edit-body {
   width: 100%; resize: vertical; min-height: 120px;
   padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
   background: var(--panel-3); color: var(--text); font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px;
+}
+.skill-dependency-editor {
+  margin: 4px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 58%, transparent);
+}
+.skill-dependency-editor summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style-position: inside;
+}
+.skill-dependency-editor-badge {
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+}
+.skill-dependency-editor p {
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.skill-dependency-editor-actions { display: flex; justify-content: flex-end; margin-bottom: 7px; }
+.skill-dependency-json {
+  width: 100%;
+  min-height: 150px;
+  resize: vertical;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-3);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.skill-dependency-editor-error { margin-top: 7px; color: var(--red); font-size: 12px; line-height: 1.5; }
+.skill-dependency-editor-notice {
+  margin-top: 7px; padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line)); border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--muted); font-size: 12px; line-height: 1.55;
 }
 
 /* Memory suggestions */
@@ -4722,6 +4777,12 @@ body.theme-dark .syn-fn { color: #61afef; }
 }
 .skill-dependency-card-head { margin-bottom: 8px; }
 .skill-dependency-card-head .skill-detail-label { margin: 0; }
+.skill-dependency-card-meta { display: inline-flex; align-items: center; gap: 8px; }
+.skill-dependency-source {
+  flex: 0 0 auto; padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line)); border-radius: 999px;
+  color: var(--accent); font-size: 10px; font-weight: 700; line-height: 1.4; white-space: nowrap;
+}
 .skill-dependency-status,
 .skill-capability-status {
   flex: 0 0 auto; padding: 2px 7px;

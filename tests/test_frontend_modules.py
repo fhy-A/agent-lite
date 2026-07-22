@@ -1647,6 +1647,57 @@ process.stdout.write(JSON.stringify({staleBrowserValueCleared, keyUpdated, edito
         ):
             self.assertIn(selector, STYLE_SOURCE)
 
+    def test_skill_editor_can_save_validated_dependency_manifests(self):
+        self.assertIn('id="skillDependencyEditor"', INDEX_SOURCE)
+        self.assertIn('id="skillEditDependencies"', INDEX_SOURCE)
+        self.assertIn('id="skillDependencyTemplate"', INDEX_SOURCE)
+        self.assertIn('id="skillDependencyEditorNotice"', INDEX_SOURCE)
+        self.assertIn("class=\"modal-card skill-editor-card\"", INDEX_SOURCE)
+        self.assertIn("skill.dependencyCapabilities = full.dependencyCapabilities || {}", SKILLS_MEMORY_SOURCE)
+        self.assertIn("JSON.stringify(dependencies, null, 2)", SKILLS_MEMORY_SOURCE)
+        self.assertIn("dependencies = JSON.parse(dependencyText)", SKILLS_MEMORY_SOURCE)
+        self.assertIn('originalName: editingSkillName || ""', SKILLS_MEMORY_SOURCE)
+        self.assertIn("payload.dependencies = dependencies", SKILLS_MEMORY_SOURCE)
+        self.assertIn('["detected", "bundled"].includes(editingSkillDependencySource)', SKILLS_MEMORY_SOURCE)
+        self.assertNotIn(
+            'apiJson(`/api/skills?name=${encodeURIComponent(editingSkillName)}`, { method: "DELETE" })',
+            SKILLS_MEMORY_SOURCE,
+        )
+        self.assertIn("skillDependencySnapshot = null", SKILLS_MEMORY_SOURCE)
+        self.assertIn("loadSkillDependencyStatus({ force: true })", SKILLS_MEMORY_SOURCE)
+        for key in (
+            "skillDependencyEditorTitle",
+            "skillDependencyEditorHint",
+            "skillDependencyEditorPlaceholder",
+            "skillDependencyTemplate",
+            "skillDependencyJsonInvalid",
+            "skillDependencyManifestInvalid",
+            "skillDependencyDetected",
+            "skillDependencyDetectedEditorNotice",
+        ):
+            self.assertEqual(I18N_SOURCE.count(f"{key}:"), 2)
+        for selector in (
+            ".skill-editor-card",
+            ".skill-dependency-editor",
+            ".skill-dependency-json",
+            ".skill-dependency-editor-error",
+            ".skill-dependency-editor-notice",
+            ".skill-dependency-source",
+        ):
+            self.assertIn(selector, STYLE_SOURCE)
+
+    def test_skill_dependencies_gate_first_use_and_are_available_as_a_read_tool(self):
+        self.assertIn('name: "check_skill_dependencies"', APP_SOURCE)
+        self.assertIn('"check_skill_dependencies"', APP_SOURCE[APP_SOURCE.index("const toolPolicy"):])
+        self.assertIn("before first use of this Skill", SKILLS_MEMORY_SOURCE)
+        self.assertIn('capability: { type: "string"', APP_SOURCE)
+        self.assertIn("Choose only the capability needed by the current task", SKILLS_MEMORY_SOURCE)
+        self.assertIn("Re-run check_skill_dependencies for the same selected capability", SKILLS_MEMORY_SOURCE)
+        self.assertIn("System-command dependencies must be installed by the user outside Code", SKILLS_MEMORY_SOURCE)
+        self.assertIn("Present supplied installHints verbatim", SKILLS_MEMORY_SOURCE)
+        self.assertIn("never execute them, modify PATH, or create global command wrappers", SKILLS_MEMORY_SOURCE)
+        self.assertEqual(I18N_SOURCE.count("toolCheckSkillDependencies:"), 2)
+
     def test_theme_picker_separates_mode_from_the_resolved_variant_list(self):
         start = SETTINGS_SOURCE.index("function renderThemePanel(container)")
         end = SETTINGS_SOURCE.index("function renderAccountPanel", start)

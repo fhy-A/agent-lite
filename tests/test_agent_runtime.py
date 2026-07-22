@@ -87,7 +87,21 @@ class _AgentUpstream(BaseHTTPRequestHandler):
         )
         runs_command = any(
             message.get("role") == "user"
-            and message.get("content") in {"run approved command", "run slow command"}
+            and message.get("content") in {
+                "run approved command",
+                "run slow command",
+                "install dependency in bypass",
+                "install system dependency in bypass",
+            }
+            for message in messages
+        )
+        installs_dependency = any(
+            message.get("role") == "user" and message.get("content") == "install dependency in bypass"
+            for message in messages
+        )
+        installs_system_dependency = any(
+            message.get("role") == "user"
+            and message.get("content") == "install system dependency in bypass"
             for message in messages
         )
         runs_slow_command = any(
@@ -256,7 +270,15 @@ class _AgentUpstream(BaseHTTPRequestHandler):
             command = (
                 'python -c "import time; print(\'command-started\', flush=True); time.sleep(20)"'
                 if runs_slow_command
-                else 'python -c "print(\'agent-command\')"'
+                else (
+                    "winget install Pandoc.Pandoc"
+                    if installs_system_dependency
+                    else (
+                        "python -m pip install code-test-never-install"
+                        if installs_dependency
+                        else 'python -c "print(\'agent-command\')"'
+                    )
+                )
             )
             frames = [{
                 "choices": [{
@@ -1325,6 +1347,61 @@ class TestDurableAgentRuntime(unittest.TestCase):
         self.assertEqual(execution["status"], "cancelled")
         self.assertTrue(execution["result"]["cancelled"])
         self.assertIn("command-started", execution["stdout"])
+
+    def test_bypass_dependency_install_still_waits_for_user_authorization(self):
+        run = server_mod._create_agent_run(
+            "dependency-install-bypass-session",
+            {
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "install dependency in bypass"}],
+                "tools": [server_mod._SERVER_TOOL_DEFINITIONS["run_command"]],
+            },
+            self.base_url,
+            ["dependency-install-key"],
+            allowed_tools=["run_command"],
+            permission_profile="bypass",
+        )
+        self._wait_status(run, "waiting_authorization")
+        self._wait_worker_idle(run)
+        snapshot = server_mod._agent_snapshot(run, 0)
+        pending = snapshot["pendingAuthorization"]
+        self.assertIn("pip install", pending["command"])
+        execution = run["tool_executions"]["agent-command-1"]
+        self.assertTrue(execution["dependencyInstall"])
+        with mock.patch.object(server_mod.subprocess, "Popen") as popen_mock:
+            rejected = server_mod._submit_agent_authorization(
+                run, pending["authorizationId"], "rejected",
+            )
+            popen_mock.assert_not_called()
+        self.assertTrue(rejected["rejected"])
+
+    def test_bypass_system_dependency_install_is_blocked_without_execution(self):
+        with mock.patch.object(server_mod.subprocess, "Popen") as popen_mock:
+            run = server_mod._create_agent_run(
+                "system-dependency-install-bypass-session",
+                {
+                    "model": "test-model",
+                    "messages": [{
+                        "role": "user",
+                        "content": "install system dependency in bypass",
+                    }],
+                    "tools": [server_mod._SERVER_TOOL_DEFINITIONS["run_command"]],
+                },
+                self.base_url,
+                ["dependency-install-key"],
+                allowed_tools=["run_command"],
+                permission_profile="bypass",
+            )
+            self._wait_terminal(run)
+            self._wait_worker_idle(run)
+
+        popen_mock.assert_not_called()
+        snapshot = server_mod._agent_snapshot(run, 0)
+        self.assertEqual(snapshot["status"], "completed")
+        execution = run["tool_executions"]["agent-command-1"]
+        self.assertEqual(execution["dependencyInstallKind"], "system")
+        self.assertIn("outside Code", execution["error"])
+        self.assertIsNone(snapshot["pendingAuthorization"])
 
     def test_restart_marks_running_command_unknown_and_never_replays_it(self):
         run_id = uuid.uuid4().hex

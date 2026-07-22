@@ -1037,13 +1037,13 @@ const MAX_TOOL_ROUNDS = 200;
 
 const toolPolicy = {
 
-  read: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files"]),
+  read: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "check_skill_dependencies"]),
 
-  plan: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "task", "use_skill", "read_skill_resource"]),
+  plan: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "task", "use_skill", "check_skill_dependencies", "read_skill_resource"]),
 
-  accept: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "run_command", "task", "use_skill", "write_file", "delete_file", "save_memory", "read_skill_resource"]),
+  accept: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "run_command", "task", "use_skill", "check_skill_dependencies", "write_file", "delete_file", "save_memory", "read_skill_resource"]),
 
-  bypass: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "run_command", "task", "use_skill", "write_file", "delete_file", "save_memory", "read_skill_resource"]),
+  bypass: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "web_fetch", "propose_edit", "run_command", "task", "use_skill", "check_skill_dependencies", "write_file", "delete_file", "save_memory", "read_skill_resource"]),
 
 };
 
@@ -1427,7 +1427,7 @@ const nativeTools = [
 
       name: "run_command",
 
-      description: "运行低风险命令，用于查看、测试、构建、git 查询或 docker compose 查询。",
+      description: "运行低风险命令，用于查看、测试、构建、git 查询或 docker compose 查询。Python/Node 托管依赖安装需要用户授权；系统包管理器安装、持久化 PATH 修改和全局命令包装器会被拦截，必须由用户在 Code 外完成。",
 
       parameters: {
 
@@ -1508,6 +1508,38 @@ const nativeTools = [
         properties: {
 
           name: { type: "string", description: "Skill 名称，如 python-testing。" },
+
+        },
+
+        required: ["name"],
+
+        additionalProperties: false,
+
+      },
+
+    },
+
+  },
+
+  {
+
+    type: "function",
+
+    function: {
+
+      name: "check_skill_dependencies",
+
+      description: "按当前任务所需能力检查 Skill 依赖。多能力 Skill 省略 capability 时只查看状态，随后只能选择一个相关能力，不能安装全部能力。Python/Node 包可按隔离环境方案授权安装；系统命令必须由用户在 Code 外安装，只能展示 installHints，禁止执行、修改 PATH 或创建全局包装器。安装后再次调用确认。",
+
+      parameters: {
+
+        type: "object",
+
+        properties: {
+
+          name: { type: "string", description: "已安装的 Skill 名称。" },
+
+          capability: { type: "string", description: "本次任务实际需要的能力；仅查看多能力状态时可省略。" },
 
         },
 
@@ -2359,6 +2391,7 @@ const TOOL_DISPLAY = {
   web_fetch:    { label: "抓取网页" },
   task:         { label: "子任务" },
   use_skill:    { label: "加载 Skill" },
+  check_skill_dependencies: { label: "检查 Skill 依赖" },
   read_skill_resource: { label: "读取 Skill 资源" },
   save_memory:  { label: "保存记忆" },
 }
@@ -2369,7 +2402,7 @@ function _toolActionLabel(action) {
   const map = { list_files:"toolListFiles", read_file:"toolReadFile", search_files:"toolSearchFiles",
     glob_files:"toolGlobFiles", propose_edit:"toolProposeEdit", apply_edit:"toolApplyEdit",
     run_command:"toolRunCommand", write_file:"toolWriteFile", delete_file:"toolDeleteFile",
-    web_fetch:"toolWebFetch", task:"toolTask", use_skill:"toolUseSkill", read_skill_resource:"toolReadSkill", save_memory:"toolSaveMemory" };
+    web_fetch:"toolWebFetch", task:"toolTask", use_skill:"toolUseSkill", check_skill_dependencies:"toolCheckSkillDependencies", read_skill_resource:"toolReadSkill", save_memory:"toolSaveMemory" };
   return map[action] ? t(map[action]) : action;
 }
 
@@ -4728,6 +4761,12 @@ async function refreshModels() {
     if (savedModel && models.includes(savedModel)) {
 
       setSelectedModel(savedModel);
+
+    } else {
+
+      setSelectedModel("");
+
+      localStorage.removeItem("code-model");
 
     }
 
@@ -10438,7 +10477,9 @@ async function init() {
   els.systemPromptText.value = localStorage.getItem("code-system-prompt") || defaultSystemPrompt;
 
   applyI18n(); // run early, before async ops, to prevent flicker
-  setSelectedModel(getSelectedModel()); // sync model pill (excluded from applyI18n)
+  // Restore the persisted model before platform sync can save other settings.
+  // Availability is validated only after refreshModels receives a real list.
+  setSelectedModel(localStorage.getItem("code-model") || "");
   if (!state.sessionId) els.sessionTitle.value = t("sessionTitleDefault");
 
   updateModePromptPreview();

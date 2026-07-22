@@ -9,13 +9,25 @@
     },
     "read": {
       "required": [
-        { "type": "command", "name": "pandoc" }
+        {
+          "type": "command",
+          "name": "pandoc",
+          "installHint": "Windows PowerShell: winget install --id JohnMacFarlane.Pandoc --exact"
+        }
       ]
     },
     "render": {
       "required": [
-        { "type": "command", "name": "soffice" },
-        { "type": "command", "name": "pdftoppm" }
+        {
+          "type": "command",
+          "name": "soffice",
+          "installHint": "Windows PowerShell: winget install --id TheDocumentFoundation.LibreOffice --exact"
+        },
+        {
+          "type": "command",
+          "name": "pdftoppm",
+          "installHint": "Windows PowerShell: winget install --id oschwartz10612.Poppler --exact"
+        }
       ]
     }
   }

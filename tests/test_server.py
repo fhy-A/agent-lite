@@ -556,6 +556,98 @@ class TestIsSafeCommand(unittest.TestCase):
         ok, _ = server.is_safe_command("pip install requests")
         self.assertTrue(ok)
 
+    def test_dependency_installs_are_classified_by_runtime_ownership(self):
+        managed_cases = (
+            "pip install requests",
+            "python -m pip install requests",
+            "python -m venv data/runtime/python",
+            "npm install --prefix data/runtime/node lodash",
+        )
+        for command in managed_cases:
+            with self.subTest(command=command):
+                self.assertEqual(server.dependency_install_command_kind(command), "managed")
+                self.assertTrue(server.command_requires_dependency_authorization(command))
+        system_cases = (
+            "winget install Poppler.Poppler",
+            "choco install pandoc",
+            "sudo apt-get install libreoffice",
+            "python -c \"import subprocess; subprocess.run(['winget', 'install', 'Pandoc.Pandoc'])\"",
+        )
+        for command in system_cases:
+            with self.subTest(command=command):
+                self.assertEqual(server.dependency_install_command_kind(command), "system")
+                self.assertFalse(server.command_requires_dependency_authorization(command))
+        environment_cases = (
+            '$old = [Environment]::GetEnvironmentVariable("Path", "User"); '
+            '[Environment]::SetEnvironmentVariable("Path", "$old;C:\\Pandoc", "User")',
+            '$p = "$env:APPDATA\\npm\\pandoc.cmd"; Set-Content -Path $p -Value "@echo off"',
+            'setx PATH "%PATH%;C:\\Pandoc"',
+        )
+        for command in environment_cases:
+            with self.subTest(command=command):
+                self.assertEqual(server.dependency_install_command_kind(command), "environment")
+                self.assertFalse(server.command_requires_dependency_authorization(command))
+        self.assertFalse(server.command_requires_dependency_authorization("python -m pytest -q"))
+        self.assertFalse(server.command_requires_dependency_authorization("npm test"))
+
+    def test_dependency_install_classifier_reads_project_local_wrapper(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            script = root / "install_deps.py"
+            script.write_text(
+                "import subprocess\nsubprocess.run(['winget', 'install', 'Pandoc.Pandoc'])\n",
+                encoding="utf-8",
+            )
+            kind = server.dependency_install_command_kind(
+                "python install_deps.py",
+                project_root=root,
+            )
+
+        self.assertEqual(kind, "system")
+
+    def test_run_command_blocks_system_package_manager_install(self):
+        with mock.patch.object(server.subprocess, "Popen") as popen_mock:
+            result = server.execute_run_command_tool({
+                "command": "winget install Pandoc.Pandoc",
+                "timeout": 300,
+            })
+
+        popen_mock.assert_not_called()
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["blocked"])
+        self.assertTrue(result["userCooperationRequired"])
+        self.assertEqual(result["dependencyInstallKind"], "system")
+
+    def test_run_command_blocks_persistent_dependency_environment_changes(self):
+        command = (
+            '$p = "$env:APPDATA\\npm\\pdftoppm.cmd"; '
+            'Set-Content -Path $p -Value "@echo off"'
+        )
+        with mock.patch.object(server.subprocess, "Popen") as popen_mock:
+            result = server.execute_run_command_tool({"command": command})
+
+        popen_mock.assert_not_called()
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["blocked"])
+        self.assertTrue(result["userCooperationRequired"])
+        self.assertEqual(result["dependencyInstallKind"], "environment")
+        self.assertIn("Do not modify PATH", result["error"])
+
+    def test_repeated_command_guard_blocks_the_third_identical_attempt(self):
+        run = {
+            "tool_executions": {
+                "one": {"name": "run_command", "command": "python -m pytest -q"},
+                "two": {"name": "run_command", "command": "  PYTHON   -m pytest -q  "},
+                "current": {"name": "run_command", "command": "python -m pytest -q"},
+            },
+        }
+        count = server._agent_repeated_command_count(
+            run,
+            "python -m pytest -q",
+            exclude_call_id="current",
+        )
+        self.assertEqual(count, 2)
+
     # ── New: expanded whitelist checks ──
     def test_curl_allowed(self):
         ok, _ = server.is_safe_command("curl https://example.com")

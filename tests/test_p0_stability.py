@@ -108,6 +108,19 @@ class TestFrontendRefreshRecovery(unittest.TestCase):
         queue_resume_pos = APP_SOURCE.index("resumePersistedQueuedMessages()", resume_pos)
         self.assertGreater(queue_resume_pos, resume_pos)
 
+    def test_init_restores_saved_model_before_platform_sync_and_validates_availability(self):
+        restore = 'setSelectedModel(localStorage.getItem("code-model") || "");'
+        restore_pos = APP_SOURCE.index(restore)
+        sync_pos = APP_SOURCE.index("const platformSyncPromise = syncPlatformKeysSilently();")
+        self.assertLess(restore_pos, sync_pos)
+
+        refresh_start = APP_SOURCE.index("async function refreshModels()")
+        refresh_end = APP_SOURCE.index("function appendSystemError", refresh_start)
+        refresh_source = APP_SOURCE[refresh_start:refresh_end]
+        self.assertIn('if (savedModel && models.includes(savedModel))', refresh_source)
+        self.assertIn('setSelectedModel("");', refresh_source)
+        self.assertIn('localStorage.removeItem("code-model");', refresh_source)
+
     def test_server_agent_checkpoint_survives_reload(self):
         for expected in (
             'executionOwner: String(',
@@ -124,7 +137,7 @@ class TestFrontendRefreshRecovery(unittest.TestCase):
             self.assertIn(expected, APP_SOURCE)
 
     def test_all_permission_profiles_have_single_server_execution_owner(self):
-        self.assertIn('read: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files"])', APP_SOURCE)
+        self.assertIn('read: new Set(["request_user_input", "list_files", "read_file", "search_files", "glob_files", "check_skill_dependencies"])', APP_SOURCE)
         self.assertIn('return ["read", "plan", "accept", "bypass"].includes(permissionProfile) ? "server-agent" : "browser"', APP_SOURCE)
         self.assertIn("executionOwner: executionOwnerForPermissionProfile(permissionProfile)", APP_SOURCE)
         self.assertIn("ctx.executionOwner = runState.executionOwner || executionOwnerForPermissionProfile(ctx.permissionProfile)", APP_SOURCE)

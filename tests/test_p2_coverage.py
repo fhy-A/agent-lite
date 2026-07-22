@@ -412,13 +412,14 @@ class TestSkillsCRUD(unittest.TestCase):
     def tearDownClass(cls):
         cls._patcher.stop()
 
+    def setUp(self):
+        for child in self.tmp_skills.iterdir():
+            if child.is_dir():
+                server_mod.shutil.rmtree(child)
+            else:
+                child.unlink()
+
     def test_list_empty(self):
-        # Clean up any leftover skills from other tests
-        for d in self.tmp_skills.iterdir():
-            if d.is_dir():
-                for f in d.iterdir():
-                    f.unlink()
-                d.rmdir()
         result = server_mod.list_skills()
         self.assertEqual(result, [])
 
@@ -436,6 +437,126 @@ class TestSkillsCRUD(unittest.TestCase):
         self.assertEqual(skills[0]["description"], "A test skill")
         self.assertEqual(skills[0]["tools"], ["read_file", "search_files"])
         self.assertEqual(skills[0]["keywords"], ["test", "example"])
+
+    def test_create_skill_with_dependency_manifest(self):
+        capabilities = {
+            "default": {
+                "required": [
+                    {"type": "python", "name": "requests", "minimumVersion": "2.0"},
+                ],
+                "optional": [
+                    {"type": "command", "name": "git"},
+                ],
+            },
+        }
+        result = server_mod.create_skill(
+            name="dependency-skill",
+            description="Dependency test",
+            body_text="Use the declared dependencies.",
+            dependencies=capabilities,
+        )
+
+        manifest_path = self.tmp_skills / "dependency-skill" / "dependencies.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["schemaVersion"], 1)
+        self.assertEqual(manifest["skill"], "dependency-skill")
+        self.assertEqual(manifest["capabilities"], capabilities)
+        self.assertEqual(result["dependencyCapabilities"], capabilities)
+        self.assertNotIn("dependencies.json", result["resources"].get("files", []))
+
+    def test_copied_skill_dependencies_are_detected_and_exposed_to_model(self):
+        server_mod.create_skill(
+            name="copied-dependency-skill",
+            description="Copied dependency test",
+            body_text="Run the packaged script.",
+        )
+        skill_dir = self.tmp_skills / "copied-dependency-skill"
+        (skill_dir / "requirements.txt").write_text(
+            "code-test-missing-package>=1.0\n",
+            encoding="utf-8",
+        )
+
+        skill = server_mod.read_skill("copied-dependency-skill")
+        checked = server_mod.execute_check_skill_dependencies_tool({
+            "name": "copied-dependency-skill",
+        })
+        loaded = server_mod.execute_use_skill_tool({"name": "copied-dependency-skill"})
+
+        self.assertEqual(skill["dependencyManifestSource"], "detected")
+        self.assertIn("python-runtime", skill["dependencyCapabilities"])
+        self.assertIn("requirements.txt", skill["dependencyDetectedFrom"])
+        self.assertEqual(checked["status"], "unavailable")
+        self.assertTrue(checked["installGuidance"]["needed"])
+        self.assertEqual(loaded["dependencies"]["manifestSource"], "detected")
+        self.assertFalse((skill_dir / "dependencies.json").exists())
+
+        server_mod.update_skill(
+            "copied-dependency-skill",
+            "copied-dependency-skill",
+            "Updated without overriding dependencies",
+            "Run the packaged script.",
+        )
+        self.assertFalse((skill_dir / "dependencies.json").exists())
+
+    def test_invalid_dependency_manifest_does_not_leave_partial_skill(self):
+        with self.assertRaises(server_mod.DependencyManifestError):
+            server_mod.create_skill(
+                name="invalid-dependency-skill",
+                description="Invalid dependency test",
+                body_text="This should not be created.",
+                dependencies={
+                    "default": {
+                        "required": [{"type": "installer", "name": "bad"}],
+                    },
+                },
+            )
+        self.assertFalse((self.tmp_skills / "invalid-dependency-skill").exists())
+
+    def test_update_skill_preserves_resources_and_rewrites_dependencies(self):
+        server_mod.create_skill(
+            name="rename-source",
+            description="Before",
+            body_text="Before body.",
+            dependencies={
+                "default": {
+                    "required": [{"type": "python", "name": "requests"}],
+                },
+            },
+        )
+        references = self.tmp_skills / "rename-source" / "references"
+        references.mkdir()
+        (references / "guide.md").write_text("Keep me", encoding="utf-8")
+
+        result = server_mod.update_skill(
+            "rename-source",
+            "rename-target",
+            "After",
+            "After body.",
+            dependencies={
+                "render": {
+                    "required": [{"type": "command", "name": "pdftoppm"}],
+                },
+            },
+        )
+
+        target = self.tmp_skills / "rename-target"
+        manifest = json.loads((target / "dependencies.json").read_text(encoding="utf-8"))
+        self.assertFalse((self.tmp_skills / "rename-source").exists())
+        self.assertEqual((target / "references" / "guide.md").read_text(encoding="utf-8"), "Keep me")
+        self.assertEqual(manifest["skill"], "rename-target")
+        self.assertIn("render", result["dependencyCapabilities"])
+        self.assertEqual(result["description"], "After")
+        self.assertEqual(result["body"], "After body.")
+
+        cleared = server_mod.update_skill(
+            "rename-target",
+            "rename-target",
+            "After",
+            "After body.",
+            dependencies={},
+        )
+        self.assertFalse((target / "dependencies.json").exists())
+        self.assertEqual(cleared["dependencyCapabilities"], {})
 
     def test_read_single(self):
         server_mod.create_skill(

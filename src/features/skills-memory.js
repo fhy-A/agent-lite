@@ -595,16 +595,16 @@
 
     function renderMemoryPanel(container) {
       state._editingMemory = null;
-      container.innerHTML = `<h3 style="margin:0 0 14px">${t("memory")}</h3><div id="settingsMemoryList" class="memory-list" style="max-height:300px; overflow:auto"></div>
+      container.innerHTML = `<h3 style="margin:0 0 14px" data-i18n="memory">${t("memory")}</h3><div id="settingsMemoryList" class="memory-list" style="max-height:300px; overflow:auto"></div>
         <div id="settingsMemoryForm" class="memory-form">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;height:24px">
-            <span id="memFormLabel" style="font-weight:700;font-size:13px;color:var(--text)">${t("newMemory")}</span>
-            <button id="memCancelBtn" class="mini-btn" type="button" style="visibility:hidden">${t("cancel")}</button>
+            <span id="memFormLabel" style="font-weight:700;font-size:13px;color:var(--text)" data-i18n="newMemory">${t("newMemory")}</span>
+            <button id="memCancelBtn" class="mini-btn" type="button" style="visibility:hidden" data-i18n="cancel">${t("cancel")}</button>
           </div>
-          <input id="settingsMemName" placeholder="${t("memNamePlaceholder")}" autocomplete="off" />
-          <input id="settingsMemDesc" placeholder="${t("memDescPlaceholder")}" autocomplete="off" />
-          <textarea id="settingsMemBody" rows="5" placeholder="${t("memBodyPlaceholder")}" spellcheck="false"></textarea>
-          <div class="memory-form-actions"><button id="settingsSaveMem" class="mini-btn" type="button">${t("save")}</button></div>
+          <input id="settingsMemName" placeholder="${t("memNamePlaceholder")}" data-i18n="memNamePlaceholder" autocomplete="off" />
+          <input id="settingsMemDesc" placeholder="${t("memDescPlaceholder")}" data-i18n="memDescPlaceholder" autocomplete="off" />
+          <textarea id="settingsMemBody" rows="5" placeholder="${t("memBodyPlaceholder")}" data-i18n="memBodyPlaceholder" spellcheck="false"></textarea>
+          <div class="memory-form-actions"><button id="settingsSaveMem" class="mini-btn" type="button" data-i18n="save">${t("save")}</button></div>
         </div>`;
       refreshSettingsMemoryList();
       byId("settingsSaveMem").addEventListener("click", async () => {
@@ -636,6 +636,7 @@
       byId("settingsMemName").value = "";
       byId("settingsMemDesc").value = "";
       byId("settingsMemBody").value = "";
+      byId("memFormLabel").dataset.i18n = "newMemory";
       byId("memFormLabel").textContent = t("newMemory");
       byId("memCancelBtn").style.visibility = "hidden";
       byId("settingsMemName").disabled = false;
@@ -645,7 +646,7 @@
       const list = byId("settingsMemoryList");
       if (!list) return;
       const requestId = ++settingsMemoryRequestId;
-      list.innerHTML = `<div class="settings-memory-state is-loading" role="status"><span class="settings-memory-spinner" aria-hidden="true"></span><span>${t("loadingMemories")}</span></div>`;
+      list.innerHTML = `<div class="settings-memory-state is-loading" role="status"><span class="settings-memory-spinner" aria-hidden="true"></span><span data-i18n="loadingMemories">${t("loadingMemories")}</span></div>`;
       try {
         const data = await apiJson("/api/memory");
         if (requestId !== settingsMemoryRequestId || byId("settingsMemoryList") !== list) return;
@@ -654,10 +655,10 @@
           <span class="memory-item-name">${escapeHtml(memory.name)}</span>
           ${memory.description ? `<span class="memory-item-desc">${escapeHtml(memory.description)}</span>` : "<span></span>"}
           <div class="memory-item-actions">
-            <button class="memory-item-btn" data-edit="${escapeHtml(memory.name)}" title="${t("edit")}">${editIcon()}</button>
-            <button class="memory-item-btn danger" data-del="${escapeHtml(memory.name)}" title="${t("delete")}">${trashIcon()}</button>
+            <button class="memory-item-btn" data-edit="${escapeHtml(memory.name)}" title="${t("edit")}" data-i18n-title="edit">${editIcon()}</button>
+            <button class="memory-item-btn danger" data-del="${escapeHtml(memory.name)}" title="${t("delete")}" data-i18n-title="delete">${trashIcon()}</button>
           </div>
-        </div>`).join("") : `<div class="muted-line" style="padding:12px">${t("noMemory")}</div>`;
+        </div>`).join("") : `<div class="muted-line" style="padding:12px" data-i18n="noMemory">${t("noMemory")}</div>`;
         list.querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", async () => {
           const memory = await apiJson(`/api/memory?file=${encodeURIComponent(button.dataset.edit)}`);
           state._editingMemory = memory.name;
@@ -665,6 +666,7 @@
           byId("settingsMemName").disabled = true;
           byId("settingsMemDesc").value = (memory.meta || {}).description || "";
           byId("settingsMemBody").value = memory.body || "";
+          byId("memFormLabel").removeAttribute("data-i18n");
           byId("memFormLabel").textContent = t("editingMemory", { name: memory.name });
           byId("memCancelBtn").style.visibility = "";
           list.querySelectorAll(".memory-item").forEach((element) => {
@@ -677,9 +679,9 @@
           documentRef.querySelector(".key-delete-confirm")?.remove();
           const confirm = documentRef.createElement("div");
           confirm.className = "key-delete-confirm";
-          confirm.innerHTML = `<span>${t("deleteConfirmMsg").replace("{name}", escapeHtml(name))}</span>
-            <button class="key-confirm-yes" type="button">${t("confirmDelete")}</button>
-            <button class="key-confirm-no" type="button">${t("cancel")}</button>`;
+          confirm.innerHTML = `<span data-settings-delete-name="${escapeHtml(name)}">${t("deleteConfirmMsg", { name: escapeHtml(name) })}</span>
+            <button class="key-confirm-yes" type="button" data-i18n="confirmDelete">${t("confirmDelete")}</button>
+            <button class="key-confirm-no" type="button" data-i18n="cancel">${t("cancel")}</button>`;
           item.after(confirm);
           confirm.querySelector(".key-confirm-yes").addEventListener("click", async () => {
             confirm.remove();
@@ -692,15 +694,15 @@
         }));
       } catch (error) {
         if (requestId !== settingsMemoryRequestId || byId("settingsMemoryList") !== list) return;
-        list.innerHTML = `<div class="settings-memory-state is-error" role="alert"><span>${t("memoryLoadFailed")}：${escapeHtml(error.message || "")}</span><button id="settingsMemoryRetry" class="mini-btn" type="button">${t("retry")}</button></div>`;
+        list.innerHTML = `<div class="settings-memory-state is-error" role="alert"><span><span data-i18n="memoryLoadFailed">${t("memoryLoadFailed")}</span>：${escapeHtml(error.message || "")}</span><button id="settingsMemoryRetry" class="mini-btn" type="button" data-i18n="retry">${t("retry")}</button></div>`;
         byId("settingsMemoryRetry")?.addEventListener("click", refreshSettingsMemoryList);
       }
     }
 
     function renderSkillsInSettings(container) {
       container.innerHTML = `<div class="skills-panel-heading">
-          <h3>${t("skills")}</h3>
-          <button id="settingsSkillDependencyRefresh" class="mini-btn skill-dependency-refresh" type="button">${t("skillDependencyCheck")}</button>
+          <h3 data-i18n="skills">${t("skills")}</h3>
+          <button id="settingsSkillDependencyRefresh" class="mini-btn skill-dependency-refresh" type="button" data-i18n="skillDependencyCheck">${t("skillDependencyCheck")}</button>
         </div>
         <div id="settingsSkillDependencyOverview" class="skill-dependency-overview" aria-live="polite"></div>
         <div class="skills-layout-inner">
@@ -717,6 +719,28 @@
         loadSkillDependencyStatus({ force: true });
       });
       if (!skillDependencySnapshot && !skillDependencyLoading) loadSkillDependencyStatus();
+    }
+
+    function refreshSettingsLanguage(panel) {
+      if (panel === "memory") {
+        const label = byId("memFormLabel");
+        if (label) {
+          if (state._editingMemory) {
+            label.removeAttribute("data-i18n");
+            label.textContent = t("editingMemory", { name: state._editingMemory });
+          } else {
+            label.dataset.i18n = "newMemory";
+            label.textContent = t("newMemory");
+          }
+        }
+        return;
+      }
+      if (panel !== "skills") return;
+      const sidebar = byId("settingsSkillsSidebar");
+      const scrollTop = sidebar?.scrollTop || 0;
+      renderSkillDependencyOverview();
+      renderSettingsSkillsSidebar(settingsSelectedSkillName);
+      if (sidebar) sidebar.scrollTop = scrollTop;
     }
 
     function dependencyStatusLabel(status) {
@@ -931,6 +955,7 @@
       openSkillEditor,
       renderMemoryPanel,
       renderSkillsInSettings,
+      refreshSettingsLanguage,
       showMemoryPanel,
       showSkillsPanel,
       showSlashSuggestions,

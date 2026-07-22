@@ -950,6 +950,7 @@ const {
   commitSlashSelection,
   renderMemoryPanel,
   renderSkillsInSettings,
+  refreshSettingsLanguage: refreshSkillsMemorySettingsLanguage,
   showSlashSuggestions,
   updateMemoryContextIndicator,
 } = skillsMemoryFeature;
@@ -969,6 +970,7 @@ const settingsFeature = createSettingsFeature({
   saveSystemPrompt,
   renderMemoryPanel,
   renderSkillsInSettings,
+  refreshSkillsMemorySettingsLanguage,
   getDefaultSystemPrompt: () => defaultSystemPrompt,
   onPlatformLogout: clearPlatformLocalData,
   trashIcon,

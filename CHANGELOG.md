@@ -16,6 +16,15 @@
 
 ## 2026-07-22 · Codex
 
+### 2026-07-22 21:11 Code：设置页实时语言刷新与 Workbar 账号文案收口
+
+- **当前面板即时刷新**：语言切换不再依赖离开设置页再返回；模型、Memory、Skills、主题、系统提示词、账户和更新面板均会就地刷新固定文案，同时保留 Key 草稿、Memory 编辑内容、当前 Skill、主题选择、更新状态与账户加载状态。
+- **动态内容统一 i18n**：补齐 Key 编辑器、模型空状态、更新操作、账户统计、Memory 表单与 Skill 依赖状态等动态节点的中英文标记；Skills 语言刷新复用已缓存的依赖预检结果，不重复扫描本机环境。
+- **账户视觉与命名修复**：修正连接状态圆点样式误作用到整段文字导致“已连接”竖排的问题；设置侧栏和右侧面板统一命名为“Workbar 账号 / Workbar Account”。
+- **验证**：相关 JavaScript 语法检查、`git diff --check`、前端与 P2 定向回归 102 项、4 个 subtests 通过；排除独立运行式 Skills 路由脚本后的完整回归 630 项、211 个 subtests 通过。浏览器检查设置页中英文即时切换与草稿/选择状态保持，用户反馈账户连接文字排版恢复正常并确认继续后续阶段。
+
+**涉及文件**：`app.js`、`index.html`、`src/core/i18n.js`、`src/features/settings.js`、`src/features/skills-memory.js`、`styles.css`、`tests/test_frontend_modules.py`、`CHANGELOG.md`
+
 ### 2026-07-22 20:14 Code：Skill 依赖管理阶段 2——设置页状态可视化
 
 - **按需检查与缓存**：Skills 设置页在首次打开时才请求依赖预检，不增加应用启动负担；结果在当前页面生命周期内复用，并提供“重新检查”按钮显式刷新本机状态。

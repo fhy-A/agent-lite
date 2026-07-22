@@ -31,6 +31,7 @@
     const saveSystemPrompt = options.saveSystemPrompt || (() => {});
     const renderMemoryPanel = options.renderMemoryPanel || (() => {});
     const renderSkillsInSettings = options.renderSkillsInSettings || (() => {});
+    const refreshSkillsMemorySettingsLanguage = options.refreshSkillsMemorySettingsLanguage || (() => {});
     const getDefaultSystemPrompt = options.getDefaultSystemPrompt || (() => "");
     const onPlatformLogout = options.onPlatformLogout || (() => {});
     const trashIcon = options.trashIcon || (() => "");
@@ -70,19 +71,19 @@
 
     function keyNormalActions(entry, index) {
       return `<div class="key-actions">
-        <button class="key-act-btn key-eye" type="button" title="${t("toggleVisibility")}" data-idx="${index}">${eyeIcon()}</button>
-        <label class="toggle-switch key-enable" title="${entry.enabled !== false ? t("enabledStatus") : t("disabledStatus")}">
+        <button class="key-act-btn key-eye" type="button" title="${t("toggleVisibility")}" data-i18n-title="toggleVisibility" data-idx="${index}">${eyeIcon()}</button>
+        <label class="toggle-switch key-enable" title="${entry.enabled !== false ? t("enabledStatus") : t("disabledStatus")}" data-key-enabled="${entry.enabled !== false}">
           <input type="checkbox" ${entry.enabled !== false ? "checked" : ""} data-idx="${index}" />
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
         </label>
-        <button class="key-act-btn key-trash" type="button" title="${t("delete")}" data-idx="${index}">${trashIcon()}</button>
+        <button class="key-act-btn key-trash" type="button" title="${t("delete")}" data-i18n-title="delete" data-idx="${index}">${trashIcon()}</button>
       </div>`;
     }
 
     function keyConfirmActions(index) {
       return `<div class="key-actions">
-        <button class="key-act-btn key-confirm" type="button" title="${t("save")}" data-idx="${index}"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M3 7l2.5 2.5L11 4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        <button class="key-act-btn key-cancel" type="button" title="${t("cancel")}" data-idx="${index}"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M3 3l8 8M11 3L3 11" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg></button>
+        <button class="key-act-btn key-confirm" type="button" title="${t("save")}" data-i18n-title="save" data-idx="${index}"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M3 7l2.5 2.5L11 4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button class="key-act-btn key-cancel" type="button" title="${t("cancel")}" data-i18n-title="cancel" data-idx="${index}"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M3 3l8 8M11 3L3 11" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg></button>
       </div>`;
     }
 
@@ -92,9 +93,9 @@
       return entries.map((entry, index) => {
         const isNew = newRow && index === entries.length - 1;
         return `<div class="key-row ${entry.enabled === false && !isNew ? "disabled" : ""}" data-idx="${index}" data-source="${entry.source === "platform" ? "platform" : "manual"}" data-platform-token-id="${escapeHtml(entry.platformTokenId || "")}">
-          <span class="key-drag-handle" title="${t("dragSort")}" draggable="true">⠿</span>
+          <span class="key-drag-handle" title="${t("dragSort")}" data-i18n-title="dragSort" draggable="true">⠿</span>
           <div class="key-main">
-            <input class="key-name-input" placeholder="${t("keyNamePlaceholder")}" value="${escapeHtml(entry.name)}" data-idx="${index}" />
+            <input class="key-name-input" placeholder="${t("keyNamePlaceholder")}" data-i18n="keyNamePlaceholder" value="${escapeHtml(entry.name)}" data-idx="${index}" />
             <div class="key-value-wrap"><input class="key-value-input" type="password" value="${escapeHtml(entry.key)}" data-idx="${index}" /></div>
           </div>
           ${isNew ? keyConfirmActions(index) : keyNormalActions(entry, index)}
@@ -141,9 +142,10 @@
       documentRef.querySelector(".key-delete-confirm")?.remove();
       const confirm = documentRef.createElement("div");
       confirm.className = "key-delete-confirm";
-      confirm.innerHTML = `<span>删除「${escapeHtml(name.slice(0, 20))}」？</span>
-        <button class="key-confirm-yes" type="button">${t("confirmDelete")}</button>
-        <button class="key-confirm-no" type="button">${t("cancel")}</button>`;
+      const shortName = name.slice(0, 20);
+      confirm.innerHTML = `<span data-settings-delete-name="${escapeHtml(shortName)}">${t("deleteConfirmMsg", { name: shortName })}</span>
+        <button class="key-confirm-yes" type="button" data-i18n="confirmDelete">${t("confirmDelete")}</button>
+        <button class="key-confirm-no" type="button" data-i18n="cancel">${t("cancel")}</button>`;
       row.after(confirm);
       confirm.querySelector(".key-confirm-yes").addEventListener("click", () => {
         confirm.remove();
@@ -244,13 +246,13 @@
       detail.addEventListener("click", (event) => {
         if (event.target.id !== "settingsKeyAddRow" && !event.target.closest("#settingsKeyAddRow")) return;
         const area = byId("settingsKeyAddArea");
-        area.innerHTML = `<textarea id="keyBulkInput" class="key-bulk-input" placeholder="${t("keyBulkPlaceholder")}" rows="5"></textarea>
-          <div class="key-bulk-actions"><button id="keyBulkSave" class="mini-btn" type="button">${t("save")}</button><button id="keyBulkCancel" class="mini-btn" type="button">${t("cancel")}</button></div>`;
+        area.innerHTML = `<textarea id="keyBulkInput" class="key-bulk-input" placeholder="${t("keyBulkPlaceholder")}" data-i18n="keyBulkPlaceholder" rows="5"></textarea>
+          <div class="key-bulk-actions"><button id="keyBulkSave" class="mini-btn" type="button" data-i18n="save">${t("save")}</button><button id="keyBulkCancel" class="mini-btn" type="button" data-i18n="cancel">${t("cancel")}</button></div>`;
         const bulkInput = byId("keyBulkInput");
         const bulkSave = byId("keyBulkSave");
         bulkInput.addEventListener("input", () => bulkSave.classList.toggle("primary-btn", bulkInput.value.trim().length > 0));
         byId("keyBulkCancel").addEventListener("click", () => {
-          area.innerHTML = `<button id="settingsKeyAddRow" class="key-add-btn" type="button">${t("addKey")}</button>`;
+          area.innerHTML = `<button id="settingsKeyAddRow" class="key-add-btn" type="button" data-i18n="addKey">${t("addKey")}</button>`;
         });
         bulkSave.addEventListener("click", () => {
           const lines = bulkInput.value.split("\n").map((line) => line.trim()).filter(Boolean);
@@ -263,7 +265,7 @@
           saveLocalSettings();
           keyList.innerHTML = renderKeyEditor(els.apiKey.value);
           bindKeyEditorEvents(keyList);
-          area.innerHTML = `<button id="settingsKeyAddRow" class="key-add-btn" type="button">${t("addKey")}</button>`;
+          area.innerHTML = `<button id="settingsKeyAddRow" class="key-add-btn" type="button" data-i18n="addKey">${t("addKey")}</button>`;
         });
       });
     }
@@ -441,7 +443,8 @@
         list.innerHTML = els.modelListBox.innerHTML;
       } else {
         const hasEnabledKey = loadKeyConfig(storage).some((entry) => entry.enabled !== false && String(entry.key || "").trim());
-        list.innerHTML = `<div class="model-list-empty">${t(hasEnabledKey ? "noModelsFound" : "enterApiKey")}</div>`;
+        const emptyKey = hasEnabledKey ? "noModelsFound" : "enterApiKey";
+        list.innerHTML = `<div class="model-list-empty" data-i18n="${emptyKey}">${t(emptyKey)}</div>`;
       }
       return count;
     }
@@ -471,17 +474,20 @@
       const modelCount = renderedModelCount();
       const initialModels = modelCount > 0
         ? els.modelListBox.innerHTML
-        : `<div class="model-list-empty">${t(keyConfig.some((entry) => entry.enabled !== false && String(entry.key || "").trim()) ? "noModelsFound" : "enterApiKey")}</div>`;
-      container.innerHTML = `<h3 style="margin:0 0 14px">${t("models")}</h3>
-        <div class="field"><div class="key-field-heading"><span>${t("apiKeys")}</span><button id="settingsConnectPlatform" class="key-workbar-btn" type="button" title="${t("getFromWorkbar")}" data-i18n-title="getFromWorkbar"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1.5v7m0 0L4.5 6M7 8.5L9.5 6M2 10.5v1.25c0 .41.34.75.75.75h8.5c.41 0 .75-.34.75-.75V10.5" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-i18n="getFromWorkbar">${t("getFromWorkbar")}</span></button></div>
+        : (() => {
+          const emptyKey = keyConfig.some((entry) => entry.enabled !== false && String(entry.key || "").trim()) ? "noModelsFound" : "enterApiKey";
+          return `<div class="model-list-empty" data-i18n="${emptyKey}">${t(emptyKey)}</div>`;
+        })();
+      container.innerHTML = `<h3 style="margin:0 0 14px" data-i18n="models">${t("models")}</h3>
+        <div class="field"><div class="key-field-heading"><span data-i18n="apiKeys">${t("apiKeys")}</span><button id="settingsConnectPlatform" class="key-workbar-btn" type="button" title="${t("getFromWorkbar")}" data-i18n-title="getFromWorkbar"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1.5v7m0 0L4.5 6M7 8.5L9.5 6M2 10.5v1.25c0 .41.34.75.75.75h8.5c.41 0 .75-.34.75-.75V10.5" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-i18n="getFromWorkbar">${t("getFromWorkbar")}</span></button></div>
           <div class="key-list" id="settingsKeyList">${renderKeyEditor(els.apiKey.value)}</div>
-          <div id="settingsKeyAddArea"><button id="settingsKeyAddRow" class="key-add-btn" type="button">${t("addKey")}</button></div>
+          <div id="settingsKeyAddArea"><button id="settingsKeyAddRow" class="key-add-btn" type="button" data-i18n="addKey">${t("addKey")}</button></div>
         </div>
-        <div class="model-list-header"><div class="model-list-title"><span>${t("availableModels")}</span><span id="settingsModelCount" class="model-count-badge">${modelCount}</span></div><button id="settingsRefreshModels" class="model-refresh-btn" type="button" title="${t("detectAvailableModels")}" aria-label="${t("detectAvailableModels")}"><svg width="15" height="15" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 7a6 6 0 0111.1-3.5M13 7a6 6 0 01-11.1 3.5" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M12 1v3H9M2 13v-3h3" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+        <div class="model-list-header"><div class="model-list-title"><span data-i18n="availableModels">${t("availableModels")}</span><span id="settingsModelCount" class="model-count-badge">${modelCount}</span></div><button id="settingsRefreshModels" class="model-refresh-btn" type="button" title="${t("detectAvailableModels")}" data-i18n-title="detectAvailableModels" aria-label="${t("detectAvailableModels")}"><svg width="15" height="15" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 7a6 6 0 0111.1-3.5M13 7a6 6 0 01-11.1 3.5" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M12 1v3H9M2 13v-3h3" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
         <div id="settingsModelList" class="model-list-display">${initialModels}</div>
         <div class="grid-two">
-          <label class="field"><span>${t("temperature")}</span><input id="settingsTemperature" type="number" min="0" max="2" step="0.1" value="${els.temperature.value}" /></label>
-          <label class="field"><span>${t("maxTokens")}</span><select id="settingsMaxTokens">${els.maxTokens.innerHTML}</select></label>
+          <label class="field"><span data-i18n="temperature">${t("temperature")}</span><input id="settingsTemperature" type="number" min="0" max="2" step="0.1" value="${els.temperature.value}" /></label>
+          <label class="field"><span data-i18n="maxTokens">${t("maxTokens")}</span><select id="settingsMaxTokens">${els.maxTokens.innerHTML}</select></label>
         </div>`;
 
       byId("settingsConnectPlatform")?.addEventListener("click", () => {
@@ -518,9 +524,9 @@
     }
 
     function renderSystemPanel(container) {
-      container.innerHTML = `<h3 style="margin:0 0 14px">${t("system")}</h3>
+      container.innerHTML = `<h3 style="margin:0 0 14px" data-i18n="system">${t("system")}</h3>
         <textarea id="settingsSystemText" class="system-prompt-text" style="height:400px" spellcheck="false">${escapeHtml(els.systemPromptText.value)}</textarea>
-        <div class="panel-actions" style="margin-top:8px"><span>${t("systemPromptHint")}</span><button id="settingsResetSystem" class="mini-btn" type="button">${t("resetDefault")}</button></div>`;
+        <div class="panel-actions" style="margin-top:8px"><span data-i18n="systemPromptHint">${t("systemPromptHint")}</span><button id="settingsResetSystem" class="mini-btn" type="button" data-i18n="resetDefault">${t("resetDefault")}</button></div>`;
       byId("settingsSystemText").addEventListener("change", (event) => {
         els.systemPromptText.value = event.currentTarget.value;
         saveSystemPrompt();
@@ -659,10 +665,10 @@
         const refreshState = byId("accountRefreshState");
         if (!refreshState) return;
         refreshState.className = "account-refresh-state is-error";
-        refreshState.innerHTML = `<span>${t("accountRefreshFailed")}</span><button id="accountRefreshRetry" class="text-btn" type="button">${t("retry")}</button>`;
+        refreshState.innerHTML = `<span data-i18n="accountRefreshFailed">${t("accountRefreshFailed")}</span><button id="accountRefreshRetry" class="text-btn" type="button" data-i18n="retry">${t("retry")}</button>`;
         byId("accountRefreshRetry")?.addEventListener("click", () => {
           refreshState.className = "account-refresh-state is-loading";
-          refreshState.textContent = t("accountLoading");
+          refreshState.innerHTML = `<span data-i18n="accountLoading">${t("accountLoading")}</span>`;
           refreshPlatformAccount(container, getPlatformAuth());
         });
       }
@@ -674,28 +680,34 @@
         const displayName = auth.displayName || auth.username || "Unknown";
         const username = auth.username || "";
         const secondaryName = username ? `@${username}` : "Workbar";
-        container.innerHTML = `<h3 class="settings-section-title">${t("platformAccount")}</h3>
+        const email = auth.email
+          ? `<strong>${escapeHtml(auth.email)}</strong>`
+          : `<strong data-i18n="notSet">${t("notSet")}</strong>`;
+        const group = auth.group
+          ? `<strong>${escapeHtml(auth.group)}</strong>`
+          : `<strong data-i18n="notSet">${t("notSet")}</strong>`;
+        container.innerHTML = `<h3 class="settings-section-title" data-i18n="platformAccount">${t("platformAccount")}</h3>
           <div class="settings-lite-page account-panel">
             <section class="settings-lite-card account-identity-card">
               <div class="account-avatar">${escapeHtml(displayName[0].toUpperCase())}</div>
               <div class="account-info">
                 <div class="account-name">${escapeHtml(displayName)}</div>
                 <div class="account-handle">${escapeHtml(secondaryName)}</div>
-                <div class="account-connection"><span aria-hidden="true"></span>${t("accountLoggedIn")}</div>
+                <div class="account-connection"><span class="account-connection-dot" aria-hidden="true"></span><span data-i18n="accountLoggedIn">${t("accountLoggedIn")}</span></div>
               </div>
-              <button id="accountLogout" class="mini-btn account-logout" type="button">${t("logout")}</button>
+              <button id="accountLogout" class="mini-btn account-logout" type="button" data-i18n="logout">${t("logout")}</button>
             </section>
             <div class="account-stats-grid">
-              <section class="account-stat-card"><span>${t("accountBalance")}</span><strong>${formatAccountQuota(auth.quota, auth.quotaDisplay)}</strong></section>
-              <section class="account-stat-card"><span>${t("accountUsedQuota")}</span><strong>${formatAccountQuota(auth.usedQuota, auth.quotaDisplay)}</strong></section>
-              <section class="account-stat-card"><span>${t("accountRequests")}</span><strong>${formatAccountNumber(auth.requestCount)}</strong></section>
+              <section class="account-stat-card"><span data-i18n="accountBalance">${t("accountBalance")}</span><strong id="accountBalanceValue">${formatAccountQuota(auth.quota, auth.quotaDisplay)}</strong></section>
+              <section class="account-stat-card"><span data-i18n="accountUsedQuota">${t("accountUsedQuota")}</span><strong id="accountUsedQuotaValue">${formatAccountQuota(auth.usedQuota, auth.quotaDisplay)}</strong></section>
+              <section class="account-stat-card"><span data-i18n="accountRequests">${t("accountRequests")}</span><strong id="accountRequestsValue">${formatAccountNumber(auth.requestCount)}</strong></section>
             </div>
             <section class="settings-lite-card account-details-card">
-              <div class="account-detail-row"><span>${t("accountEmail")}</span><strong>${escapeHtml(auth.email || t("notSet"))}</strong></div>
-              <div class="account-detail-row"><span>${t("accountGroup")}</span><strong>${escapeHtml(auth.group || t("notSet"))}</strong></div>
-              <div class="account-detail-row"><span>${t("accountUserId")}</span><strong>${escapeHtml(auth.userId || "—")}</strong></div>
+              <div class="account-detail-row"><span data-i18n="accountEmail">${t("accountEmail")}</span>${email}</div>
+              <div class="account-detail-row"><span data-i18n="accountGroup">${t("accountGroup")}</span>${group}</div>
+              <div class="account-detail-row"><span data-i18n="accountUserId">${t("accountUserId")}</span><strong>${escapeHtml(auth.userId || "—")}</strong></div>
             </section>
-            <div class="account-refresh-state${refresh ? " is-loading" : ""}" id="accountRefreshState">${refresh ? t("accountLoading") : ""}</div>
+            <div class="account-refresh-state${refresh ? " is-loading" : ""}" id="accountRefreshState">${refresh ? `<span data-i18n="accountLoading">${t("accountLoading")}</span>` : ""}</div>
           </div>`;
         byId("accountLogout").addEventListener("click", () => {
           clearPlatformAuth();
@@ -706,9 +718,9 @@
         if (refresh) refreshPlatformAccount(container, auth);
         return;
       }
-      container.innerHTML = `<h3 class="settings-section-title">${t("platformAccount")}</h3>
-        <div class="settings-lite-page"><section class="settings-lite-card settings-empty-card"><p>${t("notLoggedIn")}</p>
-          <button id="accountLoginNow" class="mini-btn primary-btn" type="button">${t("loginPlatform")}</button></section></div>`;
+      container.innerHTML = `<h3 class="settings-section-title" data-i18n="platformAccount">${t("platformAccount")}</h3>
+        <div class="settings-lite-page"><section class="settings-lite-card settings-empty-card"><p data-i18n="notLoggedIn">${t("notLoggedIn")}</p>
+          <button id="accountLoginNow" class="mini-btn primary-btn" type="button" data-i18n="loginPlatform">${t("loginPlatform")}</button></section></div>`;
       byId("accountLoginNow").addEventListener("click", () => {
         openPlatformLogin();
       });
@@ -766,23 +778,23 @@
       const currentVersion = state.appVersion || "unknown";
       let remoteVersion = null;
       let downloadUrl = null;
-      const status = (value, tone = "neutral") => {
+      const status = (key, tone = "neutral", suffix = "") => {
         const element = byId("updateStatus");
         if (!element) return;
-        element.textContent = value;
+        element.innerHTML = `<span data-i18n="${key}">${t(key)}</span>${suffix ? `<span>${escapeHtml(suffix)}</span>` : ""}`;
         element.dataset.tone = tone;
       };
       const actions = (html) => { const element = byId("updateActions"); if (element) element.innerHTML = html; };
-      container.innerHTML = `<h3 class="settings-section-title">${t("update")}</h3>
+      container.innerHTML = `<h3 class="settings-section-title" data-i18n="update">${t("update")}</h3>
         <div class="settings-lite-page update-panel">
           <section class="settings-lite-card update-overview-card">
             <div class="update-app-mark" aria-hidden="true"><svg viewBox="0 0 160 160" fill="none"><path d="M80 13A40 40 0 0 1 80 93"/><path d="M80 147A40 40 0 0 1 80 67"/></svg></div>
             <div class="update-overview-copy">
               <div class="update-product-name">Code</div>
-              <div class="update-ver-row"><span>${t("currentVersion")}</span><strong class="update-ver-val" id="updateCurVer">v${escapeHtml(currentVersion)}</strong></div>
-              <div class="update-status-row"><span id="updateStatus" data-tone="neutral">${t("updateReadyHint")}</span></div>
+              <div class="update-ver-row"><span data-i18n="currentVersion">${t("currentVersion")}</span><strong class="update-ver-val" id="updateCurVer">v${escapeHtml(currentVersion)}</strong></div>
+              <div class="update-status-row"><span id="updateStatus" data-tone="neutral"><span data-i18n="updateReadyHint">${t("updateReadyHint")}</span></span></div>
             </div>
-            <div class="update-actions" id="updateActions"><button id="updateCheckBtn" class="mini-btn primary-btn" type="button">${t("checkUpdate")}</button></div>
+            <div class="update-actions" id="updateActions"><button id="updateCheckBtn" class="mini-btn primary-btn" type="button" data-i18n="checkUpdate">${t("checkUpdate")}</button></div>
           </section>
           <div class="update-progress-wrap hidden" id="updateProgressWrap"><div class="update-progress-bg"><div class="update-progress-fill" id="updateBar"></div></div><span class="update-progress-txt" id="updatePct">0%</span></div>
         </div>`;
@@ -791,34 +803,34 @@
         if (version?.localVersion && element) element.textContent = `v${version.localVersion}`;
       }).catch(() => {});
       byId("updateCheckBtn").addEventListener("click", async () => {
-        status(t("checkingUpdate"), "loading");
+        status("checkingUpdate", "loading");
         actions("");
         try {
           const data = await checkForUpdates({ silent: false });
           if (data.updateAvailable) {
             remoteVersion = data.remoteVersion;
             downloadUrl = data.downloadUrl;
-            status(`${t("updateAvailable")} (v${remoteVersion})`, "success");
+            status("updateAvailable", "success", ` (v${remoteVersion})`);
             if (data.isFrozen && downloadUrl) {
-              actions(`<button id="updateDlBtn" class="mini-btn primary-btn" type="button">${t("downloadUpdate")} v${remoteVersion}</button>`);
+              actions(`<button id="updateDlBtn" class="mini-btn primary-btn" type="button"><span data-i18n="downloadUpdate">${t("downloadUpdate")}</span> <span>v${escapeHtml(remoteVersion)}</span></button>`);
               byId("updateDlBtn").addEventListener("click", startDownload);
             } else {
-              actions(`<a href="https://github.com/fhy-A/Code/releases/latest" target="_blank" class="mini-btn">${t("openDownloadPage")}</a>`);
+              actions(`<a href="https://github.com/fhy-A/Code/releases/latest" target="_blank" class="mini-btn" data-i18n="openDownloadPage">${t("openDownloadPage")}</a>`);
             }
           } else {
-            status(t("upToDate"), "success");
-            actions(`<button id="updateCheckBtn2" class="mini-btn primary-btn" type="button">${t("checkUpdate")}</button>`);
+            status("upToDate", "success");
+            actions(`<button id="updateCheckBtn2" class="mini-btn primary-btn" type="button" data-i18n="checkUpdate">${t("checkUpdate")}</button>`);
             byId("updateCheckBtn2").addEventListener("click", () => renderUpdatePanel(container));
           }
         } catch (error) {
-          status(`${t("updateFailed")}: ${error.message || ""}`, "error");
-          actions(`<button id="updateCheckBtn3" class="mini-btn primary-btn" type="button">${t("checkUpdate")}</button>`);
+          status("updateFailed", "error", `: ${error.message || ""}`);
+          actions(`<button id="updateCheckBtn3" class="mini-btn primary-btn" type="button" data-i18n="checkUpdate">${t("checkUpdate")}</button>`);
           byId("updateCheckBtn3").addEventListener("click", () => renderUpdatePanel(container));
         }
       });
 
       async function startDownload() {
-        status(t("downloading"), "loading");
+        status("downloading", "loading");
         byId("updateProgressWrap").classList.remove("hidden");
         actions("");
         let downloadId;
@@ -828,7 +840,7 @@
           downloadId = result.downloadId;
           newExePath = result.path;
         } catch (error) {
-          status(`${t("updateFailed")}: ${error.message}`, "error");
+          status("updateFailed", "error", `: ${error.message}`);
           return;
         }
         const poll = global.setInterval(async () => {
@@ -838,15 +850,15 @@
             byId("updatePct").textContent = `${progress.progress}%`;
             if (progress.error) {
               global.clearInterval(poll);
-              status(`${t("updateFailed")}: ${progress.error}`, "error");
+              status("updateFailed", "error", `: ${progress.error}`);
             }
             if (!progress.done) return;
             global.clearInterval(poll);
             byId("updateProgressWrap").classList.add("hidden");
-            status(t("readyToInstall"), "success");
-            actions(`<button id="updateRestartBtn" class="mini-btn primary-btn" type="button">${t("installRestart")}</button>`);
+            status("readyToInstall", "success");
+            actions(`<button id="updateRestartBtn" class="mini-btn primary-btn" type="button" data-i18n="installRestart">${t("installRestart")}</button>`);
             byId("updateRestartBtn").addEventListener("click", async () => {
-              status(t("restarting"), "loading");
+              status("restarting", "loading");
               actions("");
               try { await apiJson("/api/restart", { method: "POST", body: JSON.stringify({ path: newExePath }) }); } catch {}
               showToast("Code is restarting...", "success");
@@ -1042,6 +1054,53 @@
       applyI18n();
     }
 
+    function refreshActiveSettingsLanguage(panel) {
+      const detail = byId("settingsDetail");
+      if (!detail || !panel) return;
+      switch (panel) {
+        case "account": {
+          const auth = getPlatformAuth();
+          if (auth) {
+            const balance = byId("accountBalanceValue");
+            const used = byId("accountUsedQuotaValue");
+            const requests = byId("accountRequestsValue");
+            if (balance) balance.textContent = formatAccountQuota(auth.quota, auth.quotaDisplay);
+            if (used) used.textContent = formatAccountQuota(auth.usedQuota, auth.quotaDisplay);
+            if (requests) requests.textContent = formatAccountNumber(auth.requestCount);
+          }
+          break;
+        }
+        case "memory":
+        case "skills":
+          refreshSkillsMemorySettingsLanguage(panel);
+          break;
+        case "theme":
+          renderThemePanel(detail);
+          break;
+        case "models": {
+          const refreshButton = byId("settingsRefreshModels");
+          if (refreshButton) {
+            const refreshKey = refreshButton.classList.contains("is-loading") ? "detectingModels" : "detectAvailableModels";
+            refreshButton.title = t(refreshKey);
+            refreshButton.setAttribute("aria-label", t(refreshKey));
+          }
+          detail.querySelectorAll(".key-enable").forEach((label) => {
+            const enabled = label.querySelector("input")?.checked !== false;
+            label.dataset.keyEnabled = String(enabled);
+            label.title = t(enabled ? "enabledStatus" : "disabledStatus");
+          });
+          break;
+        }
+        default:
+          break;
+      }
+      detail.querySelectorAll("[data-settings-delete-name]").forEach((element) => {
+        element.textContent = t("deleteConfirmMsg", { name: element.dataset.settingsDeleteName || "" });
+      });
+      setUpdateNotice(state.updateInfo);
+      applyI18n();
+    }
+
     function openSettingsPage(panel = "models") {
       byId("settingsPage")?.classList.remove("hidden");
       switchSettingsPanel(panel);
@@ -1069,8 +1128,10 @@
       byId("settingsLanguageSwitch")?.addEventListener("click", (event) => {
         const button = event.target.closest("[data-settings-lang]");
         if (!button || button.dataset.settingsLang === (state.lang || "zh")) return;
+        const activePanel = documentRef.querySelector(".settings-nav-item.active")?.dataset.panel;
         setLang(button.dataset.settingsLang);
         updateLanguageControls();
+        refreshActiveSettingsLanguage(activePanel);
       });
       updateLanguageControls();
       byId("closeSettingsPage")?.addEventListener("click", () => byId("settingsPage")?.classList.add("hidden"));

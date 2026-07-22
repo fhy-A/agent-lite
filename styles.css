@@ -5113,7 +5113,7 @@ body.theme-dark .syn-fn { color: #61afef; }
 .account-name { overflow: hidden; color: var(--text); font-size: 16px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .account-handle { margin-top: 2px; color: var(--muted); font-size: 12px; }
 .account-connection { display: flex; align-items: center; gap: 6px; margin-top: 7px; color: var(--muted); font-size: 11px; }
-.account-connection span { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 14%, transparent); }
+.account-connection-dot { flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 14%, transparent); }
 .account-logout { flex: 0 0 auto; color: var(--muted); }
 .account-logout:hover { color: var(--red); border-color: color-mix(in srgb, var(--red) 38%, var(--line)); }
 .account-stats-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }

@@ -57,15 +57,41 @@ class TestFrontendCoreModules(unittest.TestCase):
         self.assertEqual(INDEX_SOURCE.count("data-settings-lang="), 2)
         self.assertIn("function updateLanguageControls()", SETTINGS_SOURCE)
         self.assertIn('byId("settingsLanguageSwitch")?.addEventListener("click"', SETTINGS_SOURCE)
+        self.assertIn('const activePanel = documentRef.querySelector(".settings-nav-item.active")?.dataset.panel', SETTINGS_SOURCE)
+        self.assertIn("function refreshActiveSettingsLanguage(panel)", SETTINGS_SOURCE)
+        self.assertIn("refreshActiveSettingsLanguage(activePanel);", SETTINGS_SOURCE)
+        self.assertIn('const balance = byId("accountBalanceValue")', SETTINGS_SOURCE)
+        self.assertIn('data-i18n="accountLoggedIn"', SETTINGS_SOURCE)
+        self.assertIn('class="account-connection-dot"', SETTINGS_SOURCE)
+        self.assertIn(".account-connection-dot {", STYLE_SOURCE)
+        self.assertNotIn(".account-connection span {", STYLE_SOURCE)
+        self.assertIn("refreshSkillsMemorySettingsLanguage(panel);", SETTINGS_SOURCE)
+        self.assertIn("renderThemePanel(detail);", SETTINGS_SOURCE)
+        self.assertNotIn('if (activePanel === "skills") switchSettingsPanel("skills")', SETTINGS_SOURCE)
         self.assertNotIn("function renderLanguagePanel(", SETTINGS_SOURCE)
         self.assertIn(".settings-language-options", STYLE_SOURCE)
         self.assertIn('data-i18n-title="getFromWorkbar"', SETTINGS_SOURCE)
         self.assertIn('<span data-i18n="getFromWorkbar">', SETTINGS_SOURCE)
+        for marker in (
+            'data-i18n="models"',
+            'data-i18n="apiKeys"',
+            'data-i18n="availableModels"',
+            'data-i18n="systemPromptHint"',
+            'data-i18n="updateReadyHint"',
+        ):
+            self.assertIn(marker, SETTINGS_SOURCE)
+        self.assertIn("function refreshSettingsLanguage(panel)", SKILLS_MEMORY_SOURCE)
+        self.assertIn('label.textContent = t("editingMemory", { name: state._editingMemory })', SKILLS_MEMORY_SOURCE)
+        self.assertIn("refreshSettingsLanguage: refreshSkillsMemorySettingsLanguage", APP_SOURCE)
+        self.assertIn("refreshSkillsMemorySettingsLanguage,", APP_SOURCE)
 
     def test_account_page_refreshes_lazily_and_uses_safe_summary_fields(self):
+        self.assertIn('data-panel="account" data-i18n="platformAccount">Workbar 账号</button>', INDEX_SOURCE)
         self.assertIn("async function refreshPlatformAccount(container, auth)", SETTINGS_SOURCE)
         self.assertIn("if (refresh) refreshPlatformAccount(container, auth);", SETTINGS_SOURCE)
         self.assertIn("function formatAccountQuota(value, display = {})", SETTINGS_SOURCE)
+        self.assertIn('platformAccount: "Workbar 账号"', I18N_SOURCE)
+        self.assertIn('platformAccount: "Workbar Account"', I18N_SOURCE)
         for field in (
             "accountBalance",
             "accountUsedQuota",

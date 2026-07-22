@@ -154,13 +154,26 @@
       const images = msg._images || [];
       const time = formatMessageTime(msg._time);
       const dispatchId = msg.meta?.backgroundDispatch?.id;
-      const dispatchAttr = dispatchId ? ` data-background-message-id="${escapeHtml(dispatchId)}"` : "";
+      const queueItemId = msg.meta?.queuedDispatch?.id;
+      const dispatchAttr = [
+        dispatchId ? ` data-background-message-id="${escapeHtml(dispatchId)}"` : "",
+        queueItemId ? ` data-queued-message-id="${escapeHtml(queueItemId)}"` : "",
+      ].join("");
       const dispatchJob = dispatchId ? getBackgroundJob(dispatchId) : null;
-      const dispatchStatus = dispatchJob?.status === "pending"
+      const backgroundStatus = dispatchJob?.status === "pending"
         ? `<span class="background-dispatch-status pending"><span class="background-dispatch-dot"></span>${t("backgroundPending")}</span>`
         : dispatchJob?.status === "running"
           ? `<span class="background-dispatch-status running"><span class="background-dispatch-dot"></span>${t("backgroundRunning")}</span>`
           : "";
+      const queuedStatusValue = String(msg.meta?.queuedDispatch?.status || "");
+      const queuedStatus = queuedStatusValue === "pending"
+        ? `<span class="queued-message-status pending"><span class="queued-message-dot"></span>${t("queuedMessagePending")}<button class="queued-message-cancel" type="button" data-queue-item-id="${escapeHtml(queueItemId)}" title="${escapeHtml(t("cancelQueuedMessage"))}" aria-label="${escapeHtml(t("cancelQueuedMessage"))}">×</button></span>`
+        : queuedStatusValue === "running"
+          ? `<span class="queued-message-status running"><span class="queued-message-dot"></span>${t("queuedMessageRunning")}</span>`
+          : queuedStatusValue === "canceled"
+            ? `<span class="queued-message-status canceled"><span class="queued-message-dot"></span>${t("queuedMessageCanceled")}</span>`
+            : "";
+      const dispatchStatus = queuedStatus || backgroundStatus;
       const imageArticles = images.map((image, imageIndex) => {
         const src = image.path
           ? `/api/file?path=${encodeURIComponent(image.path)}&raw=1`
@@ -176,7 +189,10 @@
       const textArticle = text
         ? `<article class="msg user" data-msg-index="${index}"${dispatchAttr}><div class="user-message-hover-area"><div class="bubble">${renderMarkdown(text)}</div><div class="msg-meta">${dispatchStatus}${time} ${renderCopyButton(text)}</div></div></article>`
         : "";
-      return textArticle + imageArticles;
+      const imageOnlyStatus = !text && dispatchStatus
+        ? `<article class="msg user msg-dispatch-meta" data-msg-index="${index}"${dispatchAttr}><div class="msg-meta">${dispatchStatus}${time}</div></article>`
+        : "";
+      return textArticle + imageArticles + imageOnlyStatus;
     }
 
     function renderUserInputSummaryProjection(msg, index) {
@@ -276,12 +292,17 @@
       const hasActiveRun = Boolean(projection.hasActiveRun);
       const branchMarker = projection.branchMarker || null;
       const rows = [];
+      const queuedTailMessages = [];
       let pendingThoughts = [];
       let thoughtSerial = 0;
       let activeUserIndex = -1;
       if (hasActiveRun) {
         for (let index = messages.length - 1; index >= 0; index -= 1) {
-          if (messages[index]?.role === "user" && !isInternalMessage(messages[index])) {
+          const message = messages[index];
+          if (message?.role === "user"
+              && message.meta?.queuedDispatch?.status !== "pending"
+              && !message.meta?.detachedFromMain
+              && !isInternalMessage(message)) {
             activeUserIndex = index;
             break;
           }
@@ -316,6 +337,10 @@
         if (index === branchBoundary) insertBranchMarker();
         const msg = messages[index];
         if (!msg) continue;
+        if (msg.role === "user" && ["pending", "canceled"].includes(msg.meta?.queuedDispatch?.status)) {
+          queuedTailMessages.push({ msg, index });
+          continue;
+        }
         if (msg.meta?.kind === "compact-summary") {
           flushThoughts();
           rows.push(renderCompactSummary(msg, index));
@@ -356,6 +381,9 @@
       flushThoughts();
       if (hasActiveRun && !activeRunAnchorInserted) insertActiveRunAnchor();
       insertBranchMarker();
+      queuedTailMessages.forEach(({ msg, index }) => {
+        rows.push(renderUserProjection(msg, index));
+      });
       return rows.filter(Boolean).join("");
     }
 

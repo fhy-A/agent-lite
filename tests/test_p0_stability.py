@@ -103,8 +103,10 @@ class TestFrontendRefreshRecovery(unittest.TestCase):
 
     def test_init_starts_recovery_after_models_are_loaded(self):
         models_pos = APP_SOURCE.index("await refreshModels();")
-        resume_pos = APP_SOURCE.index("resumePersistedRuns().catch", models_pos)
+        resume_pos = APP_SOURCE.index("resumePersistedRuns()", models_pos)
         self.assertGreater(resume_pos, models_pos)
+        queue_resume_pos = APP_SOURCE.index("resumePersistedQueuedMessages()", resume_pos)
+        self.assertGreater(queue_resume_pos, resume_pos)
 
     def test_server_agent_checkpoint_survives_reload(self):
         for expected in (

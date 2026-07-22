@@ -1953,7 +1953,8 @@ input:focus, select:focus, textarea:focus {
 .msg-copy-btn svg { display: block; width: 14px; height: 14px; }
 .msg.user .msg-copy-btn { opacity: 1; }
 .user-message-hover-area:hover .msg-meta { pointer-events: auto; }
-.msg.user:has(.background-dispatch-status) .msg-meta { opacity: 1; }
+.msg.user:has(.background-dispatch-status) .msg-meta,
+.msg.user:has(.queued-message-status) .msg-meta { opacity: 1; }
 .background-dispatch-status {
   display: inline-flex;
   align-items: center;
@@ -1973,6 +1974,48 @@ input:focus, select:focus, textarea:focus {
   background: var(--accent);
   animation: queuePulse 1.2s ease-in-out infinite;
 }
+.queued-message-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.queued-message-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 58%, var(--muted));
+}
+.queued-message-status.running .queued-message-dot {
+  background: var(--accent);
+  animation: queuePulse 1.2s ease-in-out infinite;
+}
+.queued-message-status.canceled { color: var(--muted); opacity: .78; }
+.queued-message-status.canceled .queued-message-dot { background: var(--muted); }
+.msg.user:has(.queued-message-status.canceled) .bubble { opacity: .64; }
+.queued-message-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 1px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.queued-message-cancel:hover { background: var(--panel-2); color: var(--text); }
+.queued-message-cancel:disabled { opacity: .45; cursor: default; }
+.msg-dispatch-meta { min-height: 18px; }
 .msg-copy-btn:hover { border-color: var(--line); background: var(--panel-2); color: var(--text); }
 .msg-copy-btn.copied { border-color: color-mix(in srgb, var(--green) 36%, var(--line)); color: var(--green); }
 .msg-copy-btn.failed { border-color: color-mix(in srgb, var(--red) 36%, var(--line)); color: var(--red); }

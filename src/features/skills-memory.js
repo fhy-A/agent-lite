@@ -370,6 +370,7 @@
         { name: "export", desc: t("cmdExportDesc") },
         { name: "clear",  desc: t("cmdClearDesc") },
         { name: "branch", desc: t("cmdBranchDesc") },
+        { name: "parallel", desc: t("cmdParallelDesc") },
       ];
       const cmdMatches = UI_COMMANDS.filter((cmd) => cmd.name.startsWith(partial));
 

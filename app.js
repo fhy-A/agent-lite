@@ -130,6 +130,7 @@ const state = {
     globalLimit: 3,
     perSessionLimit: 2,
   },
+  _queuedMessagePumps: new Set(),
 
   pendingEdits: {},
 
@@ -260,6 +261,23 @@ function removeBackgroundRunCheckpoint(sessionId, jobId) {
   setSessionRunState(sessionId, nextState);
 }
 
+function getQueuedMessageCheckpoints(sessionId) {
+  const queuedMessages = getSessionRunState(sessionId)?.queuedMessages;
+  return Array.isArray(queuedMessages) ? queuedMessages.filter((item) => item?.id) : [];
+}
+
+function setQueuedMessageCheckpoints(sessionId, queuedMessages) {
+  if (!sessionId) return;
+  const previous = getSessionRunState(sessionId);
+  const nextState = { ...previous };
+  const normalized = Array.isArray(queuedMessages)
+    ? queuedMessages.filter((item) => item?.id).map((item) => ({ ...item }))
+    : [];
+  if (normalized.length) nextState.queuedMessages = normalized;
+  else delete nextState.queuedMessages;
+  setSessionRunState(sessionId, nextState);
+}
+
 function makeRunCheckpoint(ctx, status = "running", phase = "model", extra = {}) {
   const previous = getSessionRunState(ctx.sessionId);
   return {
@@ -278,10 +296,15 @@ function makeRunCheckpoint(ctx, status = "running", phase = "model", extra = {})
     recoveryCount: Number(extra.recoveryCount ?? previous.recoveryCount ?? 0),
     runtimeRunId: String(extra.runtimeRunId ?? ctx.runtimeRunId ?? previous.runtimeRunId ?? ""),
     executionOwner: String(extra.executionOwner ?? ctx.executionOwner ?? previous.executionOwner ?? "browser"),
+    clientRequestId: String(extra.clientRequestId ?? ctx.clientRequestId ?? previous.clientRequestId ?? ""),
+    queueItemId: String(extra.queueItemId ?? ctx.queueItemId ?? previous.queueItemId ?? ""),
     agentRunId: String(extra.agentRunId ?? ctx.agentRunId ?? previous.agentRunId ?? ""),
     agentEventCursor: Number(extra.agentEventCursor ?? ctx.agentEventCursor ?? previous.agentEventCursor ?? 0),
     ...(Array.isArray(previous.backgroundRuns) && previous.backgroundRuns.length
       ? { backgroundRuns: previous.backgroundRuns.map((item) => ({ ...item })) }
+      : {}),
+    ...(Array.isArray(previous.queuedMessages) && previous.queuedMessages.length
+      ? { queuedMessages: previous.queuedMessages.map((item) => ({ ...item })) }
       : {}),
     ...extra,
   };
@@ -301,9 +324,20 @@ async function clearRunCheckpoint(ctx) {
   // runs and reload recovery finish through this shared persistence boundary.
   finalizeRunTiming(ctx.sessionId);
   const backgroundRuns = getBackgroundRunCheckpoints(ctx.sessionId);
-  const clearedRunState = backgroundRuns.length
-    ? { backgroundRuns: backgroundRuns.map((item) => ({ ...item })) }
-    : {};
+  const queueItemId = String(ctx.queueItemId || "");
+  const queuedMessages = getQueuedMessageCheckpoints(ctx.sessionId)
+    .filter((item) => item.id !== queueItemId);
+  if (queueItemId) {
+    const queuedUserMessage = findQueuedUserMessage(ctx.sessionId, queueItemId);
+    if (queuedUserMessage?.meta?.queuedDispatch) {
+      queuedUserMessage.meta.queuedDispatch.status = "completed";
+      delete queuedUserMessage.meta.detachedFromMain;
+    }
+  }
+  const clearedRunState = {
+    ...(backgroundRuns.length ? { backgroundRuns: backgroundRuns.map((item) => ({ ...item })) } : {}),
+    ...(queuedMessages.length ? { queuedMessages: queuedMessages.map((item) => ({ ...item })) } : {}),
+  };
   setSessionRunState(ctx.sessionId, clearedRunState);
   const local = state.sessions.find((session) => session.id === ctx.sessionId);
   const sessionTitle = ctx.sessionId === state.sessionId
@@ -509,13 +543,13 @@ function setupComposerSafeArea() {
   window.addEventListener("resize", syncComposerSafeArea);
 }
 
-function buildRunContext(sessionId) {
+function buildRunContext(sessionId, options = {}) {
   const run = ensureSessionRun(sessionId);
   const messages = getSessionMessages(sessionId);
-  const model = getSelectedModel();
-  const toolPreset = els.toolPreset.value;
-  const permissionProfile = getPermissionProfile();
-  const allowedToolNames = getAllowedToolNames(toolPreset);
+  const model = String(options.model || getSelectedModel());
+  const toolPreset = String(options.toolPreset || els.toolPreset.value || "default");
+  const permissionProfile = String(options.permissionProfile || getPermissionProfile());
+  const allowedToolNames = getAllowedToolNamesForProfile(permissionProfile, toolPreset);
   setSessionMessages(sessionId, messages);
   if (run) run.model = model;
   return {
@@ -527,17 +561,19 @@ function buildRunContext(sessionId) {
     taskUsage: { input: 0, output: 0, cache: 0 },
     apiKey: getBestKey(model),
     model,
-    temperature: Number(els.temperature.value || 0.2),
-    maxTokens: getEffectiveMaxTokens(model),
+    temperature: Number(options.temperature ?? els.temperature.value ?? 0.2),
+    maxTokens: Number(options.maxTokens || getEffectiveMaxTokens(model)),
     toolPreset,
     permissionProfile,
     executionOwner: executionOwnerForPermissionProfile(permissionProfile),
+    clientRequestId: String(options.clientRequestId || ""),
+    queueItemId: String(options.queueItemId || ""),
     agentRunId: "",
     agentEventCursor: 0,
     allowedToolNames,
     tools: getNativeTools(toolPreset, allowedToolNames),
     explicitSkill: null,
-    thinkingLevel: getThinkingLevel(),
+    thinkingLevel: String(options.thinkingLevel || getThinkingLevel()),
   };
 }
 
@@ -3453,6 +3489,22 @@ function bindMessageActions() {
     });
   });
 
+  document.querySelectorAll(".queued-message-cancel").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const queueItemId = String(button.dataset.queueItemId || "");
+      const sessionId = state.sessionId;
+      if (!queueItemId || !sessionId) return;
+      button.disabled = true;
+      cancelQueuedSessionMessage(sessionId, queueItemId).catch((error) => {
+        console.error("Failed to cancel queued message:", error);
+        showToast(error.message || String(error), "error");
+        if (button.isConnected) button.disabled = false;
+      });
+    });
+  });
+
 }
 
 
@@ -3466,8 +3518,11 @@ async function continueAgentRun() {
   renderSessionMessages(sessionId);
   await saveSessionState(sessionId, ctx.messages, ctx.stats);
   setStreaming(true, sessionId);
+  let completedNormally = false;
   try {
     await executeRunContext(ctx);
+    await clearRunCheckpoint(ctx).catch(() => {});
+    completedNormally = true;
   } catch (err) {
     if (err.name === "AbortError") {
       ctx.messages.forEach((msg) => { msg.streaming = false; });
@@ -3487,6 +3542,7 @@ async function continueAgentRun() {
     }
   } finally {
     setStreaming(false, sessionId);
+    if (completedNormally) void pumpQueuedSessionMessages(sessionId);
   }
 }
 
@@ -4825,10 +4881,12 @@ function updateSendButtonState() {
 
   const hasContent = els.prompt.value.trim().length > 0 || state.attachedImages.length > 0;
 
-  els.sendBtn.classList.toggle("ready", hasContent && !state.isStreaming);
-  els.sendBtn.classList.toggle("running", state.isStreaming);
+  els.sendBtn.classList.toggle("ready", hasContent);
+  els.sendBtn.classList.toggle("running", state.isStreaming && !hasContent);
   els.sendBtn.disabled = !hasContent && !state.isStreaming;
-  els.sendBtn.title = state.isStreaming ? t("pauseBtn") : (hasContent ? t("sendTip") : t("emptyTip"));
+  els.sendBtn.title = state.isStreaming
+    ? (hasContent ? t("queueSendTip") : t("pauseBtn"))
+    : (hasContent ? t("sendTip") : t("emptyTip"));
 
 }
 
@@ -5857,6 +5915,8 @@ function buildRecoveredRunContext(session, runState) {
   ctx.taskUsage = { input: 0, output: 0, cache: 0 };
   ctx.responseUsage = { input: 0, output: 0, cache: 0 };
   ctx._taskPrompt = runState.taskPrompt || "";
+  ctx.clientRequestId = String(runState.clientRequestId || "");
+  ctx.queueItemId = String(runState.queueItemId || "");
   ctx.run = ensureSessionRun(sessionId);
   ctx.runtimeRunId = String(runState.runtimeRunId || "");
   ctx.agentRunId = String(runState.agentRunId || "");
@@ -5941,12 +6001,16 @@ async function resumePersistedSessionRun(summary) {
     } finally {
       setStreaming(false, summary.id);
       ctx.run._activeCtx = null;
+      if (ctx.queueItemId) finishQueuedSessionMessage(summary.id, ctx.queueItemId, !recoveryError);
       await saveSessionState(summary.id, ctx.messages, ctx.stats, session.title).catch(() => {});
       if (summary.id === state.sessionId) renderSessionMessages(summary.id);
       renderSessions();
     }
 
-    if (!recoveryError) notifyTaskComplete(summary.id);
+    if (!recoveryError) {
+      notifyTaskComplete(summary.id);
+      void pumpQueuedSessionMessages(summary.id);
+    }
   });
 }
 
@@ -7461,6 +7525,277 @@ function createSubContext(parentCtx, taskPrompt) {
   return subCtx;
 }
 
+function queuedMessageCheckpoint(item) {
+  return {
+    id: String(item.id || ""),
+    clientRequestId: String(item.clientRequestId || item.id || ""),
+    status: String(item.status || "pending"),
+    userText: String(item.userText || ""),
+    model: String(item.model || ""),
+    permissionProfile: String(item.permissionProfile || "accept"),
+    toolPreset: String(item.toolPreset || "default"),
+    thinkingLevel: String(item.thinkingLevel || "auto"),
+    temperature: Number(item.temperature ?? 0.2),
+    maxTokens: Number(item.maxTokens || 0),
+    queuedAt: Number(item.queuedAt || Date.now()),
+  };
+}
+
+function findQueuedUserMessage(sessionId, queueItemId) {
+  return getSessionMessages(sessionId).find((message) => (
+    message?.role === "user" && message.meta?.queuedDispatch?.id === queueItemId
+  )) || null;
+}
+
+function markQueuedMessageCanceled(messages, queueItemId, canceledAt = Date.now()) {
+  if (!Array.isArray(messages) || !queueItemId) return null;
+  const message = messages.find((candidate) => (
+    candidate?.role === "user" && candidate.meta?.queuedDispatch?.id === queueItemId
+  )) || null;
+  if (!message?.meta?.queuedDispatch) return null;
+  message.meta.queuedDispatch.status = "canceled";
+  message.meta.queuedDispatch.canceledAt = Number(canceledAt || Date.now());
+  // A canceled queued request remains visible as history, but it must never
+  // enter a later model context or become executable again.
+  message.meta.detachedFromMain = true;
+  return message;
+}
+
+function updateQueuedMessageItem(sessionId, queueItemId, updates = {}) {
+  const queuedMessages = getQueuedMessageCheckpoints(sessionId).map((item) => (
+    item.id === queueItemId ? { ...item, ...updates } : item
+  ));
+  setQueuedMessageCheckpoints(sessionId, queuedMessages);
+  const userMessage = findQueuedUserMessage(sessionId, queueItemId);
+  if (userMessage?.meta?.queuedDispatch) {
+    Object.assign(userMessage.meta.queuedDispatch, updates);
+  }
+  renderSessionMessages(sessionId);
+  return queuedMessages.find((item) => item.id === queueItemId) || null;
+}
+
+async function enqueueSessionMessage(sessionId, userText, images = []) {
+  if (!sessionId) throw new Error(t("createSessionFirst"));
+  const model = getSelectedModel();
+  if (!model) throw new Error("Please refresh and select a model first.");
+  if (!getBestKey(model)) throw new Error("Please enter a New API sub key in Models first.");
+
+  const queuedAt = Date.now();
+  const id = `queued-${queuedAt}-${Math.random().toString(16).slice(2)}`;
+  const permissionProfile = getPermissionProfile();
+  const toolPreset = els.toolPreset.value || "default";
+  const thinkingLevel = getThinkingLevel();
+  const temperature = Number(els.temperature.value || 0.2);
+  const maxTokens = getEffectiveMaxTokens(model);
+  const imageRefs = await uploadImagesForStorage(images || []);
+  const content = images.length
+    ? [
+        { type: "text", text: userText },
+        ...images.map((image) => ({
+          type: "image_url",
+          image_url: { url: `data:${image.mime};base64,${image.base64}` },
+        })),
+      ]
+    : userText;
+  const item = queuedMessageCheckpoint({
+    id,
+    clientRequestId: id,
+    status: "pending",
+    userText,
+    model,
+    permissionProfile,
+    toolPreset,
+    thinkingLevel,
+    temperature,
+    maxTokens,
+    queuedAt,
+  });
+  const userMessage = {
+    role: "user",
+    content,
+    _images: imageRefs.length ? imageRefs : undefined,
+    _model: model,
+    _time: new Date(queuedAt).toISOString(),
+    meta: {
+      queuedDispatch: { id, status: "pending", queuedAt },
+      detachedFromMain: true,
+    },
+  };
+
+  const queuedMessages = [...getQueuedMessageCheckpoints(sessionId), item];
+  setQueuedMessageCheckpoints(sessionId, queuedMessages);
+  const messages = appendSessionMessages(sessionId, userMessage);
+  await saveSessionState(sessionId, messages, getSessionStats(sessionId), undefined, {
+    persistMessages: true,
+  });
+  renderSessionMessages(sessionId);
+  if (!isSessionStreaming(sessionId)) void pumpQueuedSessionMessages(sessionId);
+  return id;
+}
+
+async function cancelQueuedSessionMessage(sessionId, queueItemId) {
+  const queuedMessages = getQueuedMessageCheckpoints(sessionId);
+  const item = queuedMessages.find((candidate) => candidate.id === queueItemId);
+  if (!item || item.status !== "pending") return false;
+  setQueuedMessageCheckpoints(
+    sessionId,
+    queuedMessages.filter((candidate) => candidate.id !== queueItemId),
+  );
+  const canceledAt = Date.now();
+  const messages = getSessionMessages(sessionId);
+  markQueuedMessageCanceled(messages, queueItemId, canceledAt);
+
+  // The foreground run can still hold the array that existed before the
+  // cancellation. Update it as well, otherwise clearRunCheckpoint() would
+  // serialize the stale pending message after the run completes.
+  const activeMessages = state._sessionRuns[sessionId]?._activeCtx?.messages;
+  if (activeMessages && activeMessages !== messages) {
+    markQueuedMessageCanceled(activeMessages, queueItemId, canceledAt);
+  }
+  setSessionMessages(sessionId, messages);
+  await saveSessionState(sessionId, messages, getSessionStats(sessionId), undefined, {
+    persistMessages: true,
+  });
+  renderSessionMessages(sessionId);
+  return true;
+}
+
+function finishQueuedSessionMessage(sessionId, queueItemId, ok) {
+  if (!queueItemId) return;
+  const remaining = getQueuedMessageCheckpoints(sessionId)
+    .filter((item) => item.id !== queueItemId);
+  setQueuedMessageCheckpoints(sessionId, remaining);
+  const message = findQueuedUserMessage(sessionId, queueItemId);
+  if (message?.meta?.queuedDispatch) {
+    message.meta.queuedDispatch.status = ok ? "completed" : "failed";
+    delete message.meta.detachedFromMain;
+  }
+  const runState = { ...getSessionRunState(sessionId) };
+  if (runState.queueItemId === queueItemId) {
+    delete runState.queueItemId;
+    delete runState.clientRequestId;
+    setSessionRunState(sessionId, runState);
+  }
+  renderSessionMessages(sessionId);
+}
+
+async function runQueuedSessionMessage(sessionId, item) {
+  const userMessage = findQueuedUserMessage(sessionId, item.id);
+  if (!userMessage) {
+    finishQueuedSessionMessage(sessionId, item.id, false);
+    return false;
+  }
+  updateQueuedMessageItem(sessionId, item.id, { status: "running" });
+  await saveSessionState(sessionId, getSessionMessages(sessionId), getSessionStats(sessionId), undefined, {
+    persistMessages: true,
+  });
+
+  let ok = false;
+  try {
+    await sendMessage(item.userText, {
+      sessionId,
+      existingMessage: userMessage,
+      queueItemId: item.id,
+      clientRequestId: item.clientRequestId || item.id,
+      model: item.model,
+      permissionProfile: item.permissionProfile,
+      toolPreset: item.toolPreset,
+      thinkingLevel: item.thinkingLevel,
+      temperature: item.temperature,
+      maxTokens: item.maxTokens,
+    });
+    ok = true;
+  } catch (error) {
+    console.error("Queued message failed:", error);
+    const messages = getSessionMessages(sessionId);
+    const userIndex = messages.indexOf(userMessage);
+    const hasLaterAssistant = userIndex >= 0 && messages.slice(userIndex + 1).some((message) => message?.role === "assistant");
+    if (!hasLaterAssistant) {
+      appendSessionMessages(sessionId, {
+        role: "assistant",
+        content: `**${t("errorPrefix")}：${escapeHtml(error.message || String(error))}**`,
+        meta: { kind: "error-recovery", _model: item.model },
+        _time: new Date().toISOString(),
+      });
+    }
+  } finally {
+    finishQueuedSessionMessage(sessionId, item.id, ok);
+    await saveSessionState(sessionId, getSessionMessages(sessionId), getSessionStats(sessionId), undefined, {
+      persistMessages: true,
+    }).catch(() => {});
+  }
+  return ok;
+}
+
+async function pumpQueuedSessionMessages(sessionId) {
+  if (!sessionId || state._queuedMessagePumps.has(sessionId) || isSessionStreaming(sessionId)) return false;
+  const runStatus = String(getSessionRunState(sessionId)?.status || "");
+  if (["running", "waiting-network", "resuming", "waiting-authorization", "waiting-user-input"].includes(runStatus)) {
+    return false;
+  }
+  const item = getQueuedMessageCheckpoints(sessionId).find((candidate) => candidate.status === "pending");
+  if (!item) return false;
+  // Startup can restore sessions before Workbar keys are available. Leave the
+  // item pending instead of consuming it as a failed request.
+  if (!item.model || !getBestKey(item.model)) return false;
+
+  // A stopped or failed foreground run is terminal once a later queued message
+  // starts. Retain only detached background work and the FIFO queue so timing
+  // and recovery metadata cannot leak into the next task.
+  if (runStatus) {
+    const backgroundRuns = getBackgroundRunCheckpoints(sessionId);
+    const queuedMessages = getQueuedMessageCheckpoints(sessionId);
+    setSessionRunState(sessionId, {
+      ...(backgroundRuns.length ? { backgroundRuns: backgroundRuns.map((entry) => ({ ...entry })) } : {}),
+      ...(queuedMessages.length ? { queuedMessages: queuedMessages.map((entry) => ({ ...entry })) } : {}),
+    });
+  }
+
+  state._queuedMessagePumps.add(sessionId);
+  let ok = false;
+  try {
+    ok = await runQueuedSessionMessage(sessionId, item);
+  } finally {
+    state._queuedMessagePumps.delete(sessionId);
+  }
+  if (getQueuedMessageCheckpoints(sessionId).some((candidate) => candidate.status === "pending")) {
+    queueMicrotask(() => { void pumpQueuedSessionMessages(sessionId); });
+  }
+  return ok;
+}
+
+async function resumePersistedQueuedMessages() {
+  const candidates = state.sessions.filter((session) => (
+    Array.isArray(session?.runState?.queuedMessages) && session.runState.queuedMessages.length > 0
+  ));
+  await Promise.allSettled(candidates.map(async (summary) => {
+    let session = summary;
+    if (!state._sessionMsgs[summary.id]) {
+      session = await apiJson(`/api/sessions/${encodeURIComponent(summary.id)}`);
+      setSessionMessages(summary.id, session.messages || []);
+      setSessionStats(summary.id, session.stats || { input: 0, output: 0, cache: 0, cost: 0 });
+      setSessionRunState(summary.id, session.runState || summary.runState || {});
+    }
+    const runStatus = String(getSessionRunState(summary.id)?.status || "");
+    if (["running", "waiting-network", "resuming", "waiting-authorization", "waiting-user-input"].includes(runStatus)) return;
+    let changed = false;
+    const normalized = getQueuedMessageCheckpoints(summary.id).map((item) => {
+      if (item.status !== "running") return item;
+      changed = true;
+      const message = findQueuedUserMessage(summary.id, item.id);
+      if (message?.meta?.queuedDispatch) message.meta.queuedDispatch.status = "pending";
+      return { ...item, status: "pending" };
+    });
+    if (changed) {
+      setQueuedMessageCheckpoints(summary.id, normalized);
+      await saveSessionState(summary.id, getSessionMessages(summary.id), getSessionStats(summary.id), session.title, {
+        persistMessages: true,
+      });
+    }
+    await pumpQueuedSessionMessages(summary.id);
+  }));
+}
+
 const BACKGROUND_JOB_TIMEOUT_MS = 10 * 60 * 1000;
 
 function getBackgroundJob(jobId) {
@@ -8489,6 +8824,7 @@ async function runServerAgentLoop(ctx) {
     const prepared = await buildModelRequestPayload(ctx, true, serverTools);
     const created = await window.AgentRuntime.createAgentRun({
       sessionId: ctx.sessionId,
+      clientRequestId: ctx.clientRequestId || "",
       payload: prepared.payload,
       baseUrl,
       keys,
@@ -8763,9 +9099,9 @@ function hideCompactConfirm() {
 
 
 
-async function sendMessage(userText) {
+async function sendMessage(userText, options = {}) {
 
-  const model = getSelectedModel();
+  const model = String(options.model || getSelectedModel());
 
   const key = getBestKey(model);
 
@@ -8775,11 +9111,12 @@ async function sendMessage(userText) {
 
   const submittedAt = Date.now();
 
-  if (!state.sessionId) await createSession(userText.slice(0, 24) || "New session");
+  if (!options.sessionId && !state.sessionId) await createSession(userText.slice(0, 24) || "New session");
 
-  const sessionId = state.sessionId;
+  const sessionId = String(options.sessionId || state.sessionId || "");
+  if (!sessionId) throw new Error(t("createSessionFirst"));
   const run = ensureSessionRun(sessionId);
-  const ctx = buildRunContext(sessionId);
+  const ctx = buildRunContext(sessionId, options);
   ctx.taskUsage = { input: 0, output: 0, cache: 0 };
   // Make the active context accessible for background sub-agent dispatch
   ctx._taskPrompt = userText;
@@ -8790,19 +9127,44 @@ async function sendMessage(userText) {
   // Build message content (text + images)
   // Upload images to server so session stores paths, not base64 blobs
 
-  // Wait for any in-flight @image resolution to complete
-  await resolveAtImages();
-
-  // Keep @image paths in text so model can read_file as fallback
-  const images = [...state.attachedImages];
-  const imageRefs = await uploadImagesForStorage(images);
-
+  const existingMessage = options.existingMessage || null;
+  let images = [];
+  let imageRefs = [];
   let messageContent = userText;
-  if (images.length > 0) {
-    messageContent = [{ type: "text", text: userText }];
-    for (const img of images) {
-      messageContent.push({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.base64}` } });
+  if (existingMessage) {
+    messageContent = existingMessage.content;
+    imageRefs = Array.isArray(existingMessage._images) ? existingMessage._images : [];
+  } else {
+    // Wait for any in-flight @image resolution to complete
+    await resolveAtImages();
+
+    // Keep @image paths in text so model can read_file as fallback
+    images = [...state.attachedImages];
+    imageRefs = await uploadImagesForStorage(images);
+    if (images.length > 0) {
+      messageContent = [{ type: "text", text: userText }];
+      for (const img of images) {
+        messageContent.push({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.base64}` } });
+      }
     }
+  }
+
+  if (existingMessage) {
+    const existingIndex = ctx.messages.indexOf(existingMessage);
+    if (existingIndex >= 0) ctx.messages.splice(existingIndex, 1);
+    existingMessage.content = messageContent;
+    existingMessage._images = imageRefs.length > 0 ? imageRefs : undefined;
+    existingMessage._model = ctx.model || model;
+    existingMessage.meta = {
+      ...(existingMessage.meta || {}),
+      queuedDispatch: {
+        ...(existingMessage.meta?.queuedDispatch || {}),
+        id: String(options.queueItemId || existingMessage.meta?.queuedDispatch?.id || ""),
+        status: "running",
+      },
+    };
+    delete existingMessage.meta.detachedFromMain;
+    ctx.messages.push(existingMessage);
   }
 
 
@@ -8823,7 +9185,9 @@ async function sendMessage(userText) {
 
       const list = active.map((s) => `- /${s.name}: ${s.description || t("noDescription")}`).join("\n");
 
-      ctx.messages.push({ role: "user", content: "/help", _time: new Date().toISOString() });
+      if (!existingMessage) {
+        ctx.messages.push({ role: "user", content: "/help", _time: new Date().toISOString() });
+      }
 
       ctx.messages.push({ role: "assistant", content: `**${t("availableSkills")}**\n\n${list || t("noSkills")}` });
 
@@ -8832,12 +9196,14 @@ async function sendMessage(userText) {
 
       setStreaming(false, sessionId);
       await saveSessionState(sessionId, ctx.messages, ctx.stats);
+      if (run) run._activeCtx = null;
       return;
 
     }
 
     if (cmd === "remember") {
       await extractAndSuggestMemories();
+      if (run) run._activeCtx = null;
       return;
     }
 
@@ -8855,7 +9221,10 @@ async function sendMessage(userText) {
 
 
 
-  const shouldAutoTitle = ctx.messages.length === 0 && isAutoSessionTitle(els.sessionTitle.value);
+  const shouldAutoTitle = !existingMessage
+    && sessionId === state.sessionId
+    && ctx.messages.length === 0
+    && isAutoSessionTitle(els.sessionTitle.value);
 
   if (shouldAutoTitle) {
 
@@ -8867,15 +9236,18 @@ async function sendMessage(userText) {
 
   run.taskStartTime = submittedAt;
   ctx.taskStartedAt = submittedAt;
-  ctx.messages.push({ role: "user", content: messageContent, _images: imageRefs.length > 0 ? imageRefs : undefined, _model: ctx.model || getSelectedModel(), _time: new Date(submittedAt).toISOString() });
+  if (!existingMessage) {
+    ctx.messages.push({ role: "user", content: messageContent, _images: imageRefs.length > 0 ? imageRefs : undefined, _model: ctx.model || model, _time: new Date(submittedAt).toISOString() });
+  }
   // Snapshot the healthy message count so we can rollback on failure
   const snapshotIndex = ctx.messages.length;
   const originalUserContent = messageContent;
   setSessionMessages(sessionId, ctx.messages);
 
-  state.attachedImages = [];
-
-  renderImageThumbs();
+  if (!existingMessage) {
+    state.attachedImages = [];
+    renderImageThumbs();
+  }
 
   renderSessionMessages(sessionId);
 
@@ -9091,6 +9463,12 @@ function handleUiSlashCommand(text) {
   if (cmd === "/clear")  { clearCurrentSession(); return true; }
   if (cmd === "/branch") { createBranch(); return true; }
   return false;
+}
+
+function parseParallelCommand(text) {
+  const match = String(text || "").match(/^\/parallel(?:\s+([\s\S]*))?$/i);
+  if (!match) return null;
+  return String(match[1] || "").trim();
 }
 
 function clearCurrentSession() {
@@ -9328,6 +9706,8 @@ els.stopBtn.addEventListener("click", () => {
 
 els.sendBtn.addEventListener("click", (event) => {
   if (!state.isStreaming) return;  // idle → let form submit send
+  const hasContent = els.prompt.value.trim().length > 0 || state.attachedImages.length > 0;
+  if (hasContent) return;  // typed content is queued or explicitly dispatched in parallel
   event.preventDefault();
   const run = ensureSessionRun(state.sessionId);
   cancelSessionRun(run);
@@ -9772,30 +10152,49 @@ els.chatForm.addEventListener("submit", async (event) => {
 
   event.preventDefault();
 
-  const text = els.prompt.value.trim();
+  let text = els.prompt.value.trim();
   const hasImages = state.attachedImages.length > 0;
   if (!text && !hasImages) return;
+  const parallelTask = parseParallelCommand(text);
+  if (parallelTask !== null && !parallelTask && !hasImages) {
+    showToast(t("parallelTaskRequired"), "warning");
+    return;
+  }
+
+  // Local UI commands are actions on the current view, not model work. Keep
+  // them out of both the FIFO queue and the detached parallel dispatcher.
+  if (parallelTask === null && handleUiSlashCommand(text)) {
+    els.prompt.value = "";
+    els.prompt.rows = 2;
+    updateSendButtonState();
+    return;
+  }
 
   if (isSessionStreaming(state.sessionId)) {
-    // Dispatch immediately as a background sub-agent instead of queuing
     const sessionId = state.sessionId;
     const imgs = [...state.attachedImages];
+    const taskText = parallelTask !== null ? parallelTask : text;
     els.prompt.value = "";
     els.prompt.rows = 2;
     state.attachedImages = [];
     renderImageThumbs();
     updateSendButtonState();
-    // Capture the active parent context synchronously. Deferring with setTimeout
-    // can race with a fast main-agent completion and silently lose the message.
-    dispatchBackgroundSubAgent(sessionId, text, imgs).catch((err) => {
-      console.error("Background sub-agent dispatch failed:", err);
-      appendSystemError(err.message || String(err));
-    });
+    if (parallelTask !== null) {
+      // Explicit parallel work keeps the existing detached background runtime.
+      dispatchBackgroundSubAgent(sessionId, taskText, imgs).catch((err) => {
+        console.error("Background sub-agent dispatch failed:", err);
+        appendSystemError(err.message || String(err));
+      });
+    } else {
+      enqueueSessionMessage(sessionId, taskText, imgs).catch((err) => {
+        console.error("Failed to queue message:", err);
+        appendSystemError(err.message || String(err));
+      });
+    }
     return;
   }
 
-  // Slash commands that don't need the model — handle and exit early
-  if (handleUiSlashCommand(text)) { els.prompt.value = ""; els.prompt.rows = 2; updateSendButtonState(); return; }
+  if (parallelTask !== null) text = parallelTask;
 
   els.prompt.value = "";
 
@@ -9808,6 +10207,7 @@ els.chatForm.addEventListener("submit", async (event) => {
     try { Notification.requestPermission(); } catch (_) {}
   }
 
+  const submittedSessionId = state.sessionId;
   try {
 
     await sendMessage(text);
@@ -9859,6 +10259,9 @@ els.chatForm.addEventListener("submit", async (event) => {
     els.messages.scrollTop = els.messages.scrollHeight;
 
     if (state.sessionId) saveSessionState(state.sessionId, getSessionMessages(state.sessionId), getSessionStats(state.sessionId)).catch(() => {});
+    if (submittedSessionId && !isSessionStreaming(submittedSessionId)) {
+      void pumpQueuedSessionMessages(submittedSessionId);
+    }
 
   }
 
@@ -10075,9 +10478,11 @@ async function init() {
   // Resume tasks whose browser-side stream was interrupted by a page reload.
   // Each session owns an independent lock and run context, so multiple saved
   // tasks can recover without forcing the user to remain on one conversation.
-  resumePersistedRuns().catch((error) => {
-    console.error("Failed to resume persisted runs:", error);
-  });
+  resumePersistedRuns()
+    .then(() => resumePersistedQueuedMessages())
+    .catch((error) => {
+      console.error("Failed to resume persisted runs or queued messages:", error);
+    });
   resumePersistedBackgroundRuns().catch((error) => {
     console.error("Failed to resume persisted background runs:", error);
   });

@@ -1859,6 +1859,44 @@ process.stdout.write(JSON.stringify({html, streaming, usageOnly}));
         self.assertIn("<recovery></recovery>", data["streaming"])
         self.assertNotIn("0s", data["usageOnly"])
 
+    def test_messages_ui_defers_pending_fifo_rows_below_active_output(self):
+        script = r"""
+global.window = {Code: {ui: {}}};
+require("./src/ui/messages.js");
+const feature = window.Code.ui.messages.createMessagesFeature({
+  escapeHtml: (value) => String(value ?? ""),
+  renderMarkdown: (value) => String(value ?? ""),
+  t: (key) => key,
+  getMessageText: (msg) => String(msg?.content || ""),
+  getSelectedModel: () => "model-1",
+  renderAssistantContent: (value) => `<answer>${value}</answer>`,
+});
+const messages = [
+  {role: "user", content: "active request"},
+  {role: "user", content: "queued first", meta: {queuedDispatch: {id: "q-1", status: "pending"}, detachedFromMain: true}},
+  {role: "user", content: "canceled second", meta: {queuedDispatch: {id: "q-2", status: "canceled"}, detachedFromMain: true}},
+  {role: "assistant", content: "active output"},
+  {role: "user", content: "queued third", meta: {queuedDispatch: {id: "q-3", status: "pending"}, detachedFromMain: true}},
+];
+process.stdout.write(feature.projectMessages(messages, {hasActiveRun: true}));
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+        html = completed.stdout
+        self.assertLess(html.index("active request"), html.index("active output"))
+        self.assertLess(html.index("active output"), html.index("queued first"))
+        self.assertLess(html.index("queued first"), html.index("canceled second"))
+        self.assertLess(html.index("canceled second"), html.index("queued third"))
+        self.assertEqual(html.count("queued-message-cancel"), 2)
+        self.assertEqual(html.count("queuedMessagePending"), 2)
+        self.assertEqual(html.count("queuedMessageCanceled"), 1)
+
     def test_timeline_ui_owns_markers_nodes_and_click_navigation(self):
         self.assertIn("Code.ui.timeline = Object.freeze", TIMELINE_SOURCE)
         for obsolete in (

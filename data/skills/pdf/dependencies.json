@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "skill": "pdf",
+  "capabilities": {
+    "read-edit": {
+      "required": [
+        { "type": "python", "name": "pypdf", "importName": "pypdf" }
+      ]
+    },
+    "extract-tables": {
+      "required": [
+        { "type": "python", "name": "pdfplumber", "importName": "pdfplumber" }
+      ]
+    },
+    "create": {
+      "required": [
+        { "type": "python", "name": "reportlab", "importName": "reportlab" }
+      ]
+    },
+    "render": {
+      "required": [
+        { "type": "command", "name": "pdftoppm" }
+      ]
+    },
+    "ocr": {
+      "required": [
+        { "type": "python", "name": "pytesseract", "importName": "pytesseract" },
+        { "type": "python", "name": "pdf2image", "importName": "pdf2image" },
+        { "type": "command", "name": "tesseract" }
+      ]
+    },
+    "advanced-cli": {
+      "required": [
+        { "type": "command", "name": "qpdf" }
+      ]
+    }
+  }
+}

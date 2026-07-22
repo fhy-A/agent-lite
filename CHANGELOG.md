@@ -16,6 +16,15 @@
 
 ## 2026-07-22 · Codex
 
+### 2026-07-22 19:57 Code：Skill 依赖管理阶段 1——声明与只读预检
+
+- **机器可读依赖契约**：新增版本化 `dependencies.json` 格式，以能力为单位声明必需/可选的 Python 包、Node 包和系统命令；首批覆盖 `docx`、`pptx`、`xlsx`、`pdf`、`mcp-builder`、`office-files`、`document-design`、`image-generation`、`hyperframes` 与 `web-artifacts-builder` 10 个内置 Skill。
+- **隔离优先的环境探测**：新增独立 `skill_dependencies.py`，只读检查 `data/runtime` 托管目录、应用目录和系统环境，识别安装状态、版本、来源、可用能力与可选依赖缺口，不在启动或预检过程中执行安装。Node 依赖优先采用未来的托管运行时，Python 包通过外部解释器批量探测，避免把 PyInstaller 内部模块误判为 Agent 可调用环境。
+- **状态接口与升级兼容**：新增 `GET /api/skills/dependencies`，汇总 Skill 的 `ready / partial / unavailable` 状态；持久化 Skill 缺少新清单时自动读取当前版本随程序附带的同名清单，因此升级不会覆盖用户已有 Skill 内容，也能获得最新依赖定义。
+- **验证**：Python 语法检查和 `git diff --check` 通过；清单校验、托管 Node 优先级、版本检查、旧 Skill 回退、错误隔离、内置 Skill 和真实 HTTP 路由定向回归 125 项、194 个 subtests 通过；排除独立运行式 Skills 路由脚本后的完整回归 634 项、211 个 subtests 通过。
+
+**涉及文件**：`skill_dependencies.py`、`server.py`、`data/skills/*/dependencies.json`、`tests/test_skill_dependencies.py`、`tests/test_builtin_skills.py`、`tests/test_routes.py`、`TODO.md`、`CHANGELOG.md`
+
 ### 2026-07-22 19:33 Code：Markdown 解析管线收口
 
 - **单一解析管线**：Markdown 源文本先保护代码区域并投影数学公式，再仅交由 Marked 解析一次，最后恢复可信的 KaTeX 结果；移除解析完成后针对整段 HTML 的多轮正则改写，避免规则叠加造成内容增删或结构错乱。

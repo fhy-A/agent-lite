@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 import server as server_mod
+from skill_dependencies import load_skill_manifest
 
 
 SKILLS_ROOT = Path(server_mod.SKILLS_DIR)
@@ -16,6 +17,18 @@ WORKFLOW_SKILLS = {
     "subagent-driven-development",
     "test-driven-development",
     "writing-plans",
+}
+DEPENDENCY_SKILLS = {
+    "document-design",
+    "docx",
+    "hyperframes",
+    "image-generation",
+    "mcp-builder",
+    "office-files",
+    "pdf",
+    "pptx",
+    "web-artifacts-builder",
+    "xlsx",
 }
 
 
@@ -111,6 +124,14 @@ class TestBuiltInSkillMetadata(unittest.TestCase):
             valid, message = validate_skill(skill_dir)
             with self.subTest(skill=skill_dir.name, message=message):
                 self.assertTrue(valid, message)
+
+    def test_dependency_skills_have_valid_machine_readable_manifests(self):
+        declared = set()
+        for skill_dir in sorted(path for path in SKILLS_ROOT.iterdir() if path.is_dir()):
+            manifest = load_skill_manifest(skill_dir)
+            if manifest:
+                declared.add(skill_dir.name)
+        self.assertEqual(declared, DEPENDENCY_SKILLS)
 
     def test_use_skill_requires_a_separate_tool_round(self):
         description = server_mod.SERVER_TOOL_REGISTRY["use_skill"]["definition"]["function"]["description"]

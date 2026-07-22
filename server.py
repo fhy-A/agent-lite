@@ -19,6 +19,8 @@ import threading
 import time
 import webbrowser
 
+from skill_dependencies import inspect_skill_dependencies
+
 try:
     import pystray
     # Import the ICO writer and its BMP dependency explicitly. PyInstaller
@@ -3755,6 +3757,16 @@ def list_skills(brief=False):
     return skills
 
 
+def get_skill_dependency_status():
+    """Run an explicit, read-only preflight for Skills with dependency manifests."""
+    return inspect_skill_dependencies(
+        SKILLS_DIR,
+        bundled_skills_dir=APP_DIR / "data" / "skills",
+        app_dir=APP_DIR,
+        data_dir=DATA_DIR,
+    )
+
+
 def read_skill(name, brief=False):
     """Read a single skill by name. brief=True returns metadata only."""
     if not SKILLS_DIR.exists():
@@ -6196,6 +6208,9 @@ class CodeHandler(BaseHTTPRequestHandler):
                 return
             if route == "/api/memory-context":
                 self.send_json(load_memory_context())
+                return
+            if route == "/api/skills/dependencies":
+                self.send_json(get_skill_dependency_status())
                 return
             if route.startswith("/api/skills/") and route.endswith("/file"):
                 # GET /api/skills/{name}/file?path=references/xxx.md

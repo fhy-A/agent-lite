@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "skill": "mcp-builder",
+  "capabilities": {
+    "python-server": {
+      "required": [
+        { "type": "python", "name": "mcp", "minimumVersion": "1.1.0" },
+        { "type": "python", "name": "requests", "minimumVersion": "2.28.0" }
+      ]
+    },
+    "node-server": {
+      "required": [
+        { "type": "command", "name": "node" },
+        { "type": "command", "name": "npm" }
+      ]
+    }
+  }
+}

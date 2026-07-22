@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "skill": "office-files",
+  "capabilities": {
+    "word": {
+      "required": [
+        { "type": "python", "name": "python-docx", "importName": "docx", "distribution": "python-docx" }
+      ]
+    },
+    "excel": {
+      "required": [
+        { "type": "python", "name": "openpyxl", "minimumVersion": "3.1.0" }
+      ],
+      "optional": [
+        { "type": "python", "name": "pandas", "importName": "pandas" }
+      ]
+    },
+    "powerpoint": {
+      "required": [
+        { "type": "python", "name": "python-pptx", "importName": "pptx", "distribution": "python-pptx" }
+      ]
+    },
+    "pdf": {
+      "required": [
+        { "type": "python", "name": "PyPDF2", "importName": "PyPDF2", "distribution": "PyPDF2" }
+      ]
+    }
+  }
+}

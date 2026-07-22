@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "skill": "pptx",
+  "capabilities": {
+    "create": {
+      "required": [
+        { "type": "node", "name": "pptxgenjs" }
+      ],
+      "optional": [
+        { "type": "node", "name": "react" },
+        { "type": "node", "name": "react-dom" },
+        { "type": "node", "name": "react-icons" },
+        { "type": "node", "name": "sharp" }
+      ]
+    },
+    "inspect": {
+      "required": [
+        { "type": "python", "name": "markitdown", "importName": "markitdown" },
+        { "type": "python", "name": "Pillow", "importName": "PIL", "distribution": "Pillow" },
+        { "type": "python", "name": "defusedxml", "importName": "defusedxml" },
+        { "type": "python", "name": "lxml", "importName": "lxml" }
+      ]
+    },
+    "render": {
+      "required": [
+        { "type": "command", "name": "soffice" },
+        { "type": "command", "name": "pdftoppm" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "skill": "web-artifacts-builder",
+  "capabilities": {
+    "scaffold": {
+      "required": [
+        { "type": "command", "name": "bash" },
+        { "type": "command", "name": "node" },
+        { "type": "command", "name": "npm" }
+      ]
+    },
+    "bundle": {
+      "required": [
+        { "type": "command", "name": "node" },
+        { "type": "command", "name": "npm" }
+      ]
+    }
+  }
+}

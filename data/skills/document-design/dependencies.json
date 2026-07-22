@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "skill": "document-design",
+  "capabilities": {
+    "word": {
+      "required": [
+        { "type": "python", "name": "python-docx", "importName": "docx", "distribution": "python-docx" }
+      ]
+    },
+    "powerpoint": {
+      "required": [
+        { "type": "python", "name": "python-pptx", "importName": "pptx", "distribution": "python-pptx" }
+      ]
+    },
+    "spreadsheet": {
+      "required": [
+        { "type": "python", "name": "openpyxl", "minimumVersion": "3.1.0" }
+      ]
+    },
+    "pdf": {
+      "required": [
+        { "type": "python", "name": "reportlab", "importName": "reportlab" }
+      ]
+    },
+    "image": {
+      "required": [
+        { "type": "python", "name": "Pillow", "importName": "PIL", "distribution": "Pillow" }
+      ]
+    }
+  }
+}

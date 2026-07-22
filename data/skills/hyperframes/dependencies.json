@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "skill": "hyperframes",
+  "capabilities": {
+    "author": {
+      "required": [
+        { "type": "command", "name": "node" }
+      ]
+    },
+    "cli": {
+      "required": [
+        { "type": "node", "name": "hyperframes" }
+      ]
+    }
+  }
+}

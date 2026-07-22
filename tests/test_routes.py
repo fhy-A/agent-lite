@@ -132,6 +132,17 @@ class TestHealthAndConfig(TestServerFixture):
         self.assertIn("serverVersion", data)
         self.assertEqual(data["name"], "Code")
 
+    def test_skill_dependency_preflight_route(self):
+        expected = {
+            "summary": {"declared": 1, "ready": 0, "partial": 1, "unavailable": 0},
+            "skills": [{"name": "docx", "status": "partial", "capabilities": []}],
+            "errors": [],
+        }
+        with mock.patch.object(server_mod, "get_skill_dependency_status", return_value=expected):
+            status, data = _req("GET", "/api/skills/dependencies")
+        self.assertEqual(status, 200)
+        self.assertEqual(data, expected)
+
     def test_config_get(self):
         status, data = _req("GET", "/api/config")
         self.assertEqual(status, 200)

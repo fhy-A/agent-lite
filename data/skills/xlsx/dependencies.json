@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "skill": "xlsx",
+  "capabilities": {
+    "create-edit": {
+      "required": [
+        { "type": "python", "name": "openpyxl", "minimumVersion": "3.1.0" }
+      ],
+      "optional": [
+        { "type": "python", "name": "pandas", "importName": "pandas" }
+      ]
+    },
+    "inspect": {
+      "required": [
+        { "type": "python", "name": "markitdown", "importName": "markitdown" }
+      ],
+      "optional": [
+        { "type": "python", "name": "pandas", "importName": "pandas" }
+      ]
+    },
+    "render": {
+      "required": [
+        { "type": "command", "name": "soffice" }
+      ]
+    }
+  }
+}

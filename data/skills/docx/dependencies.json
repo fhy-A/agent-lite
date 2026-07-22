@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "skill": "docx",
+  "capabilities": {
+    "create": {
+      "required": [
+        { "type": "node", "name": "docx", "version": "9.7.1" }
+      ]
+    },
+    "read": {
+      "required": [
+        { "type": "command", "name": "pandoc" }
+      ]
+    },
+    "render": {
+      "required": [
+        { "type": "command", "name": "soffice" },
+        { "type": "command", "name": "pdftoppm" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "skill": "image-generation",
+  "capabilities": {
+    "charts": {
+      "required": [
+        { "type": "python", "name": "matplotlib", "importName": "matplotlib" }
+      ]
+    },
+    "image-editing": {
+      "required": [
+        { "type": "python", "name": "Pillow", "importName": "PIL", "distribution": "Pillow" }
+      ]
+    }
+  }
+}

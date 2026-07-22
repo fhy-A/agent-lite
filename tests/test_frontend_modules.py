@@ -1610,16 +1610,25 @@ process.stdout.write(JSON.stringify({staleBrowserValueCleared, keyUpdated, edito
         ):
             self.assertIn(expected, I18N_SOURCE)
 
-    def test_markdown_ui_owns_highlighting_ansi_and_html_postprocessing(self):
+    def test_markdown_ui_uses_one_source_preserving_render_pipeline(self):
         self.assertIn("Code.ui.markdown = Object.freeze", MARKDOWN_SOURCE)
         script = r"""
-global.window = {Code: {ui: {}}};
+global.window = {
+  Code: {ui: {}},
+  katex: {
+    renderToString: (math, options) => {
+      if (math === "bad") throw new Error("invalid math");
+      return `<katex data-display="${options.displayMode}">${math}</katex>`;
+    },
+  },
+};
 class Renderer {}
 let configured = null;
+let parsedSource = null;
 const marked = {
   Renderer,
   setOptions: (options) => { configured = options; },
-  parse: () => '<code>C:/work/a.py</code><a href="/docs">docs</a><img src="assets/demo.png" alt="local"><img src="https://example.test/demo.png" alt="remote">',
+  parse: (source) => { parsedSource = source; return `<parsed>${source}</parsed>`; },
 };
 require("./src/ui/markdown.js");
 const {createMarkdownFeature, resolveSyntaxPatterns} = window.Code.ui.markdown;
@@ -1629,6 +1638,8 @@ const feature = createMarkdownFeature({
   escapeHtml: (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;"),
   renderDiff: (text) => `<diff>${text}</diff>`,
 });
+feature.renderer.parser = {parseInline: (tokens) => tokens.map((token) => token.text).join("")};
+const markdownInput = "Heading\n===\n\n---\n\nMath $x+1$, bad $bad$, and `$HOME`.\n\n```js\nconst price = '$5';\n````\n\nAfter $y+2$.";
 process.stdout.write(JSON.stringify({
   javascript: feature.highlightSyntax('const value = "<x>"; // note', "javascript"),
   json: feature.highlightSyntax('{"name":"demo","ok":true,"count":2}', "json"),
@@ -1636,7 +1647,13 @@ process.stdout.write(JSON.stringify({
   code: feature.renderer.code({text: "const value = 1;", lang: "js"}),
   terminal: feature.renderer.code({text: '\u001b[32mok\u001b[0m', lang: "terminal"}),
   diff: feature.renderer.code({text: "+line", lang: "diff"}),
-  rendered: feature.renderMarkdownLite("ignored"),
+  pathCode: feature.renderer.codespan({text: "C:/work/a.py"}),
+  plainCode: feature.renderer.codespan({text: "value"}),
+  link: feature.renderer.link({href: "/docs", text: "docs", tokens: [{text: "docs"}]}),
+  localImage: feature.renderer.image({href: "assets/demo.png", text: "local", title: null}),
+  remoteImage: feature.renderer.image({href: "https://example.test/demo.png", text: "remote", title: null}),
+  rendered: feature.renderMarkdownLite(markdownInput),
+  parsedSource,
   aliasResolved: Array.isArray(resolveSyntaxPatterns("ts")),
   breaks: configured.breaks,
   gfm: configured.gfm,
@@ -1647,6 +1664,7 @@ process.stdout.write(JSON.stringify({
             cwd=ROOT,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=True,
         )
         data = json.loads(completed.stdout)
@@ -1663,10 +1681,23 @@ process.stdout.write(JSON.stringify({
         self.assertIn('class="line-no">1</span>', data["code"])
         self.assertIn('class="ansi-block"', data["terminal"])
         self.assertEqual(data["diff"], "<diff>+line</diff>")
-        self.assertIn('class="clickable-path"', data["rendered"])
-        self.assertIn('target="_blank" rel="noopener"', data["rendered"])
-        self.assertIn('/api/file?path=assets%2Fdemo.png&raw=1', data["rendered"])
-        self.assertIn('src="https://example.test/demo.png"', data["rendered"])
+        self.assertIn('class="clickable-path"', data["pathCode"])
+        self.assertEqual(data["plainCode"], "<code>value</code>")
+        self.assertIn('target="_blank" rel="noopener"', data["link"])
+        self.assertIn('/api/file?path=assets%2Fdemo.png&raw=1', data["localImage"])
+        self.assertIn('class="msg-inline-img"', data["localImage"])
+        self.assertIn('src="https://example.test/demo.png"', data["remoteImage"])
+        self.assertIn("Heading\n===", data["parsedSource"])
+        self.assertIn("\n---\n", data["parsedSource"])
+        self.assertNotIn("\\===", data["parsedSource"])
+        self.assertNotIn("$x+1$", data["parsedSource"])
+        self.assertNotIn("$y+2$", data["parsedSource"])
+        self.assertIn("`$HOME`", data["parsedSource"])
+        self.assertIn("const price = '$5';", data["parsedSource"])
+        self.assertIn('class="math-inline"', data["rendered"])
+        self.assertIn('<katex data-display="false">x+1</katex>', data["rendered"])
+        self.assertIn('<katex data-display="false">y+2</katex>', data["rendered"])
+        self.assertIn("$bad$", data["rendered"])
         self.assertTrue(data["aliasResolved"])
         self.assertTrue(data["breaks"])
         self.assertTrue(data["gfm"])

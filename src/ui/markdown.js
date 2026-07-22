@@ -130,6 +130,48 @@
     }
 
     const renderer = new markedRef.Renderer();
+
+    function isClickablePath(value) {
+      const path = String(value || "").trim();
+      return /\.\w{1,8}$/.test(path) || /^[\/\\]|[A-Za-z]:[\/\\]/.test(path);
+    }
+
+    function renderInlineTokens(context, token) {
+      if (context?.parser?.parseInline && Array.isArray(token.tokens)) {
+        return context.parser.parseInline(token.tokens);
+      }
+      return escapeHtml(token.text || "");
+    }
+
+    renderer.codespan = function renderCodeSpan({ text }) {
+      const source = String(text || "");
+      const escaped = escapeHtml(source);
+      if (!isClickablePath(source)) return `<code>${escaped}</code>`;
+      return `<code class="clickable-path" data-path="${escapeHtml(source.trim())}" title="Click to open">${escaped}</code>`;
+    };
+
+    renderer.link = function renderLink(token) {
+      const href = escapeHtml(String(token.href || ""));
+      const title = token.title ? ` title="${escapeHtml(token.title)}"` : "";
+      return `<a href="${href}"${title} target="_blank" rel="noopener">${renderInlineTokens(this, token)}</a>`;
+    };
+
+    renderer.image = function renderImage(token) {
+      const source = String(token.href || "");
+      const title = token.title ? ` title="${escapeHtml(token.title)}"` : "";
+      const alt = escapeHtml(token.text || "");
+      if (/^(https?:|data:|\/api\/)/i.test(source)) {
+        return `<img src="${escapeHtml(source)}" alt="${alt}"${title}>`;
+      }
+      const imagePath = source.replace(/\\/g, "/").replace(/^\.?\/?/, "");
+      const extension = (imagePath.split(".").pop() || "").toLowerCase();
+      if (!/^(png|jpg|jpeg|gif|webp|svg|bmp|ico)$/i.test(extension)) {
+        return `<img src="${escapeHtml(source)}" alt="${alt}"${title}>`;
+      }
+      const apiUrl = `/api/file?path=${encodeURIComponent(imagePath)}&raw=1`;
+      return `<img src="${apiUrl}" alt="${alt}"${title} loading="lazy" onclick="showImageOverlay(this.src)" class="msg-inline-img">`;
+    };
+
     renderer.code = function renderCodeBlock({ text, lang }) {
       if (lang === "diff" || lang === "diff ") return renderDiff(text);
       if (lang === "terminal" || lang === "ansi") {
@@ -147,96 +189,104 @@
     };
     markedRef.setOptions({ renderer, breaks: true, gfm: true });
 
-    function renderMathInText(text) {
-      if (!text || typeof global.katex === "undefined") return text;
+    function createTokenFactory(source, label) {
+      let prefix = `\uE000CODE_${label}_`;
+      while (source.includes(prefix)) prefix += "_";
+      return (index) => `${prefix}${index}\uE001`;
+    }
 
-      // ── Step 1: protect code regions (fenced + inline) so $ inside them stays raw ──
-      const codeRegions = [];
-      let cid = 0;
-      text = text.replace(/```[\s\S]*?```/g, (match) => {
-        codeRegions.push(match);
-        return `\x00CODE${cid++}\x00`;
-      });
-      text = text.replace(/`[^`\n]+`/g, (match) => {
-        codeRegions.push(match);
-        return `\x00CODE${cid++}\x00`;
-      });
-
-      // ── Step 2: extract math expressions ──
-      const placeholders = [];
-      let pid = 0;
-
-      // Display math: $$ ... $$  and  \[ ... \]
-      text = text.replace(/\$\$([\s\S]*?)\$\$/g, (_, math) => {
-        placeholders.push({ math: math.trim(), disp: true });
-        return `\x00MATH${pid++}\x00`;
-      });
-      text = text.replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => {
-        placeholders.push({ math: math.trim(), disp: true });
-        return `\x00MATH${pid++}\x00`;
-      });
-
-      // Inline math: $ ... $  (single-line, no lookbehind for broad compat)
-      text = text.replace(/\$([^$\s](?:[^$\n]*[^$\s])?)\$/g, (_, math) => {
-        placeholders.push({ math: math.trim(), disp: false });
-        return `\x00MATH${pid++}\x00`;
-      });
-      // Inline math: \( ... \)
-      text = text.replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => {
-        placeholders.push({ math: math.trim(), disp: false });
-        return `\x00MATH${pid++}\x00`;
-      });
-
-      // ── Step 3: render math placeholders to KaTeX HTML ──
-      placeholders.forEach(({ math, disp }, idx) => {
-        try {
-          const rendered = global.katex.renderToString(math, { displayMode: disp, throwOnError: false });
-          const attr = math.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
-          text = text.replace(
-            `\x00MATH${idx}\x00`,
-            disp
-              ? `<span class="math-block" data-latex="${attr}">${rendered}</span>`
-              : `<span class="math-inline" data-latex="${attr}">${rendered}</span>`
-          );
-        } catch (_) {
-          text = text.replace(`\x00MATH${idx}\x00`, escapeHtml(math));
+    function protectCodeRegions(value) {
+      const original = String(value || "");
+      const regions = [];
+      const tokenFor = createTokenFactory(original, "REGION");
+      const protect = (match) => {
+        const token = tokenFor(regions.length);
+        regions.push({ token, value: match });
+        return token;
+      };
+      // Fenced blocks are removed before inline spans so math delimiters and
+      // backticks inside a block can never be reinterpreted.
+      const lines = original.split("\n");
+      const projectedLines = [];
+      for (let index = 0; index < lines.length; index += 1) {
+        const opening = lines[index].match(/^[ \t]{0,3}(`{3,}|~{3,})[^\n]*$/);
+        if (!opening) {
+          projectedLines.push(lines[index]);
+          continue;
         }
-      });
+        const fenceChar = opening[1][0];
+        const fenceLength = opening[1].length;
+        const block = [lines[index]];
+        while (index + 1 < lines.length) {
+          index += 1;
+          block.push(lines[index]);
+          const closing = lines[index].match(/^[ \t]{0,3}(`+|~+)[ \t]*$/);
+          if (closing && closing[1][0] === fenceChar && closing[1].length >= fenceLength) break;
+        }
+        projectedLines.push(protect(block.join("\n")));
+      }
+      let source = projectedLines.join("\n");
+      source = source.replace(/(`+)([\s\S]*?)\1/g, protect);
+      return {
+        source,
+        restore(projected) {
+          let restored = projected;
+          regions.forEach((region) => {
+            restored = restored.split(region.token).join(region.value);
+          });
+          return restored;
+        },
+      };
+    }
 
-      // ── Step 4: restore protected code regions ──
-      codeRegions.forEach((code, idx) => {
-        text = text.replace(`\x00CODE${idx}\x00`, code);
-      });
+    function projectMath(value) {
+      const source = String(value || "");
+      if (!source || typeof global.katex === "undefined") {
+        return { source, restore: (html) => html };
+      }
 
-      return text;
+      const protectedCode = protectCodeRegions(source);
+      const expressions = [];
+      const tokenFor = createTokenFactory(source, "MATH");
+      const capture = (raw, math, displayMode) => {
+        const token = tokenFor(expressions.length);
+        expressions.push({ token, raw, math: math.trim(), displayMode });
+        return token;
+      };
+
+      let projected = protectedCode.source;
+      projected = projected.replace(/\$\$([\s\S]*?)\$\$/g, (raw, math) => capture(raw, math, true));
+      projected = projected.replace(/\\\[([\s\S]*?)\\\]/g, (raw, math) => capture(raw, math, true));
+      projected = projected.replace(/\$([^$\s](?:[^$\n]*[^$\s])?)\$/g, (raw, math) => capture(raw, math, false));
+      projected = projected.replace(/\\\(([\s\S]*?)\\\)/g, (raw, math) => capture(raw, math, false));
+      projected = protectedCode.restore(projected);
+
+      return {
+        source: projected,
+        restore(html) {
+          let restored = html;
+          expressions.forEach(({ token, raw, math, displayMode }) => {
+            let replacement;
+            try {
+              const rendered = global.katex.renderToString(math, { displayMode, throwOnError: true });
+              const className = displayMode ? "math-block" : "math-inline";
+              replacement = `<span class="${className}" data-latex="${escapeHtml(math)}">${rendered}</span>`;
+            } catch (_) {
+              replacement = escapeHtml(raw);
+            }
+            restored = restored.split(token).join(replacement);
+          });
+          return restored;
+        },
+      };
     }
 
     function renderMarkdownLite(text) {
       if (!text) return "";
-      // Extract and render math BEFORE marked parsing so LaTeX isn't mangled
-      let html = renderMathInText(text);
-      // Escape setext heading underlines (lines of = or -) so marked doesn't
-      // turn preceding text into an <h1>/<h2>. Common in PowerShell here-strings
-      // and code-comment separators like "# =======".
-      html = html.replace(/^[ \t]*[=\-]{3,}[ \t]*$/gm, (match) => "\\" + match);
-      html = markedRef.parse(html);
-      html = html.replace(/<code>([^<]+)<\/code>/g, (_, code) => {
-        const path = code.trim();
-        if (/\.\w{1,8}$/.test(path) || /^[\/\\]|[A-Za-z]:[\/\\]/.test(path)) {
-          return `<code class="clickable-path" data-path="${escapeHtml(path)}" title="Click to open">${code}</code>`;
-        }
-        return `<code>${code}</code>`;
-      });
-      html = html.replace(/<a /g, '<a target="_blank" rel="noopener" ');
-      html = html.replace(/<img\s+src="([^"]+)"/g, (full, src) => {
-        if (/^(https?:|data:|\/api\/)/.test(src)) return full;
-        const imagePath = src.replace(/\\/g, "/").replace(/^\.?\/?/, "");
-        const extension = (imagePath.split(".").pop() || "").toLowerCase();
-        if (!/^(png|jpg|jpeg|gif|webp|svg|bmp|ico)$/i.test(extension)) return full;
-        const apiUrl = `/api/file?path=${encodeURIComponent(imagePath)}&raw=1`;
-        return `<img src="${apiUrl}" loading="lazy" onclick="showImageOverlay(this.src)" class="msg-inline-img"`;
-      });
-      return html;
+      // Keep source semantics intact. Math is tokenized outside code, standard
+      // Markdown is parsed once, and trusted KaTeX HTML is restored last.
+      const math = projectMath(String(text));
+      return math.restore(markedRef.parse(math.source));
     }
 
     function setupMathCopyHandler(messagesEl) {

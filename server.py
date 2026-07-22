@@ -7503,11 +7503,45 @@ class CodeHandler(BaseHTTPRequestHandler):
         if str(account.get("id") or "") != user_id:
             self.send_json({"error": "Platform account does not match authorization"}, 401)
             return
+
+        quota_display = {}
+        status_upstream = request.Request(
+            WORKBAR_URL + "/api/status",
+            headers={"Accept": "application/json"},
+        )
+        try:
+            with request.urlopen(status_upstream, timeout=10) as response:
+                status_payload = json.loads(response.read().decode("utf-8"))
+            status_data = status_payload.get("data") if isinstance(status_payload, dict) else None
+            if isinstance(status_data, dict):
+                quota_display = {
+                    "quotaPerUnit": status_data.get("quota_per_unit"),
+                    "type": str(status_data.get("quota_display_type") or ""),
+                    "usdExchangeRate": status_data.get("usd_exchange_rate"),
+                    "customCurrencySymbol": str(status_data.get("custom_currency_symbol") or ""),
+                    "customCurrencyExchangeRate": status_data.get("custom_currency_exchange_rate"),
+                }
+        except (error.HTTPError, error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
+            # Account validation remains useful when the public display settings
+            # endpoint is temporarily unavailable. The client will use raw units.
+            quota_display = {}
+
+        def metric(name):
+            value = account.get(name)
+            return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
         self.send_json({
             "valid": True,
             "account": {
                 "userId": user_id,
                 "username": str(account.get("username") or ""),
+                "displayName": str(account.get("display_name") or ""),
+                "email": str(account.get("email") or ""),
+                "group": str(account.get("group") or ""),
+                "quota": metric("quota"),
+                "usedQuota": metric("used_quota"),
+                "requestCount": metric("request_count"),
+                "quotaDisplay": quota_display,
             },
         })
 

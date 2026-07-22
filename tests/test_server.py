@@ -93,24 +93,87 @@ class TestWorkbarAuthentication(unittest.TestCase):
 
     def test_validate_code_auth_uses_fixed_workbar_endpoint(self):
         handler = self.make_handler({"token": "test-access-token", "userId": "42"})
-        response = mock.MagicMock()
-        response.read.return_value = json.dumps({
+        account_response = mock.MagicMock()
+        account_response.read.return_value = json.dumps({
             "success": True,
-            "data": {"id": 42, "username": "alice", "quota": 123},
+            "data": {
+                "id": 42,
+                "username": "alice",
+                "display_name": "Alice",
+                "email": "alice@example.com",
+                "group": "default",
+                "quota": 123,
+                "used_quota": 45,
+                "request_count": 67,
+            },
         }).encode("utf-8")
-        response.__enter__.return_value = response
+        account_response.__enter__.return_value = account_response
+        status_response = mock.MagicMock()
+        status_response.read.return_value = json.dumps({
+            "success": True,
+            "data": {
+                "quota_per_unit": 500000,
+                "quota_display_type": "CNY",
+                "usd_exchange_rate": 7.2,
+                "custom_currency_symbol": "",
+                "custom_currency_exchange_rate": 1,
+            },
+        }).encode("utf-8")
+        status_response.__enter__.return_value = status_response
 
-        with mock.patch.object(server.request, "urlopen", return_value=response) as urlopen:
+        with mock.patch.object(server.request, "urlopen", side_effect=[account_response, status_response]) as urlopen:
             handler._handle_validate_code_auth()
 
-        upstream = urlopen.call_args.args[0]
+        upstream = urlopen.call_args_list[0].args[0]
         self.assertEqual(upstream.full_url, "https://workbar.ai/api/user/self")
         self.assertEqual(upstream.get_header("Authorization"), "test-access-token")
         self.assertEqual(upstream.get_header("New-api-user"), "42")
+        self.assertEqual(urlopen.call_args_list[1].args[0].full_url, "https://workbar.ai/api/status")
         handler.send_json.assert_called_once_with({
             "valid": True,
-            "account": {"userId": "42", "username": "alice"},
+            "account": {
+                "userId": "42",
+                "username": "alice",
+                "displayName": "Alice",
+                "email": "alice@example.com",
+                "group": "default",
+                "quota": 123,
+                "usedQuota": 45,
+                "requestCount": 67,
+                "quotaDisplay": {
+                    "quotaPerUnit": 500000,
+                    "type": "CNY",
+                    "usdExchangeRate": 7.2,
+                    "customCurrencySymbol": "",
+                    "customCurrencyExchangeRate": 1,
+                },
+            },
         })
+
+    def test_validate_code_auth_only_returns_allowlisted_account_fields(self):
+        handler = self.make_handler({"token": "test-access-token", "userId": "42"})
+        response = mock.MagicMock()
+        response.read.return_value = json.dumps({
+            "success": True,
+            "data": {
+                "id": 42,
+                "username": "alice",
+                "access_token": "must-not-leak",
+                "stripe_customer": "cus_private",
+                "permissions": {"admin": True},
+            },
+        }).encode("utf-8")
+        response.__enter__.return_value = response
+
+        with mock.patch.object(server.request, "urlopen", side_effect=[response, server.error.URLError("offline")]):
+            handler._handle_validate_code_auth()
+
+        result = handler.send_json.call_args.args[0]["account"]
+        self.assertEqual(set(result), {
+            "userId", "username", "displayName", "email", "group",
+            "quota", "usedQuota", "requestCount", "quotaDisplay",
+        })
+        self.assertNotIn("must-not-leak", json.dumps(result))
 
     def test_validate_code_auth_rejects_invalid_or_mismatched_account(self):
         for payload in (

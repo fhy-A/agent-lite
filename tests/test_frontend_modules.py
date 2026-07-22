@@ -51,6 +51,30 @@ class TestFrontendCoreModules(unittest.TestCase):
         self.assertIn("min-height: 0", layout)
         self.assertNotIn("height: 750px", layout)
 
+    def test_language_switch_is_global_sidebar_control(self):
+        self.assertNotIn('data-panel="language"', INDEX_SOURCE)
+        self.assertIn('id="settingsLanguageSwitch"', INDEX_SOURCE)
+        self.assertEqual(INDEX_SOURCE.count("data-settings-lang="), 2)
+        self.assertIn("function updateLanguageControls()", SETTINGS_SOURCE)
+        self.assertIn('byId("settingsLanguageSwitch")?.addEventListener("click"', SETTINGS_SOURCE)
+        self.assertNotIn("function renderLanguagePanel(", SETTINGS_SOURCE)
+        self.assertIn(".settings-language-options", STYLE_SOURCE)
+        self.assertIn('data-i18n-title="getFromWorkbar"', SETTINGS_SOURCE)
+        self.assertIn('<span data-i18n="getFromWorkbar">', SETTINGS_SOURCE)
+
+    def test_account_page_refreshes_lazily_and_uses_safe_summary_fields(self):
+        self.assertIn("async function refreshPlatformAccount(container, auth)", SETTINGS_SOURCE)
+        self.assertIn("if (refresh) refreshPlatformAccount(container, auth);", SETTINGS_SOURCE)
+        self.assertIn("function formatAccountQuota(value, display = {})", SETTINGS_SOURCE)
+        for field in (
+            "accountBalance",
+            "accountUsedQuota",
+            "accountRequests",
+            "accountEmail",
+            "accountGroup",
+        ):
+            self.assertEqual(I18N_SOURCE.count(f"{field}:"), 2)
+
     def test_composer_controls_do_not_implicitly_submit_prompt(self):
         form_start = INDEX_SOURCE.index('<form id="chatForm"')
         form_end = INDEX_SOURCE.index("</form>", form_start)
@@ -405,13 +429,180 @@ process.stdout.write(JSON.stringify({
         synced = {entry["key"]: entry for entry in data["synced"]["entries"]}
         self.assertEqual(synced["sk-legacy"]["name"], "legacy")
         self.assertEqual(synced["sk-legacy"]["source"], "manual")
+        self.assertEqual(synced["sk-legacy"]["platformTokenId"], "2")
         self.assertEqual(synced["sk-remote"]["name"], "remote-renamed")
         self.assertFalse(synced["sk-remote"]["enabled"])
+        self.assertEqual(synced["sk-remote"]["platformTokenId"], "1")
         self.assertEqual(synced["sk-new-full"]["source"], "platform")
+        self.assertEqual(synced["sk-new-full"]["platformTokenId"], "3")
         self.assertEqual(data["formatted"], "team primary: sk-raw-value")
         self.assertTrue(data["masked"].startswith("sk-•"))
         self.assertTrue(data["masked"].endswith("alue"))
         self.assertNotIn("raw-value", data["masked"])
+
+    def test_platform_key_exclusions_store_only_account_and_token_ids(self):
+        script = r"""
+const values = new Map();
+const storage = {
+  getItem: (key) => values.has(key) ? values.get(key) : null,
+  setItem: (key, value) => values.set(key, String(value)),
+};
+global.window = {localStorage: storage};
+require("./src/core/namespace.js");
+require("./src/core/platform.js");
+const platform = window.Code.core.platform;
+platform.excludePlatformToken("7", 12, storage);
+platform.excludePlatformToken("7", "13", storage);
+platform.excludePlatformToken("7", 12, storage);
+platform.excludePlatformToken("8", 22, storage);
+const rejected = platform.excludePlatformToken("7", "not-a-token-id", storage);
+const exclusions = platform.loadPlatformKeyExclusions("7", storage);
+const merged = platform.mergeSyncedKeys([
+  {name: "manual", key: "sk-manual", enabled: true, source: "manual"},
+], [
+  {id: 12, name: "removed", status: 1},
+  {id: 14, name: "manual-match", status: 1},
+  {id: 15, name: "new", status: 1},
+], {12: "removed", 14: "manual", 15: "new"}, {excludedTokenIds: exclusions});
+process.stdout.write(JSON.stringify({
+  rejected,
+  exclusions: [...exclusions],
+  otherAccount: [...platform.loadPlatformKeyExclusions("8", storage)],
+  rawState: values.get(platform.KEY_SYNC_EXCLUSIONS_STORAGE_KEY),
+  merged,
+}));
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertFalse(data["rejected"])
+        self.assertEqual(data["exclusions"], ["12", "13"])
+        self.assertEqual(data["otherAccount"], ["22"])
+        raw_state = json.loads(data["rawState"])
+        self.assertEqual(raw_state, {
+            "version": 1,
+            "accounts": {"7": ["12", "13"], "8": ["22"]},
+        })
+        self.assertNotIn("sk-", data["rawState"])
+        self.assertNotIn("key", data["rawState"].lower())
+        self.assertNotIn("name", data["rawState"].lower())
+        merged = {entry["key"]: entry for entry in data["merged"]["entries"]}
+        self.assertNotIn("sk-removed", merged)
+        self.assertEqual(merged["sk-manual"]["source"], "manual")
+        self.assertEqual(merged["sk-manual"]["platformTokenId"], "14")
+        self.assertEqual(merged["sk-new"]["platformTokenId"], "15")
+        self.assertEqual(data["merged"]["imported"], 1)
+
+    def test_key_config_save_removes_legacy_sensitive_copy(self):
+        script = r"""
+const values = new Map([
+  ["code-key", "legacy-sensitive-copy"],
+  ["agent-lite-key", "older-sensitive-copy"],
+  ["agent-lite-key-config", "old-structured-sensitive-copy"],
+]);
+const removed = [];
+const storage = {
+  getItem: (key) => values.has(key) ? values.get(key) : null,
+  setItem: (key, value) => values.set(key, String(value)),
+  removeItem: (key) => { removed.push(key); values.delete(key); },
+};
+global.window = {localStorage: storage};
+require("./src/core/namespace.js");
+require("./src/core/platform.js");
+const platform = window.Code.core.platform;
+platform.saveKeyConfig([
+  {name: "manual", key: "sk-manual", enabled: true, source: "manual"},
+], storage);
+process.stdout.write(JSON.stringify({
+  removed,
+  legacyExists: platform.LEGACY_KEY_STORAGE_KEYS.some((key) => values.has(key)),
+  structuredExists: values.has("code-key-config"),
+}));
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertEqual(data["removed"], [
+            "code-key",
+            "agent-lite-key",
+            "agent-lite-key-config",
+        ])
+        self.assertFalse(data["legacyExists"])
+        self.assertTrue(data["structuredExists"])
+
+    def test_legacy_key_migration_is_one_time_and_cannot_restore_deleted_keys(self):
+        script = r"""
+function makeStorage(initial) {
+  const values = new Map(initial);
+  return {
+    values,
+    getItem: (key) => values.has(key) ? values.get(key) : null,
+    setItem: (key, value) => values.set(key, String(value)),
+    removeItem: (key) => values.delete(key),
+  };
+}
+global.window = {localStorage: makeStorage([])};
+require("./src/core/namespace.js");
+require("./src/core/platform.js");
+const platform = window.Code.core.platform;
+
+const deletedStorage = makeStorage([
+  [platform.KEY_CONFIG_STORAGE_KEY, "[]"],
+  ["agent-lite-key", "stale-text-value"],
+  ["agent-lite-key-config", JSON.stringify([{name: "stale", key: "stale-structured-value"}])],
+]);
+const keptDeleted = platform.migrateLegacyKeyConfig(deletedStorage);
+
+const firstUpgradeStorage = makeStorage([
+  ["agent-lite-key-config", JSON.stringify([{name: "old", key: "old-structured-value"}])],
+]);
+const firstMigration = platform.migrateLegacyKeyConfig(firstUpgradeStorage);
+platform.saveKeyConfig([], firstUpgradeStorage);
+const afterDeleteAndRestart = platform.migrateLegacyKeyConfig(firstUpgradeStorage);
+
+process.stdout.write(JSON.stringify({
+  keptDeletedCount: keptDeleted.length,
+  deletedLegacyRemaining: platform.LEGACY_KEY_STORAGE_KEYS.filter((key) => deletedStorage.values.has(key)),
+  firstMigrationCount: firstMigration.length,
+  afterDeleteAndRestartCount: afterDeleteAndRestart.length,
+  upgradeLegacyRemaining: platform.LEGACY_KEY_STORAGE_KEYS.filter((key) => firstUpgradeStorage.values.has(key)),
+}));
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertEqual(data["keptDeletedCount"], 0)
+        self.assertEqual(data["deletedLegacyRemaining"], [])
+        self.assertEqual(data["firstMigrationCount"], 1)
+        self.assertEqual(data["afterDeleteAndRestartCount"], 0)
+        self.assertEqual(data["upgradeLegacyRemaining"], [])
+
+        migration_start = APP_SOURCE.index("const keyMap = [")
+        migration_end = APP_SOURCE.index("];", migration_start)
+        generic_key_map = APP_SOURCE[migration_start:migration_end]
+        self.assertNotIn('"key"', generic_key_map)
+        self.assertNotIn('"key-config"', generic_key_map)
+        self.assertNotIn('"platform-auth"', generic_key_map)
+        self.assertIn("migrateLegacyKeyConfig(localStorage);", APP_SOURCE)
+        self.assertNotIn('parseKeyText(localStorage.getItem("code-key")', APP_SOURCE)
 
     def test_modules_export_through_code_core(self):
         icons = (ROOT / "src/core/icons.js").read_text(encoding="utf-8")
@@ -999,6 +1190,7 @@ const feature = window.Code.features.settings.createSettingsFeature({
         script = r"""
 const values = new Map([
   ["code-platform-auth", JSON.stringify({token: "access-1", userId: "7", username: "alice"})],
+  ["code-platform-key-exclusions", JSON.stringify({version: 1, accounts: {"7": ["3"]}})],
   ["code-key-config", JSON.stringify([
     {name: "manual", key: "sk-manual", enabled: false, source: "manual"},
     {name: "old", key: "sk-old", enabled: true, source: "platform"},
@@ -1043,8 +1235,9 @@ const feature = window.Code.features.settings.createSettingsFeature({
         tokens: [
           {id: 1, name: "old-renamed", status: 2},
           {id: 2, name: "new", status: 1},
+          {id: 3, name: "removed", status: 1},
         ],
-        keys: {1: "sk-old", 2: "sk-new"},
+        keys: {1: "sk-old", 2: "sk-new", 3: "sk-removed"},
       }),
     };
   },
@@ -1080,7 +1273,10 @@ const feature = window.Code.features.settings.createSettingsFeature({
         })
         self.assertEqual(config["sk-old"]["name"], "old-renamed")
         self.assertFalse(config["sk-old"]["enabled"])
+        self.assertEqual(config["sk-old"]["platformTokenId"], "1")
         self.assertEqual(config["sk-new"]["source"], "platform")
+        self.assertEqual(config["sk-new"]["platformTokenId"], "2")
+        self.assertNotIn("sk-removed", config)
         self.assertIn("manual: sk-manual", data["apiKey"])
         self.assertEqual(data["calls"], [{
             "url": "/api/code/sync-keys",
@@ -1095,6 +1291,7 @@ const feature = window.Code.features.settings.createSettingsFeature({
         script = r"""
 const values = new Map([
   ["code-platform-auth", JSON.stringify({token: "access-1", userId: "7"})],
+  ["code-platform-key-exclusions", JSON.stringify({version: 1, accounts: {"7": ["2"]}})],
   ["code-key-config", JSON.stringify([
     {name: "existing", key: "sk-existing-secret", enabled: true, source: "manual"},
   ])],
@@ -1198,6 +1395,9 @@ const feature = window.Code.features.settings.createSettingsFeature({
         self.assertEqual(data["result"]["presented"], 3)
         self.assertEqual(data["copyButtonCount"], 2)
         self.assertIn("alreadyAdded", data["html"])
+        self.assertIn("removedFromCode", data["html"])
+        self.assertIn("removedKeyCount:1", data["html"])
+        self.assertIn("removedKeysHint", data["html"])
         self.assertIn("disabledStatus", data["html"])
         self.assertIn("disabledKeyCount:1", data["html"])
         self.assertIn("key-sync-disabled", data["html"])
@@ -1217,7 +1417,8 @@ const feature = window.Code.features.settings.createSettingsFeature({
             'class="key-act-btn key-eye"',
             'class="toggle-switch key-enable"',
             'class="key-act-btn key-trash"',
-            'data-source="${entry.source === "platform" ? "platform" : "manual"}"',
+            'data-source="${entry.source === "platform" ? "platform" : "manual"}" data-platform-token-id="${escapeHtml(entry.platformTokenId || "")}"',
+            "platform.excludePlatformToken(auth.userId, platformTokenId, storage);",
             'class="key-workbar-btn"',
             't("getFromWorkbar")',
             'id="settingsModelCount"',
@@ -1235,6 +1436,96 @@ const feature = window.Code.features.settings.createSettingsFeature({
         ):
             self.assertIn(expected, STYLE_SOURCE)
         self.assertIn('getFromWorkbar: "从 Workbar 获取"', I18N_SOURCE)
+
+    def test_key_persistence_is_isolated_from_general_settings_and_syncs_across_tabs(self):
+        save_start = APP_SOURCE.index("function saveLocalSettings()")
+        save_end = APP_SOURCE.index("function handleUiSlashCommand(", save_start)
+        general_save = APP_SOURCE[save_start:save_end]
+        self.assertNotIn("saveKeyConfig", general_save)
+        self.assertNotIn('setItem("code-key"', general_save)
+        self.assertNotIn("function saveApiKeySettings()", APP_SOURCE)
+        self.assertNotIn('els.apiKey.addEventListener("change"', APP_SOURCE)
+        self.assertIn('LEGACY_KEY_STORAGE_KEYS.forEach((key) => storage?.removeItem?.(key));', PLATFORM_SOURCE)
+        self.assertIn('event.key !== platform.KEY_CONFIG_STORAGE_KEY', SETTINGS_SOURCE)
+        self.assertIn('if (event.key === "code-platform-auth")', SETTINGS_SOURCE)
+        self.assertNotIn('event.key === "code-platform-auth" && event.newValue', SETTINGS_SOURCE)
+        get_keys_start = APP_SOURCE.index("function getApiKeys()")
+        get_keys_end = APP_SOURCE.index("function detectLanguage(", get_keys_start)
+        get_keys_source = APP_SOURCE[get_keys_start:get_keys_end]
+        self.assertIn("loadKeyConfig()", get_keys_source)
+        self.assertNotIn("els.apiKey", get_keys_source)
+        self.assertIn('id="apiKey"', INDEX_SOURCE)
+        self.assertIn('autocomplete="off" hidden aria-hidden="true" tabindex="-1"', INDEX_SOURCE)
+
+        script = r"""
+const values = new Map([["code-key-config", JSON.stringify([
+  {name: "old", key: "sk-old", enabled: true, source: "manual"},
+])]]);
+const storage = {
+  getItem: (key) => values.has(key) ? values.get(key) : null,
+  setItem: (key, value) => values.set(key, String(value)),
+  removeItem: (key) => values.delete(key),
+};
+let storageHandler = null;
+let pageShowHandler = null;
+let reloads = 0;
+const keyList = {innerHTML: "", querySelectorAll: () => []};
+const documentStub = {
+  getElementById: (id) => id === "settingsKeyList" ? keyList : null,
+  querySelectorAll: () => [],
+  addEventListener: () => {},
+};
+global.window = {
+  localStorage: storage,
+  location: {search: "", reload: () => { reloads += 1; }},
+  history: {replaceState: () => {}},
+  matchMedia: () => ({matches: false, addEventListener: () => {}}),
+  addEventListener: (type, handler) => {
+    if (type === "storage") storageHandler = handler;
+    if (type === "pageshow") pageShowHandler = handler;
+  },
+  setTimeout,
+  setInterval,
+  clearInterval,
+};
+require("./src/core/namespace.js");
+require("./src/core/platform.js");
+require("./src/features/settings.js");
+const apiKey = {value: "old: sk-old"};
+const feature = window.Code.features.settings.createSettingsFeature({
+  elements: {apiKey},
+  t: (key) => key,
+  apiJson: async () => ({}),
+  document: documentStub,
+  storage,
+});
+feature.bind();
+values.set("code-key-config", "[]");
+apiKey.value = "restored-by-browser: sk-stale";
+pageShowHandler();
+const staleBrowserValueCleared = apiKey.value === "" && !keyList.innerHTML.includes("sk-stale");
+values.set("code-key-config", JSON.stringify([
+  {name: "replacement", key: "sk-replacement", enabled: true, source: "manual"},
+]));
+storageHandler({key: "code-key-config"});
+const keyUpdated = apiKey.value === "replacement: sk-replacement";
+const editorUpdated = keyList.innerHTML.includes("replacement");
+storageHandler({key: "code-platform-auth", newValue: null});
+process.stdout.write(JSON.stringify({staleBrowserValueCleared, keyUpdated, editorUpdated, reloads}));
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+        data = json.loads(completed.stdout)
+        self.assertTrue(data["staleBrowserValueCleared"])
+        self.assertTrue(data["keyUpdated"])
+        self.assertTrue(data["editorUpdated"])
+        self.assertEqual(data["reloads"], 1)
         self.assertIn('syncKeysTitle: "选择 Workbar API Key"', I18N_SOURCE)
         self.assertIn('allKeysAdded: "已启用的 API Key 均已在本地列表中"', I18N_SOURCE)
         self.assertIn('detectAvailableModels: "重新检测可用模型"', I18N_SOURCE)

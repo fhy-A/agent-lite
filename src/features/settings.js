@@ -91,7 +91,7 @@
       if (!entries.length) entries.push({ name: "", key: "", enabled: true });
       return entries.map((entry, index) => {
         const isNew = newRow && index === entries.length - 1;
-        return `<div class="key-row ${entry.enabled === false && !isNew ? "disabled" : ""}" data-idx="${index}" data-source="${entry.source === "platform" ? "platform" : "manual"}">
+        return `<div class="key-row ${entry.enabled === false && !isNew ? "disabled" : ""}" data-idx="${index}" data-source="${entry.source === "platform" ? "platform" : "manual"}" data-platform-token-id="${escapeHtml(entry.platformTokenId || "")}">
           <span class="key-drag-handle" title="${t("dragSort")}" draggable="true">⠿</span>
           <div class="key-main">
             <input class="key-name-input" placeholder="${t("keyNamePlaceholder")}" value="${escapeHtml(entry.name)}" data-idx="${index}" />
@@ -109,7 +109,12 @@
         const key = row.querySelector(".key-value-input")?.value || "";
         const enabled = row.querySelector(".key-enable input")?.checked !== false;
         const source = row.dataset.source === "platform" ? "platform" : "manual";
-        if (key.trim()) entries.push({ name: name.trim(), key: key.trim(), enabled, source });
+        const platformTokenId = platform.normalizePlatformTokenId(row.dataset.platformTokenId);
+        if (key.trim()) {
+          const entry = { name: name.trim(), key: key.trim(), enabled, source };
+          if (platformTokenId) entry.platformTokenId = platformTokenId;
+          entries.push(entry);
+        }
       });
       return entries;
     }
@@ -120,6 +125,16 @@
       saveKeyConfig(entries);
       if (saveSettings) saveLocalSettings();
       return entries;
+    }
+
+    function syncKeyEditorFromStorage() {
+      const config = loadKeyConfig(storage);
+      els.apiKey.value = serializeKeys(config);
+      const keyList = byId("settingsKeyList");
+      if (!keyList) return config;
+      keyList.innerHTML = renderKeyEditor(els.apiKey.value);
+      bindKeyEditorEvents(keyList);
+      return config;
     }
 
     function showInlineKeyDeleteConfirm(row, name, onConfirm) {
@@ -208,6 +223,15 @@
           const row = button.closest(".key-row");
           const name = row.querySelector(".key-name-input")?.value || "未命名";
           showInlineKeyDeleteConfirm(row, name, () => {
+            const key = row.querySelector(".key-value-input")?.value?.trim() || "";
+            const storedEntry = loadKeyConfig(storage).find((entry) => entry.key === key);
+            const platformTokenId = platform.normalizePlatformTokenId(
+              row.dataset.platformTokenId || storedEntry?.platformTokenId,
+            );
+            const auth = getPlatformAuth();
+            if (auth?.userId && platformTokenId) {
+              platform.excludePlatformToken(auth.userId, platformTokenId, storage);
+            }
             row.remove();
             persistKeyEntries(container);
           });
@@ -262,6 +286,16 @@
 
     function clearPlatformAuth() {
       storage?.removeItem("code-platform-auth");
+      storage?.removeItem("agent-lite-platform-auth");
+    }
+
+    function mergePlatformAccount(auth, account) {
+      const merged = { ...auth };
+      ["username", "displayName", "email", "group", "quota", "usedQuota", "requestCount", "quotaDisplay"].forEach((key) => {
+        if (account?.[key] !== undefined) merged[key] = account[key];
+      });
+      merged.userId = String(account?.userId || auth?.userId || "");
+      return merged;
     }
 
     function openPlatformLogin() {
@@ -328,11 +362,7 @@
           showPlatformAuthGate("expired");
           return false;
         }
-        savePlatformAuth({
-          token: auth.token,
-          userId: String(data.account?.userId || auth.userId),
-          username: data.account?.username || auth.username || "",
-        });
+        savePlatformAuth(mergePlatformAccount(auth, data.account));
         hidePlatformAuthGate();
         return true;
       } catch {
@@ -431,12 +461,14 @@
     }
 
     function renderModelsPanel(container) {
+      const keyConfig = loadKeyConfig(storage);
+      els.apiKey.value = serializeKeys(keyConfig);
       const modelCount = renderedModelCount();
       const initialModels = modelCount > 0
         ? els.modelListBox.innerHTML
-        : `<div class="model-list-empty">${t(loadKeyConfig(storage).some((entry) => entry.enabled !== false && String(entry.key || "").trim()) ? "noModelsFound" : "enterApiKey")}</div>`;
+        : `<div class="model-list-empty">${t(keyConfig.some((entry) => entry.enabled !== false && String(entry.key || "").trim()) ? "noModelsFound" : "enterApiKey")}</div>`;
       container.innerHTML = `<h3 style="margin:0 0 14px">${t("models")}</h3>
-        <div class="field"><div class="key-field-heading"><span>${t("apiKeys")}</span><button id="settingsConnectPlatform" class="key-workbar-btn" type="button" title="${t("getFromWorkbar")}"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1.5v7m0 0L4.5 6M7 8.5L9.5 6M2 10.5v1.25c0 .41.34.75.75.75h8.5c.41 0 .75-.34.75-.75V10.5" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/></svg><span>${t("getFromWorkbar")}</span></button></div>
+        <div class="field"><div class="key-field-heading"><span>${t("apiKeys")}</span><button id="settingsConnectPlatform" class="key-workbar-btn" type="button" title="${t("getFromWorkbar")}" data-i18n-title="getFromWorkbar"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1.5v7m0 0L4.5 6M7 8.5L9.5 6M2 10.5v1.25c0 .41.34.75.75.75h8.5c.41 0 .75-.34.75-.75V10.5" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-i18n="getFromWorkbar">${t("getFromWorkbar")}</span></button></div>
           <div class="key-list" id="settingsKeyList">${renderKeyEditor(els.apiKey.value)}</div>
           <div id="settingsKeyAddArea"><button id="settingsKeyAddRow" class="key-add-btn" type="button">${t("addKey")}</button></div>
         </div>
@@ -496,15 +528,12 @@
       });
     }
 
-    function renderLanguagePanel(container) {
+    function updateLanguageControls() {
       const current = state.lang || "zh";
-      container.innerHTML = `<h3 style="margin:0 0 14px">${t("language")}</h3>
-        <div class="lang-options"><button class="lang-opt ${current === "zh" ? "active" : ""}" data-lang="zh">中文</button><button class="lang-opt ${current === "en" ? "active" : ""}" data-lang="en">English</button></div>`;
-      container.querySelectorAll(".lang-opt").forEach((button) => {
-        button.addEventListener("click", () => {
-          setLang(button.dataset.lang);
-          renderLanguagePanel(container);
-        });
+      documentRef.querySelectorAll("[data-settings-lang]").forEach((button) => {
+        const active = button.dataset.settingsLang === current;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-pressed", String(active));
       });
     }
 
@@ -571,24 +600,110 @@
       });
     }
 
-    function renderAccountPanel(container) {
+    function formatAccountNumber(value, maximumFractionDigits = 0) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return "—";
+      return new Intl.NumberFormat(state.lang === "en" ? "en-US" : "zh-CN", { maximumFractionDigits }).format(number);
+    }
+
+    function formatAccountQuota(value, display = {}) {
+      const raw = Number(value);
+      if (!Number.isFinite(raw)) return "—";
+      const type = String(display?.type || "").toUpperCase();
+      const quotaPerUnit = Number(display?.quotaPerUnit);
+      if (!type || !Number.isFinite(quotaPerUnit) || quotaPerUnit <= 0) return "—";
+      if (type === "TOKENS") return formatAccountNumber(raw);
+      const amountUsd = raw / quotaPerUnit;
+      if (type === "CNY") {
+        const rate = Number(display?.usdExchangeRate);
+        return `¥${formatAccountNumber(amountUsd * (Number.isFinite(rate) ? rate : 1), 2)}`;
+      }
+      if (type === "CUSTOM") {
+        const rate = Number(display?.customCurrencyExchangeRate);
+        const symbol = display?.customCurrencySymbol || "";
+        return `${escapeHtml(symbol)}${formatAccountNumber(amountUsd * (Number.isFinite(rate) ? rate : 1), 2)}`;
+      }
+      return `$${formatAccountNumber(amountUsd, 2)}`;
+    }
+
+    function accountPanelIsActive(container) {
+      return byId("settingsDetail") === container
+        && documentRef.querySelector('.settings-nav-item.active')?.dataset.panel === "account";
+    }
+
+    async function refreshPlatformAccount(container, auth) {
+      try {
+        const response = await fetchFn("/api/code/auth/validate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: auth.token, userId: auth.userId }),
+        });
+        if (response.status === 401 || response.status === 403) {
+          clearPlatformAuth();
+          if (accountPanelIsActive(container)) renderAccountPanel(container, { refresh: false });
+          showPlatformAuthGate("expired");
+          return;
+        }
+        if (!response.ok) throw new Error(t("accountRefreshFailed"));
+        const data = await response.json();
+        if (!data.valid) throw new Error(t("accountRefreshFailed"));
+        savePlatformAuth(mergePlatformAccount(auth, data.account));
+        if (accountPanelIsActive(container)) renderAccountPanel(container, { refresh: false });
+      } catch {
+        if (!accountPanelIsActive(container)) return;
+        const refreshState = byId("accountRefreshState");
+        if (!refreshState) return;
+        refreshState.className = "account-refresh-state is-error";
+        refreshState.innerHTML = `<span>${t("accountRefreshFailed")}</span><button id="accountRefreshRetry" class="text-btn" type="button">${t("retry")}</button>`;
+        byId("accountRefreshRetry")?.addEventListener("click", () => {
+          refreshState.className = "account-refresh-state is-loading";
+          refreshState.textContent = t("accountLoading");
+          refreshPlatformAccount(container, getPlatformAuth());
+        });
+      }
+    }
+
+    function renderAccountPanel(container, { refresh = true } = {}) {
       const auth = getPlatformAuth();
       if (auth) {
-        container.innerHTML = `<h3 style="margin:0 0 14px">${t("platformAccount")}</h3>
-          <div class="account-card"><div class="account-avatar">${escapeHtml((auth.username || "U")[0].toUpperCase())}</div><div class="account-info"><div class="account-name">${escapeHtml(auth.username || "Unknown")}</div><div class="account-id">${t("accountUserId")}: ${escapeHtml(auth.userId || "")}</div></div></div>
-          <div style="margin-top:12px"><button id="accountLogout" class="mini-btn" type="button">${t("logout")}</button></div>`;
+        const displayName = auth.displayName || auth.username || "Unknown";
+        const username = auth.username || "";
+        const secondaryName = username ? `@${username}` : "Workbar";
+        container.innerHTML = `<h3 class="settings-section-title">${t("platformAccount")}</h3>
+          <div class="settings-lite-page account-panel">
+            <section class="settings-lite-card account-identity-card">
+              <div class="account-avatar">${escapeHtml(displayName[0].toUpperCase())}</div>
+              <div class="account-info">
+                <div class="account-name">${escapeHtml(displayName)}</div>
+                <div class="account-handle">${escapeHtml(secondaryName)}</div>
+                <div class="account-connection"><span aria-hidden="true"></span>${t("accountLoggedIn")}</div>
+              </div>
+              <button id="accountLogout" class="mini-btn account-logout" type="button">${t("logout")}</button>
+            </section>
+            <div class="account-stats-grid">
+              <section class="account-stat-card"><span>${t("accountBalance")}</span><strong>${formatAccountQuota(auth.quota, auth.quotaDisplay)}</strong></section>
+              <section class="account-stat-card"><span>${t("accountUsedQuota")}</span><strong>${formatAccountQuota(auth.usedQuota, auth.quotaDisplay)}</strong></section>
+              <section class="account-stat-card"><span>${t("accountRequests")}</span><strong>${formatAccountNumber(auth.requestCount)}</strong></section>
+            </div>
+            <section class="settings-lite-card account-details-card">
+              <div class="account-detail-row"><span>${t("accountEmail")}</span><strong>${escapeHtml(auth.email || t("notSet"))}</strong></div>
+              <div class="account-detail-row"><span>${t("accountGroup")}</span><strong>${escapeHtml(auth.group || t("notSet"))}</strong></div>
+              <div class="account-detail-row"><span>${t("accountUserId")}</span><strong>${escapeHtml(auth.userId || "—")}</strong></div>
+            </section>
+            <div class="account-refresh-state${refresh ? " is-loading" : ""}" id="accountRefreshState">${refresh ? t("accountLoading") : ""}</div>
+          </div>`;
         byId("accountLogout").addEventListener("click", () => {
           clearPlatformAuth();
           onPlatformLogout();
           showToast(t("loggedOut"), "warning");
           showPlatformAuthGate("missing");
         });
+        if (refresh) refreshPlatformAccount(container, auth);
         return;
       }
-      container.innerHTML = `<h3 style="margin:0 0 14px">${t("platformAccount")}</h3>
-        <div class="muted-line" style="padding:16px;text-align:center"><p>${t("notLoggedIn")}</p>
-          <button id="accountLoginNow" class="mini-btn primary" type="button" style="margin-top:8px">${t("loginPlatform")}</button>
-        </div>`;
+      container.innerHTML = `<h3 class="settings-section-title">${t("platformAccount")}</h3>
+        <div class="settings-lite-page"><section class="settings-lite-card settings-empty-card"><p>${t("notLoggedIn")}</p>
+          <button id="accountLoginNow" class="mini-btn primary-btn" type="button">${t("loginPlatform")}</button></section></div>`;
       byId("accountLoginNow").addEventListener("click", () => {
         openPlatformLogin();
       });
@@ -646,26 +761,39 @@
       const currentVersion = state.appVersion || "unknown";
       let remoteVersion = null;
       let downloadUrl = null;
-      const status = (value) => { const element = byId("updateStatus"); if (element) element.textContent = value; };
+      const status = (value, tone = "neutral") => {
+        const element = byId("updateStatus");
+        if (!element) return;
+        element.textContent = value;
+        element.dataset.tone = tone;
+      };
       const actions = (html) => { const element = byId("updateActions"); if (element) element.innerHTML = html; };
-      container.innerHTML = `<h3 style="margin:0 0 14px">${t("update")}</h3>
-        <div class="update-ver-row"><span>${t("versionLabel")}:</span><strong class="update-ver-val" id="updateCurVer">v${escapeHtml(currentVersion)}</strong></div>
-        <div class="update-status-row"><span id="updateStatus"></span></div>
-        <div class="update-progress-wrap hidden" id="updateProgressWrap"><div class="update-progress-bg"><div class="update-progress-fill" id="updateBar"></div></div><span class="update-progress-txt" id="updatePct">0%</span></div>
-        <div class="panel-actions" style="margin-top:12px" id="updateActions"><button id="updateCheckBtn" class="mini-btn primary-btn" type="button">${t("checkUpdate")}</button></div>`;
+      container.innerHTML = `<h3 class="settings-section-title">${t("update")}</h3>
+        <div class="settings-lite-page update-panel">
+          <section class="settings-lite-card update-overview-card">
+            <div class="update-app-mark" aria-hidden="true"><svg viewBox="0 0 160 160" fill="none"><path d="M80 13A40 40 0 0 1 80 93"/><path d="M80 147A40 40 0 0 1 80 67"/></svg></div>
+            <div class="update-overview-copy">
+              <div class="update-product-name">Code</div>
+              <div class="update-ver-row"><span>${t("currentVersion")}</span><strong class="update-ver-val" id="updateCurVer">v${escapeHtml(currentVersion)}</strong></div>
+              <div class="update-status-row"><span id="updateStatus" data-tone="neutral">${t("updateReadyHint")}</span></div>
+            </div>
+            <div class="update-actions" id="updateActions"><button id="updateCheckBtn" class="mini-btn primary-btn" type="button">${t("checkUpdate")}</button></div>
+          </section>
+          <div class="update-progress-wrap hidden" id="updateProgressWrap"><div class="update-progress-bg"><div class="update-progress-fill" id="updateBar"></div></div><span class="update-progress-txt" id="updatePct">0%</span></div>
+        </div>`;
       apiJson("/api/version").then((version) => {
         const element = byId("updateCurVer");
         if (version?.localVersion && element) element.textContent = `v${version.localVersion}`;
       }).catch(() => {});
       byId("updateCheckBtn").addEventListener("click", async () => {
-        status(t("checkingUpdate"));
+        status(t("checkingUpdate"), "loading");
         actions("");
         try {
           const data = await checkForUpdates({ silent: false });
           if (data.updateAvailable) {
             remoteVersion = data.remoteVersion;
             downloadUrl = data.downloadUrl;
-            status(`${t("updateAvailable")} (v${remoteVersion})`);
+            status(`${t("updateAvailable")} (v${remoteVersion})`, "success");
             if (data.isFrozen && downloadUrl) {
               actions(`<button id="updateDlBtn" class="mini-btn primary-btn" type="button">${t("downloadUpdate")} v${remoteVersion}</button>`);
               byId("updateDlBtn").addEventListener("click", startDownload);
@@ -673,19 +801,19 @@
               actions(`<a href="https://github.com/fhy-A/Code/releases/latest" target="_blank" class="mini-btn">${t("openDownloadPage")}</a>`);
             }
           } else {
-            status(t("upToDate"));
+            status(t("upToDate"), "success");
             actions(`<button id="updateCheckBtn2" class="mini-btn primary-btn" type="button">${t("checkUpdate")}</button>`);
             byId("updateCheckBtn2").addEventListener("click", () => renderUpdatePanel(container));
           }
         } catch (error) {
-          status(`${t("updateFailed")}: ${error.message || ""}`);
+          status(`${t("updateFailed")}: ${error.message || ""}`, "error");
           actions(`<button id="updateCheckBtn3" class="mini-btn primary-btn" type="button">${t("checkUpdate")}</button>`);
           byId("updateCheckBtn3").addEventListener("click", () => renderUpdatePanel(container));
         }
       });
 
       async function startDownload() {
-        status(t("downloading"));
+        status(t("downloading"), "loading");
         byId("updateProgressWrap").classList.remove("hidden");
         actions("");
         let downloadId;
@@ -695,7 +823,7 @@
           downloadId = result.downloadId;
           newExePath = result.path;
         } catch (error) {
-          status(`${t("updateFailed")}: ${error.message}`);
+          status(`${t("updateFailed")}: ${error.message}`, "error");
           return;
         }
         const poll = global.setInterval(async () => {
@@ -705,15 +833,15 @@
             byId("updatePct").textContent = `${progress.progress}%`;
             if (progress.error) {
               global.clearInterval(poll);
-              status(`${t("updateFailed")}: ${progress.error}`);
+              status(`${t("updateFailed")}: ${progress.error}`, "error");
             }
             if (!progress.done) return;
             global.clearInterval(poll);
             byId("updateProgressWrap").classList.add("hidden");
-            status(t("readyToInstall"));
+            status(t("readyToInstall"), "success");
             actions(`<button id="updateRestartBtn" class="mini-btn primary-btn" type="button">${t("installRestart")}</button>`);
             byId("updateRestartBtn").addEventListener("click", async () => {
-              status(t("restarting"));
+              status(t("restarting"), "loading");
               actions("");
               try { await apiJson("/api/restart", { method: "POST", body: JSON.stringify({ path: newExePath }) }); } catch {}
               showToast("Code is restarting...", "success");
@@ -774,7 +902,8 @@
           if (!presented) showToast(t("noPlatformKeys"));
           return { ok: true, presented };
         }
-        const result = platform.mergeSyncedKeys(loadKeyConfig(storage), tokens, data.keys || {});
+        const excludedTokenIds = platform.loadPlatformKeyExclusions(auth.userId, storage);
+        const result = platform.mergeSyncedKeys(loadKeyConfig(storage), tokens, data.keys || {}, { excludedTokenIds });
         const saved = saveKeyConfig(result.entries);
         els.apiKey.value = serializeKeys(saved);
         saveLocalSettings();
@@ -801,10 +930,13 @@
       const existingKeys = new Set(loadKeyConfig(storage)
         .map((entry) => platform.normalizeSyncedKey(entry.key))
         .filter(Boolean));
+      const auth = getPlatformAuth();
+      const excludedTokenIds = platform.loadPlatformKeyExclusions(auth?.userId, storage);
       const seen = new Set();
       const items = [];
       for (const tokenEntry of Array.isArray(tokens) ? tokens : []) {
-        const key = platform.normalizeSyncedKey(fullKeys[String(tokenEntry?.id)]);
+        const platformTokenId = platform.normalizePlatformTokenId(tokenEntry?.id);
+        const key = platform.normalizeSyncedKey(fullKeys[platformTokenId]);
         if (!key || seen.has(key)) continue;
         seen.add(key);
         const name = String(tokenEntry?.name || "").trim();
@@ -814,6 +946,7 @@
           line: platform.formatSyncedKeyLine(name, key),
           preview: platform.maskSyncedKey(key),
           exists: existingKeys.has(key),
+          excluded: excludedTokenIds.has(platformTokenId),
           enabled: tokenEntry?.status == null || Number(tokenEntry.status) === 1,
         });
       }
@@ -822,26 +955,28 @@
       const copyLines = items.map((item) => item.enabled ? item.line : "");
       const enabledItems = items.filter((item) => item.enabled);
       const allText = enabledItems.map((item) => item.line).join("\n");
-      const newCount = enabledItems.filter((item) => !item.exists).length;
+      const newCount = enabledItems.filter((item) => !item.exists && !item.excluded).length;
+      const excludedCount = enabledItems.filter((item) => !item.exists && item.excluded).length;
       const disabledCount = items.length - enabledItems.length;
       const rows = items.map((item, index) => {
         const badges = [
           item.exists ? `<span class="key-sync-badge">${t("alreadyAdded")}</span>` : "",
+          !item.exists && item.excluded ? `<span class="key-sync-badge key-sync-excluded-badge">${t("removedFromCode")}</span>` : "",
           !item.enabled ? `<span class="key-sync-badge key-sync-disabled-badge">${t("disabledStatus")}</span>` : "",
         ].join("");
         const copyButton = item.enabled
           ? `<button class="mini-btn key-copy-one" data-copy-index="${index}" type="button">${t("copy")}</button>`
           : "";
-        return `<div class="key-sync-row${item.exists ? " key-sync-exists" : ""}${item.enabled ? "" : " key-sync-disabled"}"><span class="key-sync-name">${escapeHtml(item.name || t("unnamed"))}</span><span class="key-sync-key">${escapeHtml(item.preview)}</span><span class="key-sync-actions">${badges}${copyButton}</span></div>`;
+        return `<div class="key-sync-row${item.exists ? " key-sync-exists" : ""}${item.excluded && !item.exists ? " key-sync-excluded" : ""}${item.enabled ? "" : " key-sync-disabled"}"><span class="key-sync-name">${escapeHtml(item.name || t("unnamed"))}</span><span class="key-sync-key">${escapeHtml(item.preview)}</span><span class="key-sync-actions">${badges}${copyButton}</span></div>`;
       }).join("");
       const overlay = documentRef.createElement("div");
       overlay.id = "keySyncOverlay";
       overlay.className = "modal-overlay";
       overlay.innerHTML = `<div class="modal-card" style="width:540px;max-height:70vh;display:flex;flex-direction:column">
         <header><h3>${t("syncKeysTitle")}</h3><button class="icon-btn key-sync-close" type="button">&times;</button></header>
-        <div class="key-sync-summary"><span>${t("keyCount", { count: items.length })}${newCount > 0 && newCount < enabledItems.length ? `，${t("newKeyCount", { count: newCount })}` : ""}${disabledCount > 0 ? `，${t("disabledKeyCount", { count: disabledCount })}` : ""}</span><button id="keySyncCopyAll" class="mini-btn primary" type="button"${enabledItems.length ? "" : " disabled"}>${t("copyAll")}</button></div>
+        <div class="key-sync-summary"><span>${t("keyCount", { count: items.length })}${newCount > 0 && newCount < enabledItems.length ? `，${t("newKeyCount", { count: newCount })}` : ""}${excludedCount > 0 ? `，${t("removedKeyCount", { count: excludedCount })}` : ""}${disabledCount > 0 ? `，${t("disabledKeyCount", { count: disabledCount })}` : ""}</span><button id="keySyncCopyAll" class="mini-btn primary" type="button"${enabledItems.length ? "" : " disabled"}>${t("copyAll")}</button></div>
         <div class="key-sync-list">${rows}</div>
-        <div class="key-sync-footer">${enabledItems.length === 0 ? `<span class="key-sync-note">${t("noEnabledPlatformKeys")}</span>` : newCount === 0 ? `<span class="key-sync-note is-complete">${t("allKeysAdded")}</span>` : `<span class="key-sync-note">${t("pasteKeysHint")}</span>`}</div>
+        <div class="key-sync-footer">${enabledItems.length === 0 ? `<span class="key-sync-note">${t("noEnabledPlatformKeys")}</span>` : newCount === 0 && excludedCount === 0 ? `<span class="key-sync-note is-complete">${t("allKeysAdded")}</span>` : newCount === 0 ? `<span class="key-sync-note">${t("removedKeysHint")}</span>` : `<span class="key-sync-note">${t("pasteKeysHint")}</span>`}</div>
       </div>`;
       documentRef.body.appendChild(overlay);
       overlay.querySelector(".key-sync-close").addEventListener("click", () => overlay.remove());
@@ -948,7 +1083,6 @@
         case "skills": renderSkillsInSettings(detail); break;
         case "system": renderSystemPanel(detail); break;
         case "theme": renderThemePanel(detail); break;
-        case "language": renderLanguagePanel(detail); break;
         case "update": renderUpdatePanel(detail); break;
         default: return;
       }
@@ -979,6 +1113,13 @@
         if (item.dataset.panel === "update") markUpdateNoticeSeen("page");
         switchSettingsPanel(item.dataset.panel);
       });
+      byId("settingsLanguageSwitch")?.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-settings-lang]");
+        if (!button || button.dataset.settingsLang === (state.lang || "zh")) return;
+        setLang(button.dataset.settingsLang);
+        updateLanguageControls();
+      });
+      updateLanguageControls();
       byId("closeSettingsPage")?.addEventListener("click", () => byId("settingsPage")?.classList.add("hidden"));
       byId("settingsPage")?.addEventListener("click", (event) => {
         if (event.target === event.currentTarget) event.currentTarget.classList.add("hidden");
@@ -1000,8 +1141,14 @@
         if (!event.target.closest(".settings-dropdown")) closeDropdown();
       });
       global.addEventListener?.("storage", (event) => {
-        if (event.key === "code-platform-auth" && event.newValue) global.location.reload();
+        if (event.key === "code-platform-auth") {
+          global.location.reload();
+          return;
+        }
+        if (event.key !== platform.KEY_CONFIG_STORAGE_KEY) return;
+        syncKeyEditorFromStorage();
       });
+      global.addEventListener?.("pageshow", syncKeyEditorFromStorage);
       els.closeSettings?.addEventListener("click", () => showSettings(false));
       els.settingsModal?.addEventListener("click", (event) => {
         if (event.target === els.settingsModal) showSettings(false);

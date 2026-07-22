@@ -244,7 +244,7 @@
         <input id="baseUrl" type="hidden" value="https://workbar.ai" />
         <label class="field">
           <span data-i18n="apiKeysMultiline">API Key（一行一个，支持多个）</span>
-          <textarea id="apiKey" class="api-key-textarea" placeholder="sk-your-key" spellcheck="false" rows="3"></textarea>
+          <textarea id="apiKey" class="api-key-textarea" placeholder="sk-your-key" spellcheck="false" rows="3" autocomplete="off" hidden aria-hidden="true" tabindex="-1"></textarea>
         </label>
         <div class="model-list-header">
           <span data-i18n="availableModels">可用模型</span>
@@ -437,12 +437,19 @@
           <div class="settings-nav-group">
             <div class="settings-nav-heading" data-i18n="settingsGroupAppearance">外观</div>
             <button class="settings-nav-item" data-panel="theme" data-i18n="theme">Theme</button>
-            <button class="settings-nav-item" data-panel="language" data-i18n="language">Language</button>
           </div>
           <div class="settings-nav-group">
             <div class="settings-nav-heading" data-i18n="settingsGroupApplication">应用</div>
             <button class="settings-nav-item" data-panel="account" data-i18n="account">账户</button>
             <button class="settings-nav-item settings-update-nav" data-panel="update" data-i18n="update"><span data-ui-label>Update</span><span id="settingsPageUpdateVersion" class="settings-update-version hidden" aria-label="Latest version"></span><span id="settingsPageUpdateDot" class="update-notice-dot hidden" aria-hidden="true"></span></button>
+          </div>
+          <div class="settings-nav-spacer" aria-hidden="true"></div>
+          <div class="settings-language" id="settingsLanguageSwitch" role="group" aria-label="Language">
+            <span class="settings-language-label" data-i18n="language">语言</span>
+            <div class="settings-language-options">
+              <button class="settings-language-btn" type="button" data-settings-lang="zh" aria-pressed="true">中文</button>
+              <button class="settings-language-btn" type="button" data-settings-lang="en" aria-pressed="false">EN</button>
+            </div>
           </div>
         </div>
         <div class="settings-detail" id="settingsDetail"></div>

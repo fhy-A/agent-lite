@@ -10,6 +10,7 @@ const { createI18nRuntime } = window.Code.core.i18n;
 const {
   WORKBAR_URL,
   loadKeyConfig,
+  migrateLegacyKeyConfig,
   parseKeyText,
   saveKeyConfig,
   serializeKeyEntries,
@@ -524,7 +525,7 @@ function buildRunContext(sessionId) {
     stats: getSessionStats(sessionId),
     responseUsage: { input: 0, output: 0, cache: 0 },
     taskUsage: { input: 0, output: 0, cache: 0 },
-    apiKey: els.apiKey.value.trim(),
+    apiKey: getBestKey(model),
     model,
     temperature: Number(els.temperature.value || 0.2),
     maxTokens: getEffectiveMaxTokens(model),
@@ -1836,8 +1837,7 @@ function getFallbackKeys(model) {
 function getApiKeys() {
 
   const cfg = loadKeyConfig();
-  if (cfg.length > 0) return cfg.filter((entry) => entry.enabled !== false).map((entry) => entry.key);
-  return parseKeyText(els.apiKey.value).entries
+  return cfg
     .filter((entry) => entry.enabled !== false)
     .map((entry) => entry.key);
 
@@ -4301,7 +4301,7 @@ async function generateSessionTitle(userText) {
 
   const model = getSelectedModel();
 
-  const key = els.apiKey.value.trim();
+  const key = getBestKey(model);
 
   if (!model || !key) return;
 
@@ -6357,7 +6357,7 @@ function bindUserInputPanel() {
 }
 
 async function resumePersistedRuns() {
-  if (!els.apiKey.value.trim() || !els.baseUrl.value.trim()) return;
+  if (getApiKeys().length === 0 || !els.baseUrl.value.trim()) return;
   const candidates = state.sessions.filter((session) =>
     ["running", "waiting-network", "resuming"].includes(session?.runState?.status));
   if (candidates.length === 0) return;
@@ -8584,9 +8584,9 @@ async function compactConversation() {
 
 
 
-  const key = els.apiKey.value.trim();
-
   const model = getSelectedModel();
+
+  const key = getBestKey(model);
 
   if (!key || !model) { showToast("Please configure the API key and model first.", "warning"); return; }
 
@@ -8767,9 +8767,9 @@ function hideCompactConfirm() {
 
 async function sendMessage(userText) {
 
-  const key = els.apiKey.value.trim();
-
   const model = getSelectedModel();
+
+  const key = getBestKey(model);
 
   if (!key) throw new Error("Please enter a New API sub key in Models first.");
 
@@ -9064,9 +9064,6 @@ function setPermLevel(value) {
 
 
 function saveLocalSettings() {
-  const keyConfig = saveKeyConfig(parseKeyText(els.apiKey.value, loadKeyConfig()).entries);
-  els.apiKey.value = serializeKeyEntries(keyConfig);
-  localStorage.setItem("code-key", els.apiKey.value);
   els.baseUrl.value = WORKBAR_URL;
   localStorage.removeItem("code-base-url");
   localStorage.removeItem("code-platform-url");
@@ -9088,8 +9085,6 @@ function saveLocalSettings() {
   updateModePromptPreview();
 
 }
-
-
 
 function handleUiSlashCommand(text) {
   const parts = text.trim().split(/\s+/);
@@ -9435,8 +9430,6 @@ document.addEventListener("click", (e) => {
 });
 
 
-
-els.apiKey.addEventListener("change", saveLocalSettings);
 
 els.temperature.addEventListener("change", saveLocalSettings);
 
@@ -9920,10 +9913,10 @@ async function init() {
     const keyMap = [
       "permission-profile", "preview-width", "preview-open", "preview-path",
       "session-height", "sidebar-width", "sidebar-hidden", "explorer-collapsed",
-      "disabled-skills", "lang", "key-config", "system-prompt", "last-session",
-      "pinned", "model", "key", "base-url", "temperature", "max-tokens",
+      "disabled-skills", "lang", "system-prompt", "last-session",
+      "pinned", "model", "base-url", "temperature", "max-tokens",
       "thinking", "tool-preset", "recent-folders", "sort-mode", "sort-asc",
-      "theme", "platform-url", "platform-auth", "update-seen-settings",
+      "theme", "platform-url", "update-seen-settings",
       "update-seen-page", "onboarding"
     ];
     let migrated = 0;
@@ -9937,6 +9930,8 @@ async function init() {
     }
     if (migrated) console.log("Migrated " + migrated + " localStorage keys from agent-lite-* to code-*");
   })();
+
+  migrateLegacyKeyConfig(localStorage);
 
   bindAuthorizationPanel();
   bindUserInputPanel();
@@ -9987,12 +9982,7 @@ async function init() {
     }
 
     const storedKeyConfig = loadKeyConfig();
-    if (storedKeyConfig.length > 0) {
-      els.apiKey.value = serializeKeyEntries(storedKeyConfig);
-    } else {
-      const migratedKeyConfig = saveKeyConfig(parseKeyText(localStorage.getItem("code-key") || "").entries);
-      els.apiKey.value = serializeKeyEntries(migratedKeyConfig);
-    }
+    els.apiKey.value = serializeKeyEntries(storedKeyConfig);
 
     els.baseUrl.value = WORKBAR_URL;
     localStorage.removeItem("code-base-url");
@@ -10083,7 +10073,7 @@ async function init() {
     updateSendButtonState();
     return;
   }
-  if (els.apiKey.value.trim() && els.baseUrl.value.trim()) await refreshModels();
+  if (getApiKeys().length > 0 && els.baseUrl.value.trim()) await refreshModels();
 
   // Resume tasks whose browser-side stream was interrupted by a page reload.
   // Each session owns an independent lock and run context, so multiple saved

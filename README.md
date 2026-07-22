@@ -12,7 +12,7 @@
 <p align="center">让 AI 真正进入你的项目，而不是停在对话框里。</p>
 
 <p align="center">
-  <a href="https://github.com/fhy-A/Code/releases/latest"><img src="https://img.shields.io/badge/version-0.5.6-2563EB" alt="Version 0.5.6"></a>
+  <a href="https://github.com/fhy-A/Code/releases/latest"><img src="https://img.shields.io/badge/version-0.5.7-2563EB" alt="Version 0.5.7"></a>
   <img src="https://img.shields.io/badge/platform-Windows-0078D4" alt="Windows">
   <img src="https://img.shields.io/badge/python-3.12+-3776AB" alt="Python 3.12+">
   <img src="https://img.shields.io/badge/tests-614%20passed-16A34A" alt="614 tests passed">
@@ -73,7 +73,7 @@ Code 当前聚焦三个目标：
 
 ### Windows 单文件版
 
-1. 从 [GitHub Releases](https://github.com/fhy-A/Code/releases/latest) 下载 `Code-v0.5.6.exe`。
+1. 从 [GitHub Releases](https://github.com/fhy-A/Code/releases/latest) 下载 `Code-v0.5.7.exe`。
 2. 双击运行。Code 会常驻系统托盘，并打开 `http://127.0.0.1:3010/`。
 3. 按页面提示登录 Workbar；Code 会同步账号下的 API Key 并刷新可用模型。
 4. 选择一个项目目录，在输入框中直接描述任务。模型服务地址固定为 `https://workbar.ai`。
@@ -199,6 +199,7 @@ python build_exe.py
 ## 文档与路线
 
 - [使用指南](docs/GUIDE.md)
+- [v0.5.7 发布说明](docs/releases/v0.5.7.md)
 - [v0.5.6 发布说明](docs/releases/v0.5.6.md)
 - [v0.5.4 发布说明](docs/releases/v0.5.4.md)
 - [会话 JSONL 迁移说明](docs/session-jsonl-migration.md)

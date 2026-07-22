@@ -1059,7 +1059,9 @@ input:focus, select:focus, textarea:focus {
   scrollbar-color: var(--sidebar-scroll-thumb) transparent;
 }
 .message-list {
-  display: contents;
+  display: block;
+  width: 100%;
+  min-width: 0;
 }
 .messages::-webkit-scrollbar { width: 6px; }
 .messages::-webkit-scrollbar-thumb { background: var(--sidebar-scroll-thumb); border-radius: 3px; }
@@ -3159,6 +3161,14 @@ input:focus, select:focus, textarea:focus {
   margin: 0;
 }
 .active-run-banner.visible { display: block; }
+
+/* The stable status node is parked under .messages while the message
+   projection is replaced. Never paint that full-width parking state; it may
+   become visible only after mountActiveRunBanner moves it into the centered
+   conversation anchor. */
+.messages > .active-run-banner {
+  display: none;
+}
 
 .active-run-status {
   width: 100%;

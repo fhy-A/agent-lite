@@ -1830,8 +1830,14 @@ const streaming = feature.renderFinalAssistantProjection({
   streaming: true,
   _streamProjection: "answer",
 }, 9);
+const pending = feature.renderFinalAssistantProjection({
+  role: "assistant",
+  content: "unclassified first frame",
+  streaming: true,
+  _streamProjection: "pending",
+}, 10);
 const usageOnly = feature.renderCompletedRunStatus("model-1", "", {input: 8});
-process.stdout.write(JSON.stringify({html, streaming, usageOnly}));
+process.stdout.write(JSON.stringify({html, streaming, pending, usageOnly}));
 """
         completed = subprocess.run(
             ["node", "-e", script],
@@ -1857,6 +1863,8 @@ process.stdout.write(JSON.stringify({html, streaming, usageOnly}));
         self.assertIn('data-stream-session="session-1"', data["streaming"])
         self.assertIn('data-stream-kind="answer"', data["streaming"])
         self.assertIn("<recovery></recovery>", data["streaming"])
+        self.assertIn('data-stream-kind="pending"', data["pending"])
+        self.assertNotIn("unclassified first frame", data["pending"])
         self.assertNotIn("0s", data["usageOnly"])
 
     def test_messages_ui_defers_pending_fifo_rows_below_active_output(self):
@@ -2581,6 +2589,8 @@ process.stdout.write(JSON.stringify({
         patch_end = APP_SOURCE.index("function scheduleStreamingAssistantPatch", patch_start)
         patch = APP_SOURCE[patch_start:patch_end]
         self.assertIn('streamKind === "thinking"', patch)
+        self.assertIn('if (streamKind === "pending")', patch)
+        self.assertIn("scheduleStreamingAnswerProjection(sessionId, index)", patch)
         self.assertIn('streamKind !== "answer" || !visibleContent', patch)
         self.assertIn('data-stream-part="summary"', patch)
         self.assertIn('msg._streamProjection === "thinking" && visibleContent', patch)
@@ -2589,6 +2599,7 @@ process.stdout.write(JSON.stringify({
         self.assertNotIn("appendChild(preservedNode)", APP_SOURCE)
 
         self.assertIn('_streamProjection: "pending"', APP_SOURCE)
+        self.assertIn("const STREAM_PROJECTION_GRACE_MS = 180", APP_SOURCE)
 
         render_start = APP_SOURCE.index("function renderMessages()")
         render_end = APP_SOURCE.index("function isProcessMessage", render_start)
@@ -2637,6 +2648,13 @@ process.stdout.write(JSON.stringify({
         self.assertIn(wrapper, INDEX_SOURCE)
         self.assertLess(INDEX_SOURCE.index('id="activeRunBanner"'), INDEX_SOURCE.index('id="chatForm"'))
 
+        message_list_start = STYLE_SOURCE.index(".message-list {")
+        message_list_end = STYLE_SOURCE.index("}", message_list_start)
+        message_list_rule = STYLE_SOURCE[message_list_start:message_list_end]
+        self.assertIn("display: block", message_list_rule)
+        self.assertIn("width: 100%", message_list_rule)
+        self.assertNotIn("display: contents", message_list_rule)
+
         render_start = APP_SOURCE.index("function renderMessages()")
         render_end = APP_SOURCE.index("function isProcessMessage", render_start)
         render = APP_SOURCE[render_start:render_end]
@@ -2651,6 +2669,9 @@ process.stdout.write(JSON.stringify({
         self.assertIn('data-active-run-anchor', MESSAGES_SOURCE)
         self.assertIn("projectMessages(msgs, { hasActiveRun, branchMarker })", render)
         self.assertLess(render.index("parkActiveRunBanner();\n  els.messageList.innerHTML = html"), render.index("mountActiveRunBanner();", render.index("els.messageList.innerHTML = html")))
+        mounted_index = render.index("mountActiveRunBanner();", render.index("els.messageList.innerHTML = html"))
+        self.assertLess(mounted_index, render.index("syncActiveRunBanner(state.sessionId);", mounted_index))
+        self.assertNotIn("syncActiveRunBanner(state.sessionId);", render[:render.index("if (state.messages.length === 0)")])
 
         helper_start = APP_SOURCE.index("function parkActiveRunBanner")
         helper_end = APP_SOURCE.index("function syncActiveRunBanner", helper_start)
@@ -2658,12 +2679,17 @@ process.stdout.write(JSON.stringify({
         self.assertIn("els.messages.appendChild(banner)", helper)
         self.assertIn("anchor.appendChild(banner)", helper)
 
+        timer_start = APP_SOURCE.index("function startLiveTimer()")
+        timer_end = APP_SOURCE.index("function finalizeRunTiming", timer_start)
+        self.assertNotIn("syncActiveRunBanner", APP_SOURCE[timer_start:timer_end])
+
         banner_start = STYLE_SOURCE.index(".active-run-banner {")
         banner_end = STYLE_SOURCE.index(".active-run-banner.visible", banner_start)
         banner = STYLE_SOURCE[banner_start:banner_end]
         self.assertIn("position: static", banner)
         self.assertIn("width: 100%", banner)
         self.assertNotIn("bottom:", banner)
+        self.assertIn(".messages > .active-run-banner", STYLE_SOURCE)
         self.assertNotIn("transform:", banner)
 
         line_start = STYLE_SOURCE.index(".active-run-line {")

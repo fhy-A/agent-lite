@@ -2696,8 +2696,31 @@ function createCompactSummaryMessage(result) {
 }
 
 const streamingRenderQueue = new Map();
+const streamingProjectionTimers = new Map();
+const STREAM_PROJECTION_GRACE_MS = 180;
 let streamingRenderFrame = 0;
 let messageRestoreScrollFrame = 0;
+
+function clearStreamingProjectionTimer(sessionId, index) {
+  const key = `${sessionId}:${index}`;
+  const timer = streamingProjectionTimers.get(key);
+  if (timer) clearTimeout(timer);
+  streamingProjectionTimers.delete(key);
+}
+
+function scheduleStreamingAnswerProjection(sessionId, index) {
+  const key = `${sessionId}:${index}`;
+  if (streamingProjectionTimers.has(key)) return;
+  const timer = setTimeout(() => {
+    streamingProjectionTimers.delete(key);
+    const current = getSessionMessages(sessionId)?.[index];
+    if (!current?.streaming || current._streamProjection !== "pending") return;
+    const content = (getMsgText(current) || "").trim();
+    if (!content || isToolPlanningPlaceholder(content)) return;
+    markStreamingAssistantProjection(index, "answer", sessionId);
+  }, STREAM_PROJECTION_GRACE_MS);
+  streamingProjectionTimers.set(key, timer);
+}
 
 function scheduleMessagesScrollToBottom(sessionId = state.sessionId) {
   if (!els.messages || !sessionId) return;
@@ -2733,6 +2756,10 @@ function patchStreamingAssistantMessage(sessionId, index) {
   }
 
   const streamKind = article.dataset.streamKind || "pending";
+  if (streamKind === "pending") {
+    if (visibleContent) scheduleStreamingAnswerProjection(sessionId, index);
+    return;
+  }
   const outputNode = article.querySelector(streamKind === "thinking"
     ? '[data-stream-part="summary"]'
     : '[data-stream-part="answer"]');
@@ -3229,7 +3256,6 @@ function renderMessages() {
 
   renderUserInputPanel();
   renderAuthorizationPanel();
-  syncActiveRunBanner(state.sessionId);
 
   // Ensure state.messages reflects current session (syncs ctx.messages changes)
   const curMsgs = getSessionMessages(state.sessionId);
@@ -3300,6 +3326,7 @@ function renderMessages() {
   const renderKey = `${state.sessionId || ""}:${stableHtml}`;
   if (state._lastRenderedHtml === renderKey) {
     mountActiveRunBanner();
+    syncActiveRunBanner(state.sessionId);
     renderToolLog();
     updateStatsPanel();
     renderTimeline();
@@ -3316,6 +3343,7 @@ function renderMessages() {
   parkActiveRunBanner();
   els.messageList.innerHTML = html;
   mountActiveRunBanner();
+  syncActiveRunBanner(state.sessionId);
 
   bindCopyButtons();
   bindMessageActions();
@@ -4781,10 +4809,6 @@ function startLiveTimer() {
 
   els.liveTimer.classList.remove("visible");
 
-  // Keep one task-level activity label for the full run. Only the timer changes,
-  // so short tool calls cannot make the status line flash between phases.
-  syncActiveRunBanner(state.sessionId);
-
   state._timerInterval = setInterval(() => {
 
     const run = ensureSessionRun(state.sessionId);
@@ -5124,6 +5148,7 @@ function markStreamingAssistantProjection(index, projection, sessionId = state.s
   const targetMessages = messages || getSessionMessages(sessionId);
   const current = targetMessages[index];
   if (!current?.streaming || current._streamProjection === projection) return;
+  clearStreamingProjectionTimer(sessionId, index);
   current._streamProjection = projection;
   if (!skipRender) {
     setSessionMessages(sessionId, targetMessages);
@@ -5133,6 +5158,7 @@ function markStreamingAssistantProjection(index, projection, sessionId = state.s
 
 function finalizeStreamingAssistantMessage(index, rawContent, toolCalls, sessionId = state.sessionId, messages = null, skipRender = false) {
   const targetMessages = messages || getSessionMessages(sessionId);
+  clearStreamingProjectionTimer(sessionId, index);
   // Finalize the text and tool metadata before one render. Rendering the text
   // first would briefly expose a tool-round summary as a final answer.
   updateAssistantMessage(index, rawContent, false, sessionId, targetMessages, true);

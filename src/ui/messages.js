@@ -264,11 +264,12 @@
       if (msg.streaming) {
         const hasVisibleContent = content && !isToolPlanningPlaceholder(content);
         const streamKind = msg._streamProjection === "answer" ? "answer" : "pending";
-        const showModel = streamKind === "answer" && hasVisibleContent;
+        const showContent = streamKind === "answer" && hasVisibleContent;
+        const showModel = showContent;
         return `
           <article class="msg assistant is-streaming${streamKind === "pending" ? " is-pending" : ""}" data-msg-index="${index}" data-streaming-message="true" data-stream-session="${escapeHtml(getSessionId() || "")}" data-stream-kind="${streamKind}">
             <div class="role streaming-answer-role${showModel ? "" : " is-empty"}" data-stream-role>${escapeHtml(model)}</div>
-            <div class="bubble streaming-answer-output${hasVisibleContent ? "" : " is-empty"}" data-stream-part="answer">${hasVisibleContent ? renderMarkdown(content) : ""}</div>
+            <div class="bubble streaming-answer-output${showContent ? "" : " is-empty"}" data-stream-part="answer">${showContent ? renderMarkdown(content) : ""}</div>
             ${renderNetworkRecoveryStatus(getSessionId())}
           </article>
         `;

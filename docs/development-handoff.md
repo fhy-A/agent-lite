@@ -1,23 +1,33 @@
-# Code 开发交接快照
+# 开发交接快照
 
-> 更新时间：2026-07-23
+> **上次更新**：<!-- FILL: YYYY-MM-DD -->
 >
-> 用途：为新任务提供最小、可核验的接手上下文。
+> **事实源**：`CHANGELOG.md`（已完成）和 `TODO.md`（未完成）是唯一事实源。本文件只做导航和模板——开始任何工作前必须先核对 Git 现场状态，与本文件冲突时以现场为准。
 >
-> 事实源：已完成改动以 [`../CHANGELOG.md`](../CHANGELOG.md) 为准，未完成事项以 [`../TODO.md`](../TODO.md) 为准。本文件只做导航；开始开发前必须重新核对 Git 状态和上述两份文档。
+> **使用方式**：每次任务交接时，填写下方的 `<!-- FILL: ... -->` 占位字段，其他内容保持不动。稳定章节只有在架构或规则真正变化时才修改。
+
+---
 
 ## 一、当前仓库状态
 
-- 项目目录：`C:\Users\Admin\Desktop\api中转站\code`
-- 当前分支：`master`
-- 本快照建立前的 HEAD：`b367307 feat: complete skill dependency collaboration flow`
-- 当前发布基线：Code v0.5.6
-- 本地服务入口：`server.py`，默认监听 `127.0.0.1:3010`
-- 前端仍以原生 JavaScript、HTML 和 CSS 为主，主状态保留在 `app.js`，部分功能已迁入 `src/`。
-- 模型平台和 Base URL 固定为 `https://workbar.ai`，前端不展示或编辑该地址。
-- 仓库根目录存在未跟踪的 `package.json` 和 `package-lock.json`。它们不属于最近已验收阶段，接手者不得擅自暂存、删除或覆盖。
+> 每次交接必填。运行以下命令获取最新值后填入：
+> ```powershell
+> git log -1 --oneline
+> git branch --show-current
+> git status --short
+> ```
 
-开始新任务后先执行：
+| 项目 | 值 |
+|------|-----|
+| 项目目录 | `C:\Users\Admin\Desktop\api中转站\code` |
+| 当前分支 | `<!-- FILL: master / main / feature-branch -->` |
+| HEAD 提交 | `<!-- FILL: git log -1 --oneline -->` |
+| 发布基线 | `<!-- FILL: vX.Y.Z -->` |
+| 未跟踪/未提交文件 | `<!-- FILL: 列出需要注意的未跟踪文件，无则写"无" -->` |
+
+### 快速校验命令
+
+任何 Agent 接手后先执行：
 
 ```powershell
 Set-Location "C:\Users\Admin\Desktop\api中转站\code"
@@ -27,96 +37,141 @@ git status --short
 git log -8 --oneline
 ```
 
-如果 Git 状态、HEAD 或待办已经变化，以现场结果为准，不要机械沿用本快照。
+---
 
-## 二、近期稳定基线
+## 二、项目不变量
 
-### Workbar 与设置
+> 以下描述项目的稳定架构、技术栈和核心约定。这些内容不常变化——只有在新功能改变了系统设计时才更新对应条目。
 
-- Code 必须通过 Workbar 授权后使用；登录认证、Key 同步和模型刷新已经重做。
-- 自动同步只合并 Workbar 侧实时 Key，不应覆盖用户手动维护的其他 Key；退出登录会清理授权、Key 和模型状态，不清理本地会话与项目文件。
-- 设置页已经完成导航分组、Workbar 账号信息、Key 列表、模型列表、主题与语言交互的主要重构。
-- 设置页固定文案和动态内容支持中英文即时切换；新增用户可见文本必须继续维护 `src/core/i18n.js`，不得在业务文件中新增局部语言字典。
+### 技术栈与入口
 
-### AgentRun、会话与消息
+| 项 | 说明 |
+|----|------|
+| 服务入口 | `server.py`，监听 `127.0.0.1:3010`（可通过 `CODE_PORT` 环境变量覆盖） |
+| 前端 | 原生 JavaScript / HTML / CSS，主状态在 `app.js`，部分功能已迁入 `src/` |
+| 打包 | PyInstaller 单文件 EXE（`build_exe.py`），入口 `launcher.py` |
+| 数据目录 | 正式 EXE 用 `%USERPROFILE%\.code\`，源码模式用 `data/` |
+| 模型网关 | 固定为 `https://workbar.ai`，前端不展示或编辑 Base URL |
 
-- 四种权限模式的新任务均由服务端持久 AgentRun 执行，浏览器负责创建、观察 SSE、问卷和授权交互。
-- 主任务运行时的普通新消息进入 FIFO 主队列；只有明确的并行操作才创建后台 AgentRun。排队消息保存发送时的模型、模式和思考强度快照。
-- 模型 `task` 工具会创建一层 Child AgentRun；同一模型轮次最多并发 3 个，不允许递归委托。
-- 会话使用 JSONL 持久化。分支会话复制父会话消息与累计统计，父子会话之后独立保存，并在界面显示分支关系。
-- 页面刷新、切换会话或新建会话不应取消其他正在运行的任务；恢复依赖稳定的 AgentRun ID、请求 ID 和事件游标。
+### 发版
+
+- **必须使用 `release.py`**，不得手动改版本号。用法详见 `docs/release-guide.md`。
+- Agent 发版加 `--yes`；推送或 Release 失败时立刻报告用户。
+
+### 协作规则（详见 `AGENTS.md` 和 `CLAUDE.md`）
+
+1. 一次只做一个阶段，不混入下一阶段功能。
+2. 先验证后提交：测试、语法检查、`git diff --check` 全过才提交。
+3. 视觉、时序、交互改动必须人工验收后才提交。
+4. 每阶段结束更新 `CHANGELOG.md` 和 `TODO.md`，独立 `git commit`。
+
+### i18n 约定
+
+- 所有浏览器端翻译统一在 `src/core/i18n.js`，不得在业务文件中新建局部语言字典。
+- 新增文案必须在 `zh` 和 `en` 区域用同一 key 成对添加。
+- 修改后运行 `node --check src/core/i18n.js` 和 `pytest tests/test_frontend_modules.py tests/test_p2_coverage.py -q`。
+
+### AgentRun 与会话
+
+- 四种权限模式的任务均由服务端持久 AgentRun 执行；浏览器负责 SSE 观察、问卷和授权交互。
+- 主任务运行时的新消息 FIFO 排队，不自动转为后台任务；明确并行操作（`/parallel`）才创建后台 AgentRun。
+- 模型 `task` 工具创建子 AgentRun，同一轮次最多并发 3 个，不可递归委托。
+- 会话使用 JSONL 持久化；分支会话复制父会话消息后独立保存。
+- 刷新/切换/新建会话不取消其他正在运行的 AgentRun。
 
 ### Skills 依赖管理
 
-- `dependencies.json` 已支持按能力声明 Python、Node 和系统依赖，并可从常见依赖文件、静态导入和明确安装说明中自动发现候选项。
-- Skill 首次使用会按具体能力预检。多能力 Skill 未指定能力时只能报告状态，不能批量安装全部能力依赖。
-- Python 与 Node 依赖只能在 Code 管理的隔离运行时中、经用户授权后安装；系统依赖只返回说明和 `installHint`，不由模型直接执行系统包管理器。
-- 已阻止系统安装器、包装安装脚本、PATH 修改、全局命令包装器和重复安装循环；相同安装命令最多尝试两次，安装超时上限为 300 秒。
-- DOCX Skill 已按创建、读取、渲染等能力分别报告状态，并为 Pandoc、LibreOffice、Poppler 提供 Windows 安装提示。
-- 当前尚缺设置页的安装、修复、卸载、进度和失败恢复入口，这是最适合继续完成的下一阶段。
+- `dependencies.json` 以能力为单位声明 Python/Node/系统依赖。
+- Python 与 Node 依赖只能在 Code 管理的隔离运行时（`data/runtime`）中、经用户授权后安装。
+- 系统级依赖只提供 `installHint`，不由模型直接执行系统包管理器。
+- 已阻止：`winget`/`choco`/`apt`、PATH 修改、全局包装器、相同命令重复执行超过两次。
 
-## 三、建议的下一阶段
+### 安全边界
 
-### 首选：Skill 依赖设置页操作闭环
+- Workbar Access Token、API Key、Authorization 头不得写入 AgentRun 状态、交接文档、测试输出或 Git。
+- 不得使用 `git reset --hard`、`git checkout --` 或其他破坏性命令处理共享工作区。
+- `data/` 包含本地会话、授权状态和备份；除非任务明确要求，不要批量清理。
+- Docker 构建优先使用 `--pull=false`。
 
-目标只覆盖设置页，不扩展新的依赖协议：
+---
 
-1. 对可由 Code 管理的 Python/Node 依赖提供“安装 / 修复 / 卸载”。
-2. 操作前展示目标能力、安装位置、命令摘要和授权范围。
-3. 展示进行中、完成、失败、取消和重新检查状态。
-4. 系统级依赖继续只显示安装说明，不提供一键执行。
-5. 操作完成后刷新该 Skill 的能力状态，不重新扫描无关页面或丢失当前选择。
-6. 补齐中英文文案、接口测试、前端状态测试和浏览器人工验收。
+## 三、本次交接备注
 
-验收时重点观察：重复点击、切换 Skill、切换语言、刷新页面、取消操作、安装失败后重试，以及已经安装的依赖是否被误删。
+> 每次交接填写。描述当前阶段目标、特殊注意事项、已知问题或临时约束。
 
-### 后续独立阶段
+### 当前建议推进
 
-- 统一委托 `Context Envelope`：为 Child AgentRun 和用户并行任务提供受预算、安全过滤、可恢复的上下文契约。
-- `app.js` 第四阶段拆分：迁移剩余高耦合的会话与运行时逻辑。
-- 错误分类与恢复建议、Skill 执行证据校验、Workbar Token/成本体验。
-- 结构化计划能力必须等 Context Envelope 稳定后再开始；Cron、Monitor、Workflow 和 worktree 隔离更晚评估。
+<!-- FILL: 从 TODO.md 中摘取本次最优先的 1-3 项任务，简要说明目标和边界 -->
 
-详细顺序见 [`agent-refactoring-execution-plan.md`](./agent-refactoring-execution-plan.md)。
+1. **<!-- FILL: 任务名 -->**：<!-- FILL: 目标和范围 -->
+2. **<!-- FILL: 任务名 -->**：<!-- FILL: 目标和范围 -->
 
-## 四、验证与提交规则
+### 特殊注意事项
 
-每个阶段遵循 [`../AGENTS.md`](../AGENTS.md) 的协作流程：
+<!-- FILL: 本次交接特有的警告、约束或背景信息。没有则写"无"。 -->
 
-1. 一次只做一个阶段，旁支问题不阻塞就写入 `TODO.md`。
-2. 先运行直接相关的定向测试，再按风险选择主测试集、语法检查和 `git diff --check`。
-3. 视觉、焦点、流式时序和浏览器差异必须交给用户人工确认，确认前不提交。
-4. 验收后更新 `CHANGELOG.md` 和 `TODO.md`，只暂存本阶段文件并独立提交。
-5. 最终报告测试结果、提交哈希和仍保留的未提交文件。
+### 已知阻塞
 
-常用检查：
+<!-- FILL: 当前有哪些阻塞项？依赖什么条件？没有则写"无"。 -->
+
+---
+
+## 四、验证流程
+
+每个阶段结束前必须完成以下验证，再提交。
+
+### 自动检查清单
 
 ```powershell
-python -m py_compile server.py skill_dependencies.py launcher.py
+# Python 编译检查（按实际改动选取文件）
+python -m py_compile server.py launcher.py build_exe.py
+
+# JavaScript 语法检查
 node --check app.js
+node --check agent-runtime.js
 node --check src/core/i18n.js
-python -m pytest tests/test_skill_dependencies.py tests/test_frontend_modules.py tests/test_server.py -q
+
+# 定向测试（按改动范围选取，以下为常用组合）
+python -m pytest tests/test_server.py tests/test_routes.py -q
+python -m pytest tests/test_frontend_modules.py tests/test_p2_coverage.py -q
+
+# 提交前最后一道检查
 git diff --check
 ```
 
-测试集合会继续变化，不能把本文件中的命令或历史数量当成固定基线。最近一次已记录验证结果请查阅 `CHANGELOG.md`。
+### 人工验收条件
 
-## 五、环境与安全注意事项
+以下情况必须交给用户人工确认，不能自行判定通过：
 
-- Workbar Access Token、API Key、Authorization 头和完整请求凭据不得写入 AgentRun、交接文档、测试输出或 Git。
-- `data/` 中包含本地会话、授权状态、运行检查点和备份；除非任务明确要求，不要批量清理。
-- 先前依赖调试曾在当前用户的 `%APPDATA%\npm` 下产生 `pandoc.cmd`、`soffice.cmd`、`pdftoppm.cmd` 包装器。为避免破坏当前机器已可用的依赖，它们未被自动删除；后续处理必须先确认真实目标并取得用户授权。
-- 不要用 `git reset --hard`、`git checkout --` 或其他破坏性操作处理共享工作区。
-- Windows 构建遵循已有 Dockerfile 和打包脚本；Docker 构建优先使用 `--pull=false`。
+- 视觉变更：布局、颜色、间距、动画
+- 交互变更：焦点行为、键盘导航、拖拽
+- 时序变更：流式显示、加载状态、通知时机
+- 浏览器差异：不同浏览器或窗口尺寸下的表现
 
-## 六、可直接粘贴到新任务的启动消息
+### 全量回归
+
+重大变更或发版前运行：
+
+```powershell
+python -m pytest tests -q
+```
+
+---
+
+## 五、新任务启动消息模板
+
+> 以下模板可直接粘贴给新 Agent。将 `{...}` 占位符替换为当前值后使用。
 
 ```text
-请接手 C:\Users\Admin\Desktop\api中转站\code 的后续开发。
+请接手 {项目目录} 的后续开发。
 
-开始前完整阅读 AGENTS.md、CHANGELOG.md、TODO.md 和 docs/development-handoff.md，并用 git status --short、git log -8 --oneline 核对现场状态。CHANGELOG.md 是已完成改动的事实源，TODO.md 是未完成事项的事实源；交接快照与现场冲突时以现场为准。
+开始前完整阅读 AGENTS.md、CHANGELOG.md、TODO.md 和 docs/development-handoff.md，
+并用 git status --short、git log -8 --oneline 核对现场状态。
+CHANGELOG.md 是已完成改动的事实源，TODO.md 是未完成事项的事实源；
+交接快照与现场冲突时以现场为准。
 
-当前建议先完成“Skill 依赖设置页操作闭环”：只增加隔离运行时内 Python/Node 依赖的安装、修复、卸载、进度与失败恢复；系统依赖继续只显示 installHint，禁止模型直接运行系统包管理器、修改 PATH 或创建全局包装器。保持现有依赖协议、首次使用预检、安全边界和中英文即时切换不退化。
+当前建议推进：{简要描述本次最优先任务}。
 
-仍有未跟踪的 package.json 与 package-lock.json，不要擅自暂存、删除或覆盖。一次只推进一个阶段；自动测试充分时自行验证、更新 CHANGELOG/TODO 并提交，涉及界面和时序时先给我人工测试步骤，等我确认后再提交。
+一次只推进一个阶段；自动测试充分时自行验证、更新 CHANGELOG/TODO 并提交；
+涉及界面和时序时先给出人工测试步骤，等确认后再提交。
 ```

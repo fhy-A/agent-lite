@@ -2942,16 +2942,22 @@ def _powershell_literal(value):
 
 
 def _build_update_script(current_exe, new_exe, log_path):
-    """Build the detached PowerShell updater used after the app exits."""
-    target_dir = Path(current_exe).resolve().parent
+    """Build the detached PowerShell updater used after the app exits.
+
+    Kills all running Code.exe instances, replaces the old executable
+    with the downloaded one, and launches the new version.
+    """
+    target_dir = (Path.home() / ".code").resolve()
     current_exe = Path(current_exe).resolve()
     new_exe = Path(new_exe).resolve()
+    partial_exe = new_exe.with_name("Code.exe.part").resolve()
     log_path = Path(log_path).resolve()
     return f"""
 $ErrorActionPreference = 'Stop'
 $targetDir = {_powershell_literal(target_dir)}
 $currentExe = {_powershell_literal(current_exe)}
 $newExe = {_powershell_literal(new_exe)}
+$partialExe = {_powershell_literal(partial_exe)}
 $logPath = {_powershell_literal(log_path)}
 
 function Write-UpdateLog([string]$message) {{
@@ -2970,7 +2976,7 @@ try {{
         $agents = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {{
             $_.ExecutablePath -and
             ([IO.Path]::GetDirectoryName($_.ExecutablePath) -ieq $targetDir) -and
-            ($_.Name -match '^Code-v[0-9.]+[.]exe$')
+            ($_.Name -eq 'Code.exe')
         }})
         foreach ($agent in $agents) {{
             Stop-Process -Id $agent.ProcessId -Force -ErrorAction SilentlyContinue
@@ -2979,26 +2985,23 @@ try {{
         Start-Sleep -Milliseconds 500
     }} while ((Get-Date) -lt $deadline)
 
-    if (-not (Test-Path -LiteralPath $newExe -PathType Leaf)) {{
-        throw "downloaded executable does not exist: $newExe"
+    # Replace the old executable with the downloaded partial.
+    if (Test-Path -LiteralPath $partialExe -PathType Leaf) {{
+        Move-Item -LiteralPath $partialExe -Destination $newExe -Force
+        Write-UpdateLog "replaced executable: $newExe"
+    }} elseif (-not (Test-Path -LiteralPath $newExe -PathType Leaf)) {{
+        throw "neither partial nor final executable found"
     }}
 
-    # Keep the downloaded versioned executable and remove every older build.
-    $oldFiles = @(Get-ChildItem -LiteralPath $targetDir -Filter 'Code-v*.exe' -File | Where-Object {{
-        $_.FullName -ine $newExe
-    }})
+    # Clean up any leftover versioned builds from the pre-Code.exe era.
+    $oldFiles = @(Get-ChildItem -LiteralPath $targetDir -Filter 'Code-v*.exe' -File -ErrorAction SilentlyContinue)
     foreach ($oldFile in $oldFiles) {{
-        $deleted = $false
-        for ($attempt = 0; $attempt -lt 10; $attempt++) {{
-            try {{
-                Remove-Item -LiteralPath $oldFile.FullName -Force -ErrorAction Stop
-                $deleted = $true
-                break
-            }} catch {{
-                Start-Sleep -Milliseconds 500
-            }}
+        try {{
+            Remove-Item -LiteralPath $oldFile.FullName -Force -ErrorAction Stop
+            Write-UpdateLog "cleaned up old versioned file: $($oldFile.Name)"
+        }} catch {{
+            Write-UpdateLog "warning: could not remove $($oldFile.Name)"
         }}
-        if (-not $deleted) {{ throw "failed to delete old executable: $($oldFile.FullName)" }}
     }}
 
     # The old server is already gone, so explicitly tell the new launcher that
@@ -8083,15 +8086,14 @@ class CodeHandler(BaseHTTPRequestHandler):
         if not url:
             self.send_json({"error": "No download URL provided"}, 400)
             return
-        target_dir = Path(sys.executable).parent if getattr(sys, 'frozen', False) else (APP_DIR / "dist")
+        # Download to the permanent installation directory.
+        if getattr(sys, 'frozen', False):
+            target_dir = Path.home() / ".code"
+        else:
+            target_dir = APP_DIR / "dist"
         target_dir.mkdir(parents=True, exist_ok=True)
-        # Use versioned filename: Code-v1.2.3.exe
-        ver_tag = "update"
-        m = re.search(r'Code-v([\d.]+)\.exe', url)
-        if m:
-            ver_tag = m.group(1)
-        new_exe = target_dir / f"Code-v{ver_tag}.exe"
-        partial_exe = new_exe.with_suffix(new_exe.suffix + ".part")
+        new_exe = target_dir / "Code.exe"
+        partial_exe = target_dir / "Code.exe.part"
         download_id = str(uuid.uuid4())
         state = {"progress": 0, "done": False, "error": None, "path": str(new_exe), "total": 0}
         _active_downloads[download_id] = state
@@ -8106,7 +8108,6 @@ class CodeHandler(BaseHTTPRequestHandler):
                 request.urlretrieve(url, str(partial_exe), reporthook=_report)
                 if not _is_valid_windows_executable(partial_exe):
                     raise ValueError("Downloaded file is not a valid Windows executable")
-                os.replace(partial_exe, new_exe)
                 state["done"] = True
                 state["progress"] = 100
             except Exception as e:
@@ -8150,15 +8151,15 @@ class CodeHandler(BaseHTTPRequestHandler):
             return
         current_exe = Path(sys.executable).resolve()
         new_exe = Path(new_exe_path).resolve()
-        expected_name = re.compile(r'^Code-v[0-9]+(?:[.][0-9]+)*[.]exe$', re.IGNORECASE)
-        if new_exe.parent != current_exe.parent or not expected_name.match(new_exe.name):
-            self.send_json({"error": "Update executable must be a versioned Code file in the installation directory"}, 400)
+        target_dir = (Path.home() / ".code").resolve()
+        if new_exe.parent != target_dir or new_exe.name.lower() != "code.exe":
+            self.send_json({"error": "Update executable must be Code.exe inside the .code directory"}, 400)
             return
         if new_exe == current_exe:
             self.send_json({"error": "Downloaded version is already running"}, 400)
             return
         if not _is_valid_windows_executable(new_exe):
-            self.send_json({"error": "Update file not found"}, 400)
+            self.send_json({"error": "Update file not found or invalid"}, 400)
             return
         log_path = DATA_DIR / "update.log"
         ps_script = _build_update_script(current_exe, new_exe, log_path)

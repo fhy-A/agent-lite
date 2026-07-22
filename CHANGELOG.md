@@ -14,6 +14,17 @@
 
 ---
 
+## 2026-07-23 · Claude Code
+
+### 2026-07-23 05:23 Code：自动发版脚本与发版指南
+
+- **自动发版脚本 `release.py`**：7 阶段自动化——版本号同步（VERSION / file_version_info.txt / README.md / .spec）→ 一致性校验 → 全量测试 + 语法检查 → PyInstaller 构建 EXE → EXE 元数据校验 + SHA-256 → 生成发布说明 → Git 提交打标签 → 推送 + GitHub Release。任何步骤失败立即停止并给出明确错误信息和补救命令。
+- **Agent 友好**：`--yes` / `-y` 参数跳过所有交互确认，供 AI Agent 调用；`--dry-run` 预演模式只检查不改文件；`--skip-tests` 在刚跑过测试时跳过。
+- **发版指南 `docs/release-guide.md`**：覆盖人工发版完整流程、AI Agent 使用限制、脚本不可用时的手动 9 步清单、版本号规则、相关文件索引。
+- **Agent 文档更新**：`AGENTS.md`、`CLAUDE.md`、`docs/development-handoff.md` 均已加入发版脚本引用和使用规范；交接快照的"建议下一阶段"更新为当前 P1 优先事项。
+
+**涉及文件**：`release.py`、`docs/release-guide.md`、`AGENTS.md`、`CLAUDE.md`、`docs/development-handoff.md`、`CHANGELOG.md`
+
 ## 2026-07-23 · Codex
 
 ### 2026-07-23 04:35 Code：Skill 依赖设置页操作闭环（隔离运行时）

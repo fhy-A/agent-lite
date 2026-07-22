@@ -3,6 +3,7 @@ Code launcher — entry point for PyInstaller bundle.
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import webbrowser
@@ -30,9 +31,6 @@ def kill_existing():
     protected_pids = {os.getpid(), os.getppid()}
     killed = 0
     try:
-        # Formal builds are versioned (Code-v0.4.12.exe), so querying only
-        # Code.exe misses the processes that users actually run. CIM also
-        # gives us a stable PID-only output that is easier to parse than WMIC.
         script = r"""
 Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
     ($_.Name -match '^Code(?:-v[0-9.]+)?[.]exe$') -or
@@ -67,6 +65,105 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
     return killed
 
 
+def get_code_home():
+    """Return the Code installation directory: %USERPROFILE%\\.code"""
+    return Path.home() / ".code"
+
+
+def get_code_exe():
+    """Return the expected path for the permanent Code executable."""
+    return get_code_home() / "Code.exe"
+
+
+def create_desktop_shortcut(target_exe):
+    """Create or update a desktop shortcut pointing to *target_exe*.
+
+    Uses PowerShell + WScript.Shell to produce a proper .lnk file.
+    Failures are non-fatal — the tray menu already has a restart entry.
+    """
+    if os.name != "nt":
+        return False
+    target_exe = Path(target_exe).resolve()
+    target_dir = target_exe.parent
+    ps_script = (
+        "$desktop = [Environment]::GetFolderPath('Desktop');"
+        "$lnk = Join-Path $desktop 'Code.lnk';"
+        "$ws = New-Object -ComObject WScript.Shell;"
+        "$s = $ws.CreateShortcut($lnk);"
+        "$s.TargetPath = '{target}';"
+        "$s.WorkingDirectory = '{workdir}';"
+        "$s.IconLocation = '{icon}';"
+        "$s.Description = 'Code - AI Coding Assistant';"
+        "$s.Save();"
+        "Write-Output 'ok'"
+    ).format(
+        target=str(target_exe).replace("'", "''"),
+        workdir=str(target_dir).replace("'", "''"),
+        icon=str(target_exe).replace("'", "''"),
+    )
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return result.returncode == 0 and "ok" in result.stdout
+    except Exception:
+        return False
+
+
+def ensure_installed():
+    """Make sure the current executable lives under %USERPROFILE%\\.code\\Code.exe.
+
+    On first run from a downloaded location (Desktop, Downloads, etc.) the
+    launcher copies itself to the permanent home, creates a desktop shortcut,
+    and relaunches from there.  In dev mode (not frozen) this is a no-op.
+    """
+    if not getattr(sys, 'frozen', False):
+        return
+
+    current = Path(sys.executable).resolve()
+    target_dir = get_code_home()
+    target_exe = get_code_exe()
+
+    # Already running from the permanent location.
+    if current == target_exe.resolve():
+        return
+
+    # Already under .code\ but under a different name (e.g. leftover
+    # versioned build).  Let it run — the next update converges to Code.exe.
+    if current.parent == target_dir:
+        return
+
+    # First run from a temporary location (e.g. Downloads\Code-v0.5.8.exe).
+    print(f"Installing Code to {target_exe} ...")
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy ourselves into place.
+    try:
+        shutil.copy2(current, target_exe)
+        print("  Copied executable.")
+    except OSError as exc:
+        print(f"  Copy failed: {exc}")
+        print("  Please move the file manually to: " + str(target_exe))
+        return
+
+    # Create (or update) the desktop shortcut.
+    if create_desktop_shortcut(target_exe):
+        print("  Desktop shortcut created.")
+    else:
+        print("  Desktop shortcut creation skipped (non-fatal).")
+
+    # Launch the permanent copy, then exit.
+    subprocess.Popen(
+        [str(target_exe), "--reuse-browser"],
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+    )
+    os._exit(0)
+
+
 def get_base_dir():
     """Get the directory containing app files (handles PyInstaller bundle)."""
     if getattr(sys, 'frozen', False):
@@ -81,7 +178,6 @@ def migrate_old_data_dir():
     if not old_home.exists() or new_home.exists():
         return new_home
     try:
-        import shutil
         shutil.copytree(str(old_home), str(new_home), dirs_exist_ok=True)
         shutil.rmtree(str(old_home), ignore_errors=True)
         print(f"Migrated data: {old_home} -> {new_home}")
@@ -128,11 +224,16 @@ def _main():
     port = 3010
     had_browser = should_reuse_browser(port)
 
-    # Kill any existing Code processes before starting
+    # Kill any existing Code processes before starting.
     killed = kill_existing()
     if killed:
         import time
-        time.sleep(0.5)  # Wait for port to be released
+        time.sleep(0.5)
+
+    # On first run from a downloaded location, copy ourselves into
+    # %USERPROFILE%\\.code\\Code.exe, create a desktop shortcut, and
+    # relaunch from there.  In dev mode this is a no-op.
+    ensure_installed()
 
     base = get_base_dir()
     migrate_old_data_dir()
@@ -143,8 +244,7 @@ def _main():
     _ico_src = base / "code-icon.ico"
     _ico_dst = data_dir / "code-icon.ico"
     if _ico_src.exists():
-        import shutil as _shutil
-        _shutil.copy2(_ico_src, _ico_dst)
+        shutil.copy2(_ico_src, _ico_dst)
 
     # Copy bundled data files if this is first run
     bundled_data = base / "data"
@@ -153,12 +253,11 @@ def _main():
             src = bundled_data / sub
             dst = data_dir / sub
             if src.exists() and not any(dst.iterdir()):
-                import shutil as _shutil
                 for item in src.iterdir():
                     if item.is_file():
                         (dst / item.name).write_text(item.read_text(encoding="utf-8-sig"), encoding="utf-8")
                     elif item.is_dir():
-                        _shutil.copytree(item, dst / item.name)
+                        shutil.copytree(item, dst / item.name)
 
     # Set environment for server
     os.environ["CODE_PORT"] = "3010"

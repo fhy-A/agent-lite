@@ -3159,7 +3159,7 @@ def _build_tray_restart_script(process_id, command, working_dir):
     return (
         f"Wait-Process -Id {int(process_id)} -ErrorAction SilentlyContinue\n"
         f"Start-Process -FilePath {executable}{argument_clause} "
-        f"-WorkingDirectory {quote(working_dir)} -WindowStyle Hidden\n"
+        f"-WorkingDirectory {quote(working_dir)}\n"
     )
 
 

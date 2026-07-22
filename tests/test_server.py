@@ -430,7 +430,7 @@ class TestTrayRestart(unittest.TestCase):
         self.assertIn(f"-FilePath '{packaged_exe}'", script)
         self.assertIn("-ArgumentList @('--reuse-browser')", script)
         self.assertIn(f"-WorkingDirectory '{packaged_exe.parent}'", script)
-        self.assertIn("-WindowStyle Hidden", script)
+        self.assertNotIn("-WindowStyle Hidden", script)  # launcher hides its own console
         icon.stop.assert_called_once_with()
 
     def test_tray_menu_exposes_restart_action(self):

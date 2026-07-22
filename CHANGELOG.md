@@ -16,6 +16,15 @@
 
 ## 2026-07-23 · Codex
 
+### 2026-07-23 02:02 Code：建立跨任务开发交接快照
+
+- **最小接手上下文**：新增 `docs/development-handoff.md`，集中导航当前 Git 基线、近期稳定能力、Skills 依赖管理的推荐下一阶段、后续 Agent 路线、验证/提交规则及环境安全注意事项；明确 `CHANGELOG.md` 与 `TODO.md` 仍是唯一事实源，交接快照必须与现场 Git 状态复核。
+- **协作入口统一**：`AGENTS.md` 与 `CLAUDE.md` 增加交接快照入口，新任务可先快速定位，再回到事实源和实际代码确认，避免依赖超长历史会话或复制多个相互冲突的项目状态。
+- **可复制启动消息**：交接文档内附新任务启动提示词，明确保护未跟踪的 `package.json` / `package-lock.json`，并延续“一阶段一验证一提交”的协作模式。
+- **验证**：相对文档目标存在性检查与 `git diff --check` 通过；本阶段只修改 Markdown 文档，不涉及运行时代码。
+
+**涉及文件**：`docs/development-handoff.md`、`AGENTS.md`、`CLAUDE.md`、`CHANGELOG.md`
+
 ### 2026-07-23 01:47 Code：Skill 依赖协作闭环与模型选择启动恢复
 
 - **依赖发现与能力级预检**：扩展 `dependencies.json` 清单和设置页编辑、状态展示能力，并可从 `requirements`、`pyproject.toml`、`package.json`、Python/JavaScript/TypeScript 导入及 `SKILL.md` 中的明确安装命令自动识别候选依赖；多能力 Skill 必须指定能力后才进入安装流程，避免一次安装无关依赖。

@@ -2982,6 +2982,14 @@ try {{
         Start-Sleep -Milliseconds 500
     }} while ((Get-Date) -lt $deadline)
 
+    # If the target .exe is missing but a valid .exe.part exists, complete the rename.
+    if (-not (Test-Path -LiteralPath $newExe -PathType Leaf)) {{
+        $partial = "$newExe.part"
+        if ((Test-Path -LiteralPath $partial -PathType Leaf) -and ((Get-Item -LiteralPath $partial).Length -gt 1048576)) {{
+            Write-UpdateLog "completing partial rename: $partial -> $newExe"
+            Move-Item -LiteralPath $partial -Destination $newExe -Force
+        }}
+    }}
     if (-not (Test-Path -LiteralPath $newExe -PathType Leaf)) {{
         throw "downloaded executable does not exist: $newExe"
     }}
@@ -8091,11 +8099,29 @@ class CodeHandler(BaseHTTPRequestHandler):
                 request.urlretrieve(url, str(partial_exe), reporthook=_report)
                 if not _is_valid_windows_executable(partial_exe):
                     raise ValueError("Downloaded file is not a valid Windows executable")
-                os.replace(partial_exe, new_exe)
+                # os.replace can fail transiently due to antivirus locks;
+                # retry a few times with a short delay before giving up.
+                rename_ok = False
+                last_err = None
+                for attempt in range(5):
+                    try:
+                        os.replace(partial_exe, new_exe)
+                        rename_ok = True
+                        break
+                    except OSError as e:
+                        last_err = e
+                        time.sleep(0.5)
+                if not rename_ok:
+                    # Keep the .part file — it is a valid download and can be
+                    # renamed manually.  The frontend will show the error so the
+                    # user knows to rename Code-vX.exe.part → Code-vX.exe.
+                    raise OSError(f"os.replace failed after retries: {last_err}")
                 state["done"] = True
                 state["progress"] = 100
             except Exception as e:
                 state["error"] = str(e)
+                # Keep the .part on rename failures so the user doesn't have to
+                # re-download; only delete it for truly broken downloads.
                 partial_exe.unlink(missing_ok=True)
 
         t = threading.Thread(target=_do_download, daemon=True)
@@ -8143,6 +8169,16 @@ class CodeHandler(BaseHTTPRequestHandler):
         if new_exe == current_exe:
             self.send_json({"error": "Downloaded version is already running"}, 400)
             return
+        # If the .exe is missing but a valid .exe.part exists, complete the rename.
+        # This recovers from os.replace failures (e.g. transient antivirus locks).
+        if not new_exe.is_file():
+            partial = new_exe.with_suffix(new_exe.suffix + ".part")
+            if partial.is_file() and _is_valid_windows_executable(partial):
+                try:
+                    os.replace(partial, new_exe)
+                except OSError:
+                    # Last resort: the PS updater can also handle the .part
+                    pass
         if not _is_valid_windows_executable(new_exe):
             self.send_json({"error": "Update file not found or invalid"}, 400)
             return
@@ -8288,8 +8324,31 @@ class CodeHandler(BaseHTTPRequestHandler):
         print("%s - %s" % (self.address_string(), fmt % args))
 
 
+def _complete_orphaned_parts(target_dir=None):
+    """On startup, look for orphaned .part files and complete their rename.
+
+    This handles the case where a previous update download completed but
+    os.replace failed (e.g. antivirus lock)."""
+    if target_dir is None:
+        target_dir = Path.home() / ".code"
+    if not target_dir.is_dir():
+        return
+    for part in sorted(target_dir.glob("Code-v*.exe.part")):
+        target = part.with_suffix("")
+        if target.exists():
+            part.unlink(missing_ok=True)
+            continue
+        if _is_valid_windows_executable(part):
+            try:
+                os.replace(part, target)
+                print(f"[startup] completed rename: {part.name} -> {target.name}")
+            except OSError as e:
+                print(f"[startup] rename failed, will retry next startup: {part.name} ({e})")
+
+
 if __name__ == "__main__":
     os.chdir(APP_DIR)
+    _complete_orphaned_parts()
 
     # Kill any existing Code process using our port
     import subprocess as _sp

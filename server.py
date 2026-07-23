@@ -3084,58 +3084,55 @@ def _create_tray_icon(port, server_ref=None, img=None):
         if icon:
             icon.stop()
 
-    def on_restart(icon=None, item=None):
-        global _tray_restart_pending
-        if _tray_restart_pending:
-            return
-        _tray_restart_pending = True
+    items = [pystray.MenuItem("Open Code", on_open, default=True)]
 
-        def restart_worker():
+    # The tray restart item is only available in dev mode —
+    # PowerShell Start-Process conflicts with PyInstaller's bootloader.
+    if not getattr(sys, "frozen", False):
+        def on_restart(icon=None, item=None):
             global _tray_restart_pending
-            try:
-                _restart_code_process(server_ref, icon)
-            except Exception as exc:
-                _tray_restart_pending = False
-                print(f"Failed to restart Code: {exc}")
+            if _tray_restart_pending:
+                return
+            _tray_restart_pending = True
 
-        threading.Thread(
-            target=restart_worker,
-            daemon=True,
-            name="tray-restart",
-        ).start()
+            def restart_worker():
+                global _tray_restart_pending
+                try:
+                    _restart_code_process(server_ref, icon)
+                except Exception as exc:
+                    _tray_restart_pending = False
+                    print(f"Failed to restart Code: {exc}")
 
-    menu = pystray.Menu(
-        pystray.MenuItem("Open Code", on_open, default=True),
-        pystray.MenuItem("Restart Code", on_restart),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Exit", on_exit),
-    )
+            threading.Thread(
+                target=restart_worker,
+                daemon=True,
+                name="tray-restart",
+            ).start()
+
+        items.append(pystray.MenuItem("Restart Code", on_restart))
+
+    items.append(pystray.Menu.SEPARATOR)
+    items.append(pystray.MenuItem("Exit", on_exit))
+
+    menu = pystray.Menu(*items)
     return CodeTrayIcon("Code", img, "Code", menu)
 
 
 def _restart_code_process(server_ref=None, icon=None):
-    """Schedule relaunch after this process exits, then stop server and tray."""
-    if getattr(sys, "frozen", False):
-        command = [sys.executable, "--reuse-browser"]
-        working_dir = Path(sys.executable).resolve().parent
-    else:
-        command = [sys.executable, str((APP_DIR / "server.py").resolve())]
-        working_dir = APP_DIR
-
-    script = _build_tray_restart_script(os.getpid(), command, working_dir)
-    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    """Schedule dev-mode relaunch after this process exits, then stop server."""
+    command = [sys.executable, str((APP_DIR / "server.py").resolve())]
+    working_dir = str(APP_DIR)
+    ps_script = (
+        f"Wait-Process -Id {os.getpid()} -ErrorAction SilentlyContinue\n"
+        f"Start-Process -FilePath '{command[0]}' "
+        f"-ArgumentList '{command[1]}' "
+        f"-WorkingDirectory '{working_dir}'\n"
+    )
+    encoded = base64.b64encode(ps_script.encode("utf-16-le")).decode("ascii")
     waiter = subprocess.Popen(
-        [
-            "powershell",
-            "-NoProfile",
-            "-NonInteractive",
-            "-WindowStyle",
-            "Hidden",
-            "-EncodedCommand",
-            encoded,
-        ],
+        ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
         close_fds=True,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
     )
     try:
         if server_ref:
@@ -3146,21 +3143,6 @@ def _restart_code_process(server_ref=None, icon=None):
         raise
     if icon:
         icon.stop()
-
-
-def _build_tray_restart_script(process_id, command, working_dir):
-    """Build a PowerShell waiter so old and new Code processes never overlap."""
-    def quote(value):
-        return "'" + str(value).replace("'", "''") + "'"
-
-    executable = quote(command[0])
-    arguments = ", ".join(quote(value) for value in command[1:])
-    argument_clause = f" -ArgumentList @({arguments})" if arguments else ""
-    return (
-        f"Wait-Process -Id {int(process_id)} -ErrorAction SilentlyContinue\n"
-        f"Start-Process -FilePath {executable}{argument_clause} "
-        f"-WorkingDirectory {quote(working_dir)}\n"
-    )
 
 
 def start_tray(port=3010, server_ref=None):

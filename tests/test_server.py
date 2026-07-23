@@ -404,8 +404,8 @@ class TestTrayRestart(unittest.TestCase):
             server._restart_code_process(server_ref, icon)
 
         powershell = popen.call_args.args[0]
-        self.assertEqual(powershell[:5], [
-            "powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+        self.assertEqual(powershell[:3], [
+            "powershell", "-NoProfile", "-NonInteractive",
         ])
         encoded = powershell[powershell.index("-EncodedCommand") + 1]
         script = base64.b64decode(encoded).decode("utf-16-le")
@@ -413,24 +413,6 @@ class TestTrayRestart(unittest.TestCase):
         self.assertIn(str((server.APP_DIR / "server.py").resolve()), script)
         server_ref.shutdown.assert_called_once_with()
         server_ref.server_close.assert_called_once_with()
-        icon.stop.assert_called_once_with()
-
-    def test_packaged_restart_reuses_browser_and_executable_directory(self):
-        server_ref = mock.Mock()
-        icon = mock.Mock()
-        packaged_exe = Path(r"C:\Program Files\Code\Code-v0.5.4.exe")
-        with mock.patch.object(server.sys, "frozen", True, create=True), \
-             mock.patch.object(server.sys, "executable", str(packaged_exe)), \
-             mock.patch.object(server.subprocess, "Popen") as popen:
-            server._restart_code_process(server_ref, icon)
-
-        powershell = popen.call_args.args[0]
-        encoded = powershell[powershell.index("-EncodedCommand") + 1]
-        script = base64.b64decode(encoded).decode("utf-16-le")
-        self.assertIn(f"-FilePath '{packaged_exe}'", script)
-        self.assertIn("-ArgumentList @('--reuse-browser')", script)
-        self.assertIn(f"-WorkingDirectory '{packaged_exe.parent}'", script)
-        self.assertNotIn("-WindowStyle Hidden", script)  # launcher hides its own console
         icon.stop.assert_called_once_with()
 
     def test_tray_menu_exposes_restart_action(self):

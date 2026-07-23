@@ -2941,79 +2941,68 @@ def _powershell_literal(value):
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def _build_update_script(current_exe, new_exe, log_path):
-    """Build the detached PowerShell updater used after the app exits.
+def _build_update_script(target_dir, new_exe, partial_exe, log_path):
+    """Build a batch-file updater that runs detached after the app exits.
 
-    Kills all running Code.exe instances, replaces the old executable
-    with the downloaded one, and launches the new version.
+    Returns the path to a temporary .bat file.  The caller spawns it via
+    ``cmd /c`` and then exits.
+
+    Uses only built-in Windows commands (taskkill, move, start) so the
+    relaunched process sees the same environment as an Explorer double-click.
+    PowerShell's Start-Process / CreateProcess was interfering with
+    PyInstaller's bootloader extraction at %TEMP%.
     """
-    target_dir = (Path.home() / ".code").resolve()
-    current_exe = Path(current_exe).resolve()
+    target_dir = Path(target_dir).resolve()
     new_exe = Path(new_exe).resolve()
-    partial_exe = new_exe.with_name("Code.exe.part").resolve()
+    partial_exe = Path(partial_exe).resolve()
     log_path = Path(log_path).resolve()
-    return f"""
-$ErrorActionPreference = 'Stop'
-$targetDir = {_powershell_literal(target_dir)}
-$currentExe = {_powershell_literal(current_exe)}
-$newExe = {_powershell_literal(new_exe)}
-$partialExe = {_powershell_literal(partial_exe)}
-$logPath = {_powershell_literal(log_path)}
 
-function Write-UpdateLog([string]$message) {{
-    $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $message"
-    Add-Content -LiteralPath $logPath -Value $line -Encoding UTF8
-}}
+    import tempfile as _tempfile
+    fd, bat_path = _tempfile.mkstemp(suffix=".bat", prefix="code-update-")
+    with os.fdopen(fd, "w") as _bat:
+        _bat.write(f"""@echo off
+setlocal enabledelayedexpansion
+set "targetDir={target_dir}"
+set "newExe={new_exe}"
+set "partialExe={partial_exe}"
+set "logPath={log_path}"
+echo %date% %time% update started >> "%logPath%"
+timeout /t 2 /nobreak >nul
 
-try {{
-    Write-UpdateLog "update started: $currentExe -> $newExe"
-    Start-Sleep -Seconds 1
+:: Kill all Code.exe processes in the install directory.
+for /l %%i in (1,1,40) do (
+    set "found="
+    for /f "tokens=2" %%p in ('tasklist /fi "IMAGENAME eq Code.exe" /fo csv /nh 2^>nul') do (
+        set "pid=%%~p"
+        if defined pid (
+            taskkill /pid !pid! /f >nul 2>&1
+            set "found=1"
+        )
+    )
+    if not defined found goto :replace
+    timeout /t 1 /nobreak >nul
+)
 
-    # Stop every packaged Code instance from this installation folder,
-    # including both PyInstaller parent and child processes.
-    $deadline = (Get-Date).AddSeconds(20)
-    do {{
-        $agents = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {{
-            $_.ExecutablePath -and
-            ([IO.Path]::GetDirectoryName($_.ExecutablePath) -ieq $targetDir) -and
-            ($_.Name -eq 'Code.exe')
-        }})
-        foreach ($agent in $agents) {{
-            Stop-Process -Id $agent.ProcessId -Force -ErrorAction SilentlyContinue
-        }}
-        if ($agents.Count -eq 0) {{ break }}
-        Start-Sleep -Milliseconds 500
-    }} while ((Get-Date) -lt $deadline)
+:replace
+if exist "%partialExe%" (
+    move /y "%partialExe%" "%newExe%" >nul 2>&1
+    echo %date% %time% replaced executable >> "%logPath%"
+) else if not exist "%newExe%" (
+    echo %date% %time% neither partial nor final executable found >> "%logPath%"
+    exit /b 1
+)
 
-    # Replace the old executable with the downloaded partial.
-    if (Test-Path -LiteralPath $partialExe -PathType Leaf) {{
-        Move-Item -LiteralPath $partialExe -Destination $newExe -Force
-        Write-UpdateLog "replaced executable: $newExe"
-    }} elseif (-not (Test-Path -LiteralPath $newExe -PathType Leaf)) {{
-        throw "neither partial nor final executable found"
-    }}
+:: Clean up leftover versioned builds from the pre-Code.exe era.
+for %%f in ("%targetDir%\\Code-v*.exe") do (
+    del /f "%%f" >nul 2>&1
+    if not errorlevel 1 echo %date% %time% cleaned up: %%~nxf >> "%logPath%"
+)
 
-    # Clean up any leftover versioned builds from the pre-Code.exe era.
-    $oldFiles = @(Get-ChildItem -LiteralPath $targetDir -Filter 'Code-v*.exe' -File -ErrorAction SilentlyContinue)
-    foreach ($oldFile in $oldFiles) {{
-        try {{
-            Remove-Item -LiteralPath $oldFile.FullName -Force -ErrorAction Stop
-            Write-UpdateLog "cleaned up old versioned file: $($oldFile.Name)"
-        }} catch {{
-            Write-UpdateLog "warning: could not remove $($oldFile.Name)"
-        }}
-    }}
-
-    # Use cmd /c start (ShellExecuteEx, same as a double-click in Explorer)
-    # instead of PowerShell's Start-Process (CreateProcess).  The latter can
-    # interfere with PyInstaller's bootloader extraction at %TEMP%.
-    & cmd /c start "" $newExe '--reuse-browser'
-    Write-UpdateLog "update completed and new version started: $newExe"
-}} catch {{
-    Write-UpdateLog "update failed: $($_.Exception.Message)"
-    exit 1
-}}
-""".strip()
+start "" "%newExe%" --reuse-browser
+echo %date% %time% update completed >> "%logPath%"
+del "%~f0" & exit
+""")
+    return bat_path
 
 
 def _load_tray_icon():
@@ -8148,14 +8137,15 @@ class CodeHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "Update file not found or invalid"}, 400)
             return
         log_path = DATA_DIR / "update.log"
-        ps_script = _build_update_script(current_exe, new_exe, log_path)
-        encoded = base64.b64encode(ps_script.encode("utf-16-le")).decode("ascii")
+        bat_path = _build_update_script(target_dir, new_exe, partial_exe, log_path)
         self.send_json({"ok": True, "nextExecutable": str(new_exe)})
-        # Launch PowerShell detached and exit immediately
+        # Launch detached batch file and exit immediately.
+        # cmd /c start -> ShellExecuteEx = same as Explorer double-click.
         subprocess.Popen(
-            ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+            ["cmd", "/c", str(bat_path)],
             creationflags=0x08000000,  # CREATE_NO_WINDOW
             close_fds=True,
+            cwd=str(target_dir),
         )
         os._exit(0)
 

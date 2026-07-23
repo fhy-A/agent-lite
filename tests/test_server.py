@@ -178,18 +178,22 @@ class TestUpdaterHelpers(unittest.TestCase):
             bad.write_text("<html>download failed</html>", encoding="utf-8")
             self.assertFalse(server._is_valid_windows_executable(bad))
 
-    def test_update_script_keeps_new_name_and_removes_old_versions(self):
-        root = Path(r"C:\Code")
-        old_exe = root / "Code-v1.2.2.exe"
-        new_exe = root / "Code-v1.2.3.exe"
-        script = server._build_update_script(old_exe, new_exe, root / "update.log")
-        self.assertIn("Get-CimInstance Win32_Process", script)
-        self.assertIn("Stop-Process", script)
-        self.assertIn("Get-ChildItem", script)
-        self.assertIn("Remove-Item", script)
-        self.assertIn("& cmd /c start", script)
-        self.assertIn("--reuse-browser", script)
-        self.assertNotIn("Copy-Item", script)
+    def test_update_script_uses_batch_file_with_native_commands(self):
+        target_dir = Path(r"C:\Code")
+        new_exe = target_dir / "Code.exe"
+        partial_exe = target_dir / "Code.exe.part"
+        log_path = target_dir / "update.log"
+        bat_path = server._build_update_script(target_dir, new_exe, partial_exe, log_path)
+        try:
+            content = Path(bat_path).read_text(encoding="utf-8")
+            self.assertIn("taskkill", content)
+            self.assertIn("move /y", content)
+            self.assertIn('start "" "%newExe%" --reuse-browser', content)
+            self.assertNotIn("Copy-Item", content)
+            self.assertNotIn("Start-Process", content)
+            self.assertNotIn("PowerShell", content.upper())
+        finally:
+            Path(bat_path).unlink(missing_ok=True)
 
     def test_check_update_detects_newer_release(self):
         handler = object.__new__(server.CodeHandler)

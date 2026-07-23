@@ -3004,9 +3004,10 @@ try {{
         }}
     }}
 
-    # The old server is already gone, so explicitly tell the new launcher that
-    # an existing page is waiting and should refresh instead of opening a tab.
-    Start-Process -FilePath $newExe -ArgumentList '--reuse-browser' -WorkingDirectory $targetDir
+    # Use cmd /c start (ShellExecuteEx, same as a double-click in Explorer)
+    # instead of PowerShell's Start-Process (CreateProcess).  The latter can
+    # interfere with PyInstaller's bootloader extraction at %TEMP%.
+    & cmd /c start "" $newExe '--reuse-browser'
     Write-UpdateLog "update completed and new version started: $newExe"
 }} catch {{
     Write-UpdateLog "update failed: $($_.Exception.Message)"

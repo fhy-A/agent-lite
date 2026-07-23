@@ -187,8 +187,8 @@ class TestUpdaterHelpers(unittest.TestCase):
         self.assertIn("Stop-Process", script)
         self.assertIn("Get-ChildItem", script)
         self.assertIn("Remove-Item", script)
-        self.assertIn("Start-Process -FilePath $newExe", script)
-        self.assertIn("-ArgumentList '--reuse-browser'", script)
+        self.assertIn("& cmd /c start", script)
+        self.assertIn("--reuse-browser", script)
         self.assertNotIn("Copy-Item", script)
 
     def test_check_update_detects_newer_release(self):

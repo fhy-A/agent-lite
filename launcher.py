@@ -70,16 +70,11 @@ def get_code_home():
     return Path.home() / ".code"
 
 
-def get_code_exe():
-    """Return the expected path for the permanent Code executable."""
-    return get_code_home() / "Code.exe"
-
-
 def create_desktop_shortcut(target_exe):
     """Create or update a desktop shortcut pointing to *target_exe*.
 
     Uses PowerShell + WScript.Shell to produce a proper .lnk file.
-    Failures are non-fatal — the tray menu already has a restart entry.
+    Failures are non-fatal.
     """
     if os.name != "nt":
         return False
@@ -115,53 +110,43 @@ def create_desktop_shortcut(target_exe):
 
 
 def ensure_installed():
-    """Make sure the current executable lives under %USERPROFILE%\\.code\\Code.exe.
+    """Make sure the current executable lives under %USERPROFILE%\\.code.
 
     On first run from a downloaded location (Desktop, Downloads, etc.) the
-    launcher copies itself to the permanent home, creates a desktop shortcut,
-    and relaunches from there.  In dev mode (not frozen) this is a no-op.
+    launcher copies itself to .code\\Code-v{version}.exe, creates a desktop
+    shortcut, and relaunches from there.  In dev mode this is a no-op.
+
+    On every startup from .code\\ the desktop shortcut is refreshed to point
+    to the currently running versioned executable.
     """
     if not getattr(sys, 'frozen', False):
         return
 
     current = Path(sys.executable).resolve()
     target_dir = get_code_home()
-    target_exe = get_code_exe()
 
-    # Already running from the permanent location.
-    if current == target_exe.resolve():
-        return
+    if current.parent != target_dir:
+        # First run from a temporary location — copy ourselves into .code\
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_exe = target_dir / current.name  # preserve versioned name
+        print(f"Installing Code to {target_exe} ...")
+        try:
+            shutil.copy2(current, target_exe)
+            print("  Copied executable.")
+        except OSError as exc:
+            print(f"  Copy failed: {exc}")
+            print("  Please move the file manually to: " + str(target_exe))
+            return
+        create_desktop_shortcut(target_exe)
+        subprocess.Popen(
+            [str(target_exe), "--reuse-browser"],
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+        )
+        os._exit(0)
 
-    # Already under .code\ but under a different name (e.g. leftover
-    # versioned build).  Let it run — the next update converges to Code.exe.
-    if current.parent == target_dir:
-        return
-
-    # First run from a temporary location (e.g. Downloads\Code-v0.5.8.exe).
-    print(f"Installing Code to {target_exe} ...")
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    # Copy ourselves into place.
-    try:
-        shutil.copy2(current, target_exe)
-        print("  Copied executable.")
-    except OSError as exc:
-        print(f"  Copy failed: {exc}")
-        print("  Please move the file manually to: " + str(target_exe))
-        return
-
-    # Create (or update) the desktop shortcut.
-    if create_desktop_shortcut(target_exe):
-        print("  Desktop shortcut created.")
-    else:
-        print("  Desktop shortcut creation skipped (non-fatal).")
-
-    # Launch the permanent copy, then exit.
-    subprocess.Popen(
-        [str(target_exe), "--reuse-browser"],
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
-    )
-    os._exit(0)
+    # Running from .code\\ — always keep the desktop shortcut pointed at us
+    # so it survives version bumps after an update.
+    create_desktop_shortcut(current)
 
 
 def get_base_dir():

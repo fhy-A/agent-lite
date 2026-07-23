@@ -2941,73 +2941,75 @@ def _powershell_literal(value):
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def _build_update_script(target_dir, new_exe, partial_exe, log_path):
-    """Build a batch-file updater that runs detached after the app exits.
+def _build_update_script(current_exe, new_exe, log_path):
+    """Build the detached PowerShell updater used after the app exits.
 
-    Returns the path to a temporary .bat file.  The caller spawns it via
-    ``cmd /c`` and then exits.
-
-    Uses only built-in Windows commands (taskkill, move, start) so the
-    relaunched process sees the same environment as an Explorer double-click.
-    PowerShell's Start-Process / CreateProcess was interfering with
-    PyInstaller's bootloader extraction at %TEMP%.
+    Both *current_exe* and *new_exe* are versioned Code-vX.Y.Z.exe files
+    inside the same installation directory.  The script kills every old
+    instance, removes stale versioned files, and launches the new build.
     """
-    target_dir = Path(target_dir).resolve()
+    target_dir = Path(current_exe).resolve().parent
+    current_exe = Path(current_exe).resolve()
     new_exe = Path(new_exe).resolve()
-    partial_exe = Path(partial_exe).resolve()
     log_path = Path(log_path).resolve()
+    return f"""
+$ErrorActionPreference = 'Stop'
+$targetDir = {_powershell_literal(target_dir)}
+$currentExe = {_powershell_literal(current_exe)}
+$newExe = {_powershell_literal(new_exe)}
+$logPath = {_powershell_literal(log_path)}
 
-    import tempfile as _tempfile
-    fd, bat_path = _tempfile.mkstemp(suffix=".bat", prefix="code-update-")
-    with os.fdopen(fd, "w") as _bat:
-        _bat.write(f"""@echo off
-setlocal enabledelayedexpansion
-set "targetDir={target_dir}"
-set "newExe={new_exe}"
-set "partialExe={partial_exe}"
-set "logPath={log_path}"
-echo %date% %time% update started >> "%logPath%"
-timeout /t 2 /nobreak >nul
+function Write-UpdateLog([string]$message) {{
+    $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $message"
+    Add-Content -LiteralPath $logPath -Value $line -Encoding UTF8
+}}
 
-:: Kill all Code.exe processes in the install directory.
-for /l %%i in (1,1,40) do (
-    set "found="
-    for /f "tokens=2" %%p in ('tasklist /fi "IMAGENAME eq Code.exe" /fo csv /nh 2^>nul') do (
-        set "pid=%%~p"
-        if defined pid (
-            taskkill /pid !pid! /f >nul 2>&1
-            set "found=1"
-        )
-    )
-    if not defined found goto :replace
-    timeout /t 1 /nobreak >nul
-)
+try {{
+    Write-UpdateLog "update started: $currentExe -> $newExe"
+    Start-Sleep -Seconds 1
 
-:replace
-if exist "%partialExe%" (
-    move /y "%partialExe%" "%newExe%" >nul 2>&1
-    echo %date% %time% replaced executable >> "%logPath%"
-) else if not exist "%newExe%" (
-    echo %date% %time% neither partial nor final executable found >> "%logPath%"
-    exit /b 1
-)
+    $deadline = (Get-Date).AddSeconds(20)
+    do {{
+        $agents = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {{
+            $_.ExecutablePath -and
+            ([IO.Path]::GetDirectoryName($_.ExecutablePath) -ieq $targetDir) -and
+            ($_.Name -match '^Code-v[0-9.]+[.]exe$')
+        }})
+        foreach ($agent in $agents) {{
+            Stop-Process -Id $agent.ProcessId -Force -ErrorAction SilentlyContinue
+        }}
+        if ($agents.Count -eq 0) {{ break }}
+        Start-Sleep -Milliseconds 500
+    }} while ((Get-Date) -lt $deadline)
 
-:: Clean up leftover versioned builds from the pre-Code.exe era.
-for %%f in ("%targetDir%\\Code-v*.exe") do (
-    del /f "%%f" >nul 2>&1
-    if not errorlevel 1 echo %date% %time% cleaned up: %%~nxf >> "%logPath%"
-)
+    if (-not (Test-Path -LiteralPath $newExe -PathType Leaf)) {{
+        throw "downloaded executable does not exist: $newExe"
+    }}
 
-:: Clear PyInstaller environment variables inherited from the parent
-:: process.  If _MEIPASS2 leaks into the new process the bootloader skips
-:: extraction and points to a temp directory that was already cleaned up.
-for /f "tokens=1 delims==" %%v in ('set _MEI 2^>nul') do set "%%v="
+    $oldFiles = @(Get-ChildItem -LiteralPath $targetDir -Filter 'Code-v*.exe' -File | Where-Object {{
+        $_.FullName -ine $newExe
+    }})
+    foreach ($oldFile in $oldFiles) {{
+        $deleted = $false
+        for ($attempt = 0; $attempt -lt 10; $attempt++) {{
+            try {{
+                Remove-Item -LiteralPath $oldFile.FullName -Force -ErrorAction Stop
+                $deleted = $true
+                break
+            }} catch {{
+                Start-Sleep -Milliseconds 500
+            }}
+        }}
+        if (-not $deleted) {{ throw "failed to delete old executable: $($oldFile.FullName)" }}
+    }}
 
-start "" "%newExe%" --reuse-browser
-echo %date% %time% update completed >> "%logPath%"
-del "%~f0" & exit
-""")
-    return bat_path
+    Start-Process -FilePath $newExe -ArgumentList '--reuse-browser' -WorkingDirectory $targetDir
+    Write-UpdateLog "update completed and new version started: $newExe"
+}} catch {{
+    Write-UpdateLog "update failed: $($_.Exception.Message)"
+    exit 1
+}}
+""".strip()
 
 
 def _load_tray_icon():
@@ -8063,14 +8065,18 @@ class CodeHandler(BaseHTTPRequestHandler):
         if not url:
             self.send_json({"error": "No download URL provided"}, 400)
             return
-        # Download to the permanent installation directory.
+        # Download to the permanent installation directory with a versioned name.
         if getattr(sys, 'frozen', False):
             target_dir = Path.home() / ".code"
         else:
             target_dir = APP_DIR / "dist"
         target_dir.mkdir(parents=True, exist_ok=True)
-        new_exe = target_dir / "Code.exe"
-        partial_exe = target_dir / "Code.exe.part"
+        ver_tag = "update"
+        m = re.search(r'Code-v([\d.]+)\.exe', url)
+        if m:
+            ver_tag = m.group(1)
+        new_exe = target_dir / f"Code-v{ver_tag}.exe"
+        partial_exe = new_exe.with_suffix(new_exe.suffix + ".part")
         download_id = str(uuid.uuid4())
         state = {"progress": 0, "done": False, "error": None, "path": str(new_exe), "total": 0}
         _active_downloads[download_id] = state
@@ -8129,25 +8135,25 @@ class CodeHandler(BaseHTTPRequestHandler):
         current_exe = Path(sys.executable).resolve()
         new_exe = Path(new_exe_path).resolve()
         target_dir = (Path.home() / ".code").resolve()
-        if new_exe.parent != target_dir or new_exe.name.lower() != "code.exe":
-            self.send_json({"error": "Update executable must be Code.exe inside the .code directory"}, 400)
+        expected_name = re.compile(r'^Code-v[0-9]+(?:[.][0-9]+)*[.]exe$', re.IGNORECASE)
+        if new_exe.parent != target_dir or not expected_name.match(new_exe.name):
+            self.send_json({"error": "Update executable must be a versioned Code file in the .code directory"}, 400)
             return
-        # With the fixed Code.exe name the new executable has the same path as
-        # the current one.  The actual update payload lives in Code.exe.part.
-        partial_exe = target_dir / "Code.exe.part"
-        if not partial_exe.exists():
-            self.send_json({"error": "No pending update found — download first"}, 400)
+        if new_exe == current_exe:
+            self.send_json({"error": "Downloaded version is already running"}, 400)
             return
-        if not _is_valid_windows_executable(partial_exe):
+        if not _is_valid_windows_executable(new_exe):
             self.send_json({"error": "Update file not found or invalid"}, 400)
             return
         log_path = DATA_DIR / "update.log"
-        bat_path = _build_update_script(target_dir, new_exe, partial_exe, log_path)
+        ps_script = _build_update_script(current_exe, new_exe, log_path)
+        encoded = base64.b64encode(ps_script.encode("utf-16-le")).decode("ascii")
         self.send_json({"ok": True, "nextExecutable": str(new_exe)})
-        # Use ShellExecute via os.startfile — the same API Explorer calls when
-        # you double-click.  subprocess.Popen / cmd / PowerShell all inherit
-        # PyInstaller's process environment and cause the bootloader to fail.
-        os.startfile(str(bat_path))
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+            creationflags=0x08000000,
+            close_fds=True,
+        )
         os._exit(0)
 
     def _handle_sync_keys(self):

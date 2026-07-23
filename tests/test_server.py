@@ -188,6 +188,7 @@ class TestUpdaterHelpers(unittest.TestCase):
             content = Path(bat_path).read_text(encoding="utf-8")
             self.assertIn("taskkill", content)
             self.assertIn("move /y", content)
+            self.assertIn("for /f", content)  # PyInstaller env var cleanup
             self.assertIn('start "" "%newExe%" --reuse-browser', content)
             self.assertNotIn("Copy-Item", content)
             self.assertNotIn("Start-Process", content)

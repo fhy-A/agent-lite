@@ -2998,6 +2998,11 @@ for %%f in ("%targetDir%\\Code-v*.exe") do (
     if not errorlevel 1 echo %date% %time% cleaned up: %%~nxf >> "%logPath%"
 )
 
+:: Clear PyInstaller environment variables inherited from the parent
+:: process.  If _MEIPASS2 leaks into the new process the bootloader skips
+:: extraction and points to a temp directory that was already cleaned up.
+for /f "tokens=1 delims==" %%v in ('set _MEI 2^>nul') do set "%%v="
+
 start "" "%newExe%" --reuse-browser
 echo %date% %time% update completed >> "%logPath%"
 del "%~f0" & exit

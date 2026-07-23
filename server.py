@@ -8091,6 +8091,7 @@ class CodeHandler(BaseHTTPRequestHandler):
                 request.urlretrieve(url, str(partial_exe), reporthook=_report)
                 if not _is_valid_windows_executable(partial_exe):
                     raise ValueError("Downloaded file is not a valid Windows executable")
+                os.replace(partial_exe, new_exe)
                 state["done"] = True
                 state["progress"] = 100
             except Exception as e:

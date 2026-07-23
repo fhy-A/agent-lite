@@ -8205,10 +8205,10 @@ class CodeHandler(BaseHTTPRequestHandler):
             self.send_json({"tokens": tokens, "keys": full_keys})
         except error.HTTPError as exc:
             status = 401 if exc.code in {401, 403} else 502
-            message = "Platform authorization is invalid" if status == 401 else "Workbar is unavailable"
+            message = "Platform authorization is invalid" if status == 401 else "workbar is unavailable"
             self.send_json({"error": message}, status)
         except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
-            self.send_json({"error": "Workbar is unavailable"}, 502)
+            self.send_json({"error": "workbar is unavailable"}, 502)
 
     def _handle_validate_code_auth(self):
         body = self.read_body_json()
@@ -8229,10 +8229,10 @@ class CodeHandler(BaseHTTPRequestHandler):
                 payload = json.loads(response.read().decode("utf-8"))
         except error.HTTPError as exc:
             status = 401 if exc.code in {401, 403} else 502
-            self.send_json({"error": "Platform authorization is invalid" if status == 401 else "Workbar is unavailable"}, status)
+            self.send_json({"error": "Platform authorization is invalid" if status == 401 else "workbar is unavailable"}, status)
             return
         except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
-            self.send_json({"error": "Workbar is unavailable"}, 502)
+            self.send_json({"error": "workbar is unavailable"}, 502)
             return
 
         if payload.get("success") is False or not isinstance(payload.get("data"), dict):

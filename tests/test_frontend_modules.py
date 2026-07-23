@@ -86,12 +86,12 @@ class TestFrontendCoreModules(unittest.TestCase):
         self.assertIn("refreshSkillsMemorySettingsLanguage,", APP_SOURCE)
 
     def test_account_page_refreshes_lazily_and_uses_safe_summary_fields(self):
-        self.assertIn('data-panel="account" data-i18n="platformAccount">Workbar 账号</button>', INDEX_SOURCE)
+        self.assertIn('data-panel="account" data-i18n="platformAccount">workbar 账号</button>', INDEX_SOURCE)
         self.assertIn("async function refreshPlatformAccount(container, auth)", SETTINGS_SOURCE)
         self.assertIn("if (refresh) refreshPlatformAccount(container, auth);", SETTINGS_SOURCE)
         self.assertIn("function formatAccountQuota(value, display = {})", SETTINGS_SOURCE)
-        self.assertIn('platformAccount: "Workbar 账号"', I18N_SOURCE)
-        self.assertIn('platformAccount: "Workbar Account"', I18N_SOURCE)
+        self.assertIn('platformAccount: "workbar 账号"', I18N_SOURCE)
+        self.assertIn('platformAccount: "workbar account"', I18N_SOURCE)
         for field in (
             "accountBalance",
             "accountUsedQuota",
@@ -1481,7 +1481,7 @@ const feature = window.Code.features.settings.createSettingsFeature({
             ".model-list-empty",
         ):
             self.assertIn(expected, STYLE_SOURCE)
-        self.assertIn('getFromWorkbar: "从 Workbar 获取"', I18N_SOURCE)
+        self.assertIn('getFromWorkbar: "从 workbar 获取"', I18N_SOURCE)
 
     def test_key_persistence_is_isolated_from_general_settings_and_syncs_across_tabs(self):
         save_start = APP_SOURCE.index("function saveLocalSettings()")
@@ -1572,7 +1572,7 @@ process.stdout.write(JSON.stringify({staleBrowserValueCleared, keyUpdated, edito
         self.assertTrue(data["keyUpdated"])
         self.assertTrue(data["editorUpdated"])
         self.assertEqual(data["reloads"], 1)
-        self.assertIn('syncKeysTitle: "选择 Workbar API Key"', I18N_SOURCE)
+        self.assertIn('syncKeysTitle: "选择 workbar API Key"', I18N_SOURCE)
         self.assertIn('allKeysAdded: "已启用的 API Key 均已在本地列表中"', I18N_SOURCE)
         self.assertIn('detectAvailableModels: "重新检测可用模型"', I18N_SOURCE)
         self.assertIn(".key-sync-note.is-complete::before", STYLE_SOURCE)

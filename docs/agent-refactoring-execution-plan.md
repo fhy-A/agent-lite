@@ -1,4 +1,4 @@
-# Code Agent 改造执行方案
+﻿# Code Agent 改造执行方案
 
 > 基于 [Codex / Claude Code Agent 设计分析报告](./codex-claude-code-agent-design-analysis.md)
 >
@@ -147,7 +147,7 @@
 
 - 默认传递结构化摘要和少量相关可见轮次，而不是完整消息数组。
 - 最近轮次必须过滤 UI 内部标记、错误恢复残留、重复工具投影和敏感字段。
-- API Key、Workbar access token、Authorization 头、请求原文凭据和隐藏推理永不进入 Envelope。
+- API Key、workbar access token、Authorization 头、请求原文凭据和隐藏推理永不进入 Envelope。
 - Envelope 有独立 Token 预算；超限时先压缩最近轮次，再减少文件证据，最后保留目标、决策和约束。
 - 只有用户明确要求完整上下文且预算允许时，才可使用 full 模式；full 仍要执行安全过滤。
 - Envelope 版本写入 AgentRun，便于恢复、测试和以后迁移。

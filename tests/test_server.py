@@ -323,7 +323,7 @@ class TestWorkbarAuthentication(unittest.TestCase):
         handler = self.make_handler({"token": "test-access-token", "userId": "42"})
         with mock.patch.object(server.request, "urlopen", side_effect=server.error.URLError("offline")):
             handler._handle_validate_code_auth()
-        handler.send_json.assert_called_once_with({"error": "Workbar is unavailable"}, 502)
+        handler.send_json.assert_called_once_with({"error": "workbar is unavailable"}, 502)
 
     def test_sync_keys_uses_fixed_workbar_endpoint_and_normalizes_prefix(self):
         handler = self.make_handler({
@@ -364,7 +364,7 @@ class TestWorkbarAuthentication(unittest.TestCase):
         handler = self.make_handler({"token": "test-access-token", "userId": "42"})
         with mock.patch.object(server.request, "urlopen", side_effect=server.error.URLError("offline")):
             handler._handle_sync_keys()
-        handler.send_json.assert_called_once_with({"error": "Workbar is unavailable"}, 502)
+        handler.send_json.assert_called_once_with({"error": "workbar is unavailable"}, 502)
 
     def test_sync_keys_paginates_and_batches_all_platform_keys(self):
         handler = self.make_handler({"token": "test-access-token", "userId": "42"})

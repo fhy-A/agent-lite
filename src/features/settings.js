@@ -318,7 +318,7 @@
       overlay.id = "platformAuthGate";
       overlay.className = "platform-auth-gate";
       overlay.innerHTML = `<section class="platform-auth-card" role="dialog" aria-modal="true" aria-labelledby="platformAuthTitle">
-        <div class="platform-auth-brand"><span class="platform-auth-mark" aria-hidden="true">W</span><span>Workbar</span></div>
+        <div class="platform-auth-brand"><span class="platform-auth-mark" aria-hidden="true">W</span><span>workbar</span></div>
         <h1 id="platformAuthTitle">${t("connectWorkbarTitle")}</h1>
         <p class="${expired || unavailable ? "" : "platform-auth-description"}">${description}</p>
         ${validating ? `<div class="platform-auth-progress"><span class="platform-auth-spinner" aria-hidden="true"></span>${t("validatingWorkbar")}</div>` : `<button id="platformAuthAction" class="platform-auth-action" type="button">${unavailable ? t("retryValidation") : t("connectWorkbarAction")}</button>`}
@@ -679,7 +679,7 @@
       if (auth) {
         const displayName = auth.displayName || auth.username || "Unknown";
         const username = auth.username || "";
-        const secondaryName = username ? `@${username}` : "Workbar";
+        const secondaryName = username ? `@${username}` : "workbar";
         const email = auth.email
           ? `<strong>${escapeHtml(auth.email)}</strong>`
           : `<strong data-i18n="notSet">${t("notSet")}</strong>`;

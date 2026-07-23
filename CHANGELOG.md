@@ -1,4 +1,4 @@
-# Code 开发日志
+﻿# Code 开发日志
 
 > 记录 Claude Code、Codex 以及其他协作方的重要改动，按时间倒序。
 
@@ -24,6 +24,15 @@
 - **Agent 文档更新**：`AGENTS.md`、`CLAUDE.md`、`docs/development-handoff.md` 均已加入发版脚本引用和使用规范；交接快照的"建议下一阶段"更新为当前 P1 优先事项。
 
 **涉及文件**：`release.py`、`docs/release-guide.md`、`AGENTS.md`、`CLAUDE.md`、`docs/development-handoff.md`、`CHANGELOG.md`
+
+### 2026-07-23 Code：workbar 品牌名统一为全小写
+
+- **全局品牌小写化**：所有用户可见界面文案、i18n 翻译（中/英）、README、发布说明、文档注释、CSS 注释及 `server.py` 错误消息中的 "Workbar" 统一改为全小写 "workbar"。URL `https://workbar.ai` 本就是小写。
+- **保留代码标识符**：i18n key 名（`getFromWorkbar`、`connectWorkbarTitle` 等 camelCase）、常量名（`WORKBAR_URL`）、CSS 类名（`.key-workbar-btn`）、测试类名（`TestWorkbarAuthentication`）保持原样——这些是代码标识符，非品牌展示。
+- **协作规则固化**：`AGENTS.md`、`CLAUDE.md`、`new-api-source/AGENTS.md` 新增「品牌与命名约定」章节，要求新增或修改任何包含平台品牌名的内容前检查全小写。
+- **验证**：前端模块 58 项 + 服务端认证 7 项 + 2 subtests 通过。
+
+**涉及文件**：`src/core/i18n.js`、`src/features/settings.js`、`index.html`、`README.md`、`server.py`、`app.js`、`styles.css`、`docs/releases/v0.5.6.md`、`docs/development-handoff.md`、`docs/agent-refactoring-execution-plan.md`、`AGENTS.md`、`CLAUDE.md`、`tests/test_frontend_modules.py`、`tests/test_server.py`、`CHANGELOG.md`、`TODO.md`
 
 ## 2026-07-23 · Codex
 
@@ -60,11 +69,11 @@
 
 ## 2026-07-22 · Codex
 
-### 2026-07-22 21:11 Code：设置页实时语言刷新与 Workbar 账号文案收口
+### 2026-07-22 21:11 Code：设置页实时语言刷新与 workbar 账号文案收口
 
 - **当前面板即时刷新**：语言切换不再依赖离开设置页再返回；模型、Memory、Skills、主题、系统提示词、账户和更新面板均会就地刷新固定文案，同时保留 Key 草稿、Memory 编辑内容、当前 Skill、主题选择、更新状态与账户加载状态。
 - **动态内容统一 i18n**：补齐 Key 编辑器、模型空状态、更新操作、账户统计、Memory 表单与 Skill 依赖状态等动态节点的中英文标记；Skills 语言刷新复用已缓存的依赖预检结果，不重复扫描本机环境。
-- **账户视觉与命名修复**：修正连接状态圆点样式误作用到整段文字导致“已连接”竖排的问题；设置侧栏和右侧面板统一命名为“Workbar 账号 / Workbar Account”。
+- **账户视觉与命名修复**：修正连接状态圆点样式误作用到整段文字导致“已连接”竖排的问题；设置侧栏和右侧面板统一命名为“workbar 账号 / workbar Account”。
 - **验证**：相关 JavaScript 语法检查、`git diff --check`、前端与 P2 定向回归 102 项、4 个 subtests 通过；排除独立运行式 Skills 路由脚本后的完整回归 630 项、211 个 subtests 通过。浏览器检查设置页中英文即时切换与草稿/选择状态保持，用户反馈账户连接文字排版恢复正常并确认继续后续阶段。
 
 **涉及文件**：`app.js`、`index.html`、`src/core/i18n.js`、`src/features/settings.js`、`src/features/skills-memory.js`、`styles.css`、`tests/test_frontend_modules.py`、`CHANGELOG.md`
@@ -120,14 +129,14 @@
 - **实现基线校准**：将 Agent 设计分析和执行方案统一升级到 Code v0.5.6，明确区分服务端主 AgentRun、模型显式 `task` Child AgentRun 与用户运行期追加消息三个通道；删除“尚无并发”等已失效判断，不再重复规划已完成的服务端执行、恢复、授权代理和并发底座。
 - **后续路线收敛**：下一阶段确定为“普通追加消息默认排队、明确操作显式并行”，随后建立服务端白名单生成的 `Context Envelope`，再实现带依赖、预算和验证证据的结构化计划；Cron、Monitor、Workflow 与 worktree 隔离后置评估。
 - **设计边界明确**：继续使用 `read / plan / accept / bypass` 四种权限策略，不新增重叠的 `collaboration_mode`；不使用关键词正则猜测并行意图，不默认复制完整会话，不向子任务传递 Key、授权 Token 或隐藏推理。
-- **TODO 清理**：移除已完成项和过期的“上线前”描述，按 Workbar 上线后收口、Code 核心能力、规划与自动化重新整理未完成工作；补充企业邮箱、登录融合新手指引、运行期消息路由和委托上下文契约。
+- **TODO 清理**：移除已完成项和过期的“上线前”描述，按 workbar 上线后收口、Code 核心能力、规划与自动化重新整理未完成工作；补充企业邮箱、登录融合新手指引、运行期消息路由和委托上下文契约。
 - **验证**：三份文档 UTF-8、关键章节与相对链接检查通过，`TODO.md` 不再包含已完成勾选、旧品牌名或过期阶段标题；`git diff --check` 通过。
 
 **涉及文件**：`docs/agent-refactoring-execution-plan.md`、`docs/codex-claude-code-agent-design-analysis.md`、`TODO.md`、`CHANGELOG.md`
 
 ### 2026-07-22 09:34 Code：v0.5.6 发布准备
 
-- **版本与文档**：统一将 `VERSION`、Windows 文件元数据和 README 升级到 `0.5.6`；更新 Windows 快速开始流程和测试徽章，新增 `docs/releases/v0.5.6.md`，完整说明 Workbar 登录、Key 生命周期、设置页重构、稳定性改进和升级注意事项。
+- **版本与文档**：统一将 `VERSION`、Windows 文件元数据和 README 升级到 `0.5.6`；更新 Windows 快速开始流程和测试徽章，新增 `docs/releases/v0.5.6.md`，完整说明 workbar 登录、Key 生命周期、设置页重构、稳定性改进和升级注意事项。
 - **发行构建**：使用 Python `3.12.10` 与 PyInstaller `6.21.0` 生成 Windows x64 单文件 `Code-v0.5.6.exe`；内置 `VERSION`、文件名、FileVersion、ProductVersion、OriginalFilename 及关键前端资源核验一致。
 - **产物校验**：EXE 大小 `31,042,747 bytes`（`29.60 MiB`），SHA-256 为 `9A02E73E82079D1FF9C424E0E5D631407B2D1881102F5B3C5271346C1EBFBD47`，签名状态 `NotSigned`。
 - **GitHub 发布**：`v0.5.6` 标签与正式 Release 已发布为仓库最新版，Windows x64 资产上传完成；GitHub 远端摘要与本地 SHA-256 完全一致。发布地址：<https://github.com/fhy-A/Code/releases/tag/v0.5.6>。
@@ -137,8 +146,8 @@
 
 ### 2026-07-22 09:23 Code：登录入口与旧版新手指引收口
 
-- **登录台文案排版**：将 Workbar 登录说明拆成稳定的两行结构，明确把“并同步 API Key。”完整放在第二行，并同步中英文文案，避免不同窗口宽度下只剩 `Key` 单独换行。
-- **移除旧版指引**：删除旧新手指引的启动判断、弹窗 DOM、样式、i18n 文案和设置模块接口；启动时清理 `code-onboarding` 与 `agent-lite-onboarding` 历史标记，不再让过时流程与强制 Workbar 登录门禁竞争。
+- **登录台文案排版**：将 workbar 登录说明拆成稳定的两行结构，明确把“并同步 API Key。”完整放在第二行，并同步中英文文案，避免不同窗口宽度下只剩 `Key` 单独换行。
+- **移除旧版指引**：删除旧新手指引的启动判断、弹窗 DOM、样式、i18n 文案和设置模块接口；启动时清理 `code-onboarding` 与 `agent-lite-onboarding` 历史标记，不再让过时流程与强制 workbar 登录门禁竞争。
 - **后续计划**：`TODO.md` 新增登录后一体化新手指引，计划在授权成功后结合项目选择、模型与 Key 状态、权限模式和首次任务重新设计；同时补全企业邮箱替换个人邮箱事项。
 - **验证**：JavaScript 语法检查及 `git diff --check` 通过；前端定向回归 100 项、4 个 subtests 通过；排除独立 Skills 路由脚本后的完整回归 614 项、208 个 subtests 通过。浏览器确认旧指引 DOM 已完全移除，用户完成启动界面人工验收。
 
@@ -146,10 +155,10 @@
 
 ### 2026-07-22 08:58 Code：设置页完善与 Key 生命周期收口阶段 4
 
-- **轻量设置页收口**：语言切换从独立页面下沉到设置侧栏底部并实时刷新当前面板；账户页改为身份、额度/用量统计和账户详情分层展示，按需从 Workbar 获取经过白名单过滤的用户名、邮箱、分组、额度、已用额度与请求次数；更新页统一为紧凑状态卡片和明确操作区。
-- **Key 删除与同步边界**：以非敏感的 Workbar 用户 ID 和 Token ID 记录账号内已移除项，静默同步不再自动加回用户主动删除的 Workbar Key；其他渠道手动 Key 保持独立，不按名称或内容误判来源。跨标签页 Key 变化会即时刷新设置编辑器，旧隐藏输入框不再参与运行时 Key 读取。
+- **轻量设置页收口**：语言切换从独立页面下沉到设置侧栏底部并实时刷新当前面板；账户页改为身份、额度/用量统计和账户详情分层展示，按需从 workbar 获取经过白名单过滤的用户名、邮箱、分组、额度、已用额度与请求次数；更新页统一为紧凑状态卡片和明确操作区。
+- **Key 删除与同步边界**：以非敏感的 workbar 用户 ID 和 Token ID 记录账号内已移除项，静默同步不再自动加回用户主动删除的 workbar Key；其他渠道手动 Key 保持独立，不按名称或内容误判来源。跨标签页 Key 变化会即时刷新设置编辑器，旧隐藏输入框不再参与运行时 Key 读取。
 - **旧 Key 复活根因修复**：确认品牌改名迁移会在每次启动时将残留的 `agent-lite-key` / `agent-lite-key-config` 重新复制并写回 `code-key-config`。敏感 Key 改为真正的一次性迁移，结构化配置即使为空也视为有效删除状态；保存、清空、退出和启动都会删除旧敏感存储，通用品牌迁移不再处理 Key 与旧平台授权。
-- **安全与兼容**：`code-key-config` 成为模型请求、恢复任务和设置页的唯一 Key 数据源；退出登录同步清理结构化 Key、旧文本 Key、模型映射和旧版授权。账户接口只返回前端实际展示字段，Workbar 公共计价设置不可用时不影响授权验证。
+- **安全与兼容**：`code-key-config` 成为模型请求、恢复任务和设置页的唯一 Key 数据源；退出登录同步清理结构化 Key、旧文本 Key、模型映射和旧版授权。账户接口只返回前端实际展示字段，workbar 公共计价设置不可用时不影响授权验证。
 - **验证**：JavaScript 语法检查及 `git diff --check` 通过；i18n、设置页、Key 迁移和账户接口定向回归共 252 项、6 个 subtests 通过；排除独立路由脚本后的完整回归 612 项、208 个 subtests 通过。用户完成真实退出、重新登录和重启 Code 验收，确认已删除的旧 Key 不再恢复。
 
 **涉及文件**：`app.js`、`index.html`、`server.py`、`src/core/i18n.js`、`src/core/platform.js`、`src/features/settings.js`、`styles.css`、`tests/test_frontend_modules.py`、`tests/test_server.py`、`TODO.md`、`CHANGELOG.md`
@@ -181,40 +190,40 @@
 
 **涉及文件**：`index.html`、`src/core/i18n.js`、`styles.css`、`tests/test_frontend_modules.py`、`TODO.md`、`CHANGELOG.md`
 
-### 2026-07-22 06:05 Code：Workbar 登录与 Key 同步重构阶段 4
+### 2026-07-22 06:05 Code：workbar 登录与 Key 同步重构阶段 4
 
-- **交互式 Key 获取**：模型设置面板新增低干扰的“从 Workbar 获取”入口；每次打开窗口都会实时拉取账号下的 Key，以脱敏预览列出名称和状态，完整值仅在用户点击单项复制或复制全部时写入剪贴板，不进入页面 HTML。
+- **交互式 Key 获取**：模型设置面板新增低干扰的“从 workbar 获取”入口；每次打开窗口都会实时拉取账号下的 Key，以脱敏预览列出名称和状态，完整值仅在用户点击单项复制或复制全部时写入剪贴板，不进入页面 HTML。
 - **精确去重与禁用保护**：使用规范化后的完整 Key 与本地结构化配置即时比对并标记“已添加”；禁用 Key 仍可见并明确标记“已禁用”，但不提供单项复制且不会进入“复制全部”，避免粘贴后被误设为启用。静默同步继续保留禁用状态更新能力。
 - **Key 与模型设置优化**：API Key 改为紧凑卡片布局，统一显示、启停和删除控件的对齐，保留拖拽排序及原有存储逻辑；模型区域增加数量、提供独立的真实刷新状态和供应商分组层次，并补充空状态。
 - **文案与状态提示**：同步入口、弹窗标题、刷新状态及禁用统计均完成中英文收口；底部完成提示改为“已启用的 API Key 均已在本地列表中”，避免把禁用项计入“所有 Key”。
-- **验证**：前端模块定向测试 42 项通过；完整回归 596 项、208 个 subtests 通过（排除 1 个独立脚本和 1 个既有 Windows 文件锁用例）；`git diff --check` 通过。用户完成真实 Workbar Key 列表、禁用项、复制行为和设置面板视觉验收，结果正常。
+- **验证**：前端模块定向测试 42 项通过；完整回归 596 项、208 个 subtests 通过（排除 1 个独立脚本和 1 个既有 Windows 文件锁用例）；`git diff --check` 通过。用户完成真实 workbar Key 列表、禁用项、复制行为和设置面板视觉验收，结果正常。
 
 **涉及文件**：`src/core/platform.js`、`src/core/i18n.js`、`src/features/settings.js`、`styles.css`、`tests/test_frontend_modules.py`、`TODO.md`、`CHANGELOG.md`
 
-### 2026-07-22 05:01 Code：Workbar 登录与 Key 同步重构阶段 3
+### 2026-07-22 05:01 Code：workbar 登录与 Key 同步重构阶段 3
 
-- **非阻塞静默同步**：授权有效后立即在后台同步 Workbar Key，并与项目配置、会话恢复并行进行；同步完成后只刷新一次模型列表，不弹窗、不显示 Toast、不阻断正常启动视图。
+- **非阻塞静默同步**：授权有效后立即在后台同步 workbar Key，并与项目配置、会话恢复并行进行；同步完成后只刷新一次模型列表，不弹窗、不显示 Toast、不阻断正常启动视图。
 - **非破坏性 Key 合并**：`source: "manual"` 的手动 Key 在任何平台同步中都不修改、不删除；仅更新已有的 `source: "platform"` 名称和启停状态，新 Key 增量加入。平台返回空列表或网络异常时不清空本地配置。
 - **完整 Key 规范化**：`/api/code/sync-keys` 强制访问 `https://workbar.ai`，分页获取全部 Key、每 100 条分批查询完整值，过滤遮罩值，并对完整后缀只补一次 `sk-`；移除了包含授权状态的调试日志。
 - **刷新无闪烁验证**：OAuth 首次回调仍显式验证账号；普通启动/刷新不再重复调用 `/auth/validate` 或展示验证页，由后台 Key 同步同时校验缓存授权；401 会恢复过期门禁，网络故障则保留授权和本地 Key。
 - **开发期托盘重启**：托盘菜单新增 `Restart Code`；隐藏等待器会等当前 PID 完全退出后才启动同一份源码或 EXE，打包版复用当前浏览器页面；旧服务无法关闭时会取消等待器，避免之后意外自启。
-- **验证**：同步、鉴权、Key 合并、分页/分批、启动顺序和托盘重启均有自动化覆盖；最终回归在排除 1 个既有 Windows 同会话并发写入偶发文件锁用例后，594 项、208 个 subtests 通过，托盘重启定向 4 项通过。用户完成真实 Workbar 静默同步、刷新体验和托盘重启验收，结果正常。
+- **验证**：同步、鉴权、Key 合并、分页/分批、启动顺序和托盘重启均有自动化覆盖；最终回归在排除 1 个既有 Windows 同会话并发写入偶发文件锁用例后，594 项、208 个 subtests 通过，托盘重启定向 4 项通过。用户完成真实 workbar 静默同步、刷新体验和托盘重启验收，结果正常。
 
 **涉及文件**：`server.py`、`src/core/platform.js`、`src/features/settings.js`、`app.js`、`tests/test_server.py`、`tests/test_frontend_modules.py`、`TODO.md`、`CHANGELOG.md`
 
-### 2026-07-22 04:35 Code：Workbar 登录与 Key 同步重构阶段 2
+### 2026-07-22 04:35 Code：workbar 登录与 Key 同步重构阶段 2
 
-- **强制登录门禁**：未保存平台授权时不再继续加载会话、项目上下文或模型功能，改为展示不可关闭的“连接到 Workbar”引导页；授权过期与平台暂时不可用使用不同提示和恢复动作。
-- **启动授权验证**：新增本地 `POST /api/code/auth/validate`，由 Code 服务端使用固定 Workbar 地址调用 `/api/user/self` 验证 access token 与 User ID，前端启动时自动验证并刷新真实用户名；网络故障不会误删仍可能有效的授权。
+- **强制登录门禁**：未保存平台授权时不再继续加载会话、项目上下文或模型功能，改为展示不可关闭的“连接到 workbar”引导页；授权过期与平台暂时不可用使用不同提示和恢复动作。
+- **启动授权验证**：新增本地 `POST /api/code/auth/validate`，由 Code 服务端使用固定 workbar 地址调用 `/api/user/self` 验证 access token 与 User ID，前端启动时自动验证并刷新真实用户名；网络故障不会误删仍可能有效的授权。
 - **OAuth 回调收口**：回调参数保存后立即清理地址栏，再通过服务端完成有效性确认；跨标签页完成授权时，原 Code 页面通过 storage 事件自动刷新。
 - **退出清理**：退出登录会同步清除平台授权、全部结构化 Key、旧 Key 文本、模型映射、模型列表和已选模型，并立即恢复登录门禁。
-- **验证**：授权有效、授权过期、账号不匹配、Workbar 不可用和固定请求地址均有自动化覆盖；定向回归 184 项、2 个 subtests 通过，Node/Python 语法检查与 `git diff --check` 通过。用户完成真实 Workbar 登录门禁与回调链路验收，结果正常。
+- **验证**：授权有效、授权过期、账号不匹配、workbar 不可用和固定请求地址均有自动化覆盖；定向回归 184 项、2 个 subtests 通过，Node/Python 语法检查与 `git diff --check` 通过。用户完成真实 workbar 登录门禁与回调链路验收，结果正常。
 
 **涉及文件**：`server.py`、`src/features/settings.js`、`src/core/i18n.js`、`app.js`、`styles.css`、`tests/test_server.py`、`tests/test_frontend_modules.py`、`TODO.md`、`CHANGELOG.md`
 
-### 2026-07-22 04:26 Code：Workbar 登录与 Key 同步重构阶段 1
+### 2026-07-22 04:26 Code：workbar 登录与 Key 同步重构阶段 1
 
-- **固定服务地址**：新增 `src/core/platform.js` 作为 Workbar 集成的统一配置与 Key 数据契约；模型 Base URL 和平台登录地址固定为 `https://workbar.ai`，启动时清理旧的 `code-base-url`、`code-platform-url` 自定义值。
+- **固定服务地址**：新增 `src/core/platform.js` 作为 workbar 集成的统一配置与 Key 数据契约；模型 Base URL 和平台登录地址固定为 `https://workbar.ai`，启动时清理旧的 `code-base-url`、`code-platform-url` 自定义值。
 - **移除地址配置 UI**：模型设置和账户面板不再展示 Base URL 或中转站地址输入框；旧设置弹窗仅保留隐藏的固定地址节点，以兼容现有请求链路。
 - **结构化 Key 配置**：`code-key-config` 成为 Key 配置主数据源，条目统一包含 `name`、`key`、`enabled`、`source`；旧条目自动迁移为 `source: "manual"`，平台来源可保留为 `source: "platform"`。
 - **输入格式兼容**：Key 解析统一支持 `名称: sk-xxx`、`名称 sk-xxx` 和纯 `sk-xxx`，并保持去重、启停状态和来源信息。

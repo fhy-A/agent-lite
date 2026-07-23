@@ -5254,7 +5254,7 @@ body.theme-dark .syn-fn { color: #61afef; }
 .account-refresh-state.is-loading::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 7px; border: 1.5px solid color-mix(in srgb, var(--accent) 30%, transparent); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
 .account-refresh-state.is-error { display: flex; gap: 10px; color: var(--red); }
 
-/* ── Workbar authentication gate ── */
+/* ── workbar authentication gate ── */
 .platform-auth-gate {
   position: fixed; inset: 0; z-index: 2000;
   display: grid; place-items: center; padding: 32px;

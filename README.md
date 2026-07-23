@@ -62,7 +62,7 @@ Code 当前聚焦三个目标：
     └── OpenAI 兼容代理
               │
               ▼
-          Workbar API 网关
+          workbar API 网关
 ```
 
 前端负责展示与交互，本地服务负责模型请求、任务状态、会话数据和工具执行。模型 API Key 只用于请求，不写入持久化的任务运行状态。
@@ -75,7 +75,7 @@ Code 当前聚焦三个目标：
 
 1. 从 [GitHub Releases](https://github.com/fhy-A/Code/releases/latest) 下载 `Code-v0.5.18.exe`。
 2. 双击运行。Code 会常驻系统托盘，并打开 `http://127.0.0.1:3010/`。
-3. 按页面提示登录 Workbar；Code 会同步账号下的 API Key 并刷新可用模型。
+3. 按页面提示登录 workbar；Code 会同步账号下的 API Key 并刷新可用模型。
 4. 选择一个项目目录，在输入框中直接描述任务。模型服务地址固定为 `https://workbar.ai`。
 
 > v0.5.4 是首次使用 Code 名称发布的版本。旧版测试用户请退出 Agent Lite 后重新下载；首次运行会迁移原有用户数据与浏览器设置。

@@ -88,7 +88,7 @@ git log -8 --oneline
 
 ### 安全边界
 
-- Workbar Access Token、API Key、Authorization 头不得写入 AgentRun 状态、交接文档、测试输出或 Git。
+- workbar Access Token、API Key、Authorization 头不得写入 AgentRun 状态、交接文档、测试输出或 Git。
 - 不得使用 `git reset --hard`、`git checkout --` 或其他破坏性命令处理共享工作区。
 - `data/` 包含本地会话、授权状态和备份；除非任务明确要求，不要批量清理。
 - Docker 构建优先使用 `--pull=false`。

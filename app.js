@@ -7802,7 +7802,7 @@ async function pumpQueuedSessionMessages(sessionId) {
   }
   const item = getQueuedMessageCheckpoints(sessionId).find((candidate) => candidate.status === "pending");
   if (!item) return false;
-  // Startup can restore sessions before Workbar keys are available. Leave the
+  // Startup can restore sessions before workbar keys are available. Leave the
   // item pending instead of consuming it as a failed request.
   if (!item.model || !getBestKey(item.model)) return false;
 
@@ -10495,7 +10495,7 @@ async function init() {
   }
 
   // Key synchronization is deliberately non-blocking: local sessions and
-  // settings remain usable while Workbar is queried in the background.
+  // settings remain usable while workbar is queried in the background.
   const platformSyncPromise = syncPlatformKeysSilently();
 
   // Always load config — server defaults to user home when no project is set

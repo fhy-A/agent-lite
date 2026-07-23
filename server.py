@@ -8144,14 +8144,10 @@ class CodeHandler(BaseHTTPRequestHandler):
         log_path = DATA_DIR / "update.log"
         bat_path = _build_update_script(target_dir, new_exe, partial_exe, log_path)
         self.send_json({"ok": True, "nextExecutable": str(new_exe)})
-        # Launch detached batch file and exit immediately.
-        # cmd /c start -> ShellExecuteEx = same as Explorer double-click.
-        subprocess.Popen(
-            ["cmd", "/c", str(bat_path)],
-            creationflags=0x08000000,  # CREATE_NO_WINDOW
-            close_fds=True,
-            cwd=str(target_dir),
-        )
+        # Use ShellExecute via os.startfile — the same API Explorer calls when
+        # you double-click.  subprocess.Popen / cmd / PowerShell all inherit
+        # PyInstaller's process environment and cause the bootloader to fail.
+        os.startfile(str(bat_path))
         os._exit(0)
 
     def _handle_sync_keys(self):

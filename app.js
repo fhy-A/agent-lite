@@ -4696,6 +4696,8 @@ async function refreshModels() {
 
       ["Meta", /^llama|^meta/i],
 
+      ["XAI", /^grok/i],
+
     ];
 
     const groups = {};

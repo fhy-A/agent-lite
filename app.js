@@ -2406,6 +2406,38 @@ function _toolActionLabel(action) {
   return map[action] ? t(map[action]) : action;
 }
 
+var _errorCodeMeta = {
+  upstream_error:     { retry: true },
+  config_error:       { retry: false },
+  permission_denied:  { retry: false },
+  tool_error:         { retry: true },
+  user_cancelled:     { retry: false },
+  empty_response:     { retry: true },
+  internal_error:     { retry: false },
+};
+
+function _errorCodeInfo(code) {
+  var meta = _errorCodeMeta[code];
+  if (!meta) return null;
+  return {
+    label: t("errLabel" + code.replace(/_./g, function (m) { return m[1].toUpperCase(); }).replace(/^_/, "")) || code,
+    suggestion: t("errSug" + code.replace(/_./g, function (m) { return m[1].toUpperCase(); }).replace(/^_/, "")) || "",
+    retry: meta.retry,
+  };
+}
+
+function _formatAgentError(err) {
+  var code = String(err.errorCode || "");
+  var info = _errorCodeInfo(code);
+  var fallback = (err.message || "Agent run failed");
+  if (info) {
+    var lines = ["> **" + info.label + "**", "> " + fallback];
+    if (info.suggestion) lines.push("> \u{1f4a1} " + info.suggestion);
+    return lines.join("\n");
+  }
+  return t("errAgentFailed") + ": " + fallback;
+}
+
 function _isToolError(content) {
   return /failed|error|失败|不存在|拒绝|denied/i.test(content || "");
 }
@@ -3598,7 +3630,7 @@ async function continueAgentRun() {
       await saveSessionState(sessionId, ctx.messages, ctx.stats);
     } else {
       ctx.messages = ctx.messages.filter((msg) => !msg.streaming);
-      ctx.messages.push({ role: "assistant", content: "Request failed: " + (err.message || err) });
+      ctx.messages.push({ role: "assistant", content: _formatAgentError(err) });
       setSessionMessages(sessionId, ctx.messages);
       renderSessionMessages(sessionId);
       await saveSessionState(sessionId, ctx.messages, ctx.stats);
@@ -9009,7 +9041,10 @@ async function runServerAgentLoop(ctx) {
       return result;
     }
     if (snapshot.status === "cancelled") throw new DOMException("Aborted", "AbortError");
-    throw new Error(snapshot.error || `Server Agent ${snapshot.status}`);
+    const err = new Error(snapshot.error || `Server Agent ${snapshot.status}`);
+    err.status = snapshot.status;
+    err.errorCode = snapshot.errorCode || "";
+    throw err;
   }
 }
 

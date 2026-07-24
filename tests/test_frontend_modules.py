@@ -2933,6 +2933,60 @@ process.stdout.write(JSON.stringify({
         self.assertIn("const originalUserContent = messageContent", APP_SOURCE)
         self.assertIn('userMsg.role === "user"', APP_SOURCE)
 
+    # ── error_code frontend display ──
+
+    def test_error_code_meta_has_all_codes(self):
+        """All 7 error codes have entries in _errorCodeMeta."""
+        codes = ["upstream_error", "config_error", "permission_denied",
+                 "tool_error", "user_cancelled", "empty_response", "internal_error"]
+        for code in codes:
+            self.assertIn(code + ":", APP_SOURCE.replace(" ", ""),
+                         f"Missing error code meta entry: {code}")
+
+    def test_error_code_info_function_exists(self):
+        self.assertIn("function _errorCodeInfo(code)", APP_SOURCE)
+
+    def test_format_agent_error_function_exists(self):
+        self.assertIn("function _formatAgentError(err)", APP_SOURCE)
+        self.assertIn("err.errorCode", APP_SOURCE)
+        self.assertIn("_errorCodeInfo", APP_SOURCE)
+
+    def test_format_agent_error_uses_i18n(self):
+        """_formatAgentError uses t() for label and suggestion keys."""
+        self.assertIn("t(\"errLabel\"", APP_SOURCE.replace(" ", ""))
+        self.assertIn("t(\"errSug\"", APP_SOURCE.replace(" ", ""))
+        self.assertIn("t(\"errAgentFailed\")", APP_SOURCE.replace(" ", ""))
+        self.assertIn("\\u{1f4a1}", APP_SOURCE)
+
+    def test_agent_snapshot_includes_error_code_propagation(self):
+        """Agent failure throws error with errorCode attached."""
+        self.assertIn("err.errorCode = snapshot.errorCode", APP_SOURCE)
+        self.assertIn('err.status = snapshot.status', APP_SOURCE)
+
+    def test_agent_catch_block_uses_format_agent_error(self):
+        """The catch block uses _formatAgentError instead of hardcoded text."""
+        self.assertIn("_formatAgentError(err)", APP_SOURCE)
+
+    def test_retry_distinction(self):
+        """Transient errors suggest retry; permanent errors don't."""
+        self.assertIn("retry: true", APP_SOURCE)
+        self.assertIn("retry: false", APP_SOURCE)
+
+    def test_i18n_keys_for_all_error_codes(self):
+        """Every error code has both label and suggestion i18n keys."""
+        self.assertIn("errLabelUpstreamError", I18N_SOURCE)
+        self.assertIn("errSugUpstreamError", I18N_SOURCE)
+        self.assertIn("errLabelEmptyResponse", I18N_SOURCE)
+        self.assertIn("errSugEmptyResponse", I18N_SOURCE)
+        self.assertIn("errAgentFailed", I18N_SOURCE)
+
+    def test_i18n_keys_have_both_languages(self):
+        """Error i18n keys exist in both Chinese and English."""
+        self.assertIn("上游异常", I18N_SOURCE)
+        self.assertIn("Upstream error", I18N_SOURCE)
+        self.assertIn("模型未产出回复", I18N_SOURCE)
+        self.assertIn("No response generated", I18N_SOURCE)
+
 
 if __name__ == "__main__":
     unittest.main()

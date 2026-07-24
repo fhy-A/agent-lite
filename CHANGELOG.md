@@ -16,9 +16,11 @@
 - **情况 2 改为 `waiting_user_input`**：content 空 + reasoning 有 → 暂停并展示 reasoning + "继续"按钮，由用户判断是否继续（而非自动盲目继续）
 - **`_submit_agent_input` 支持 `empty_response` 类型**：追加"请继续"消息并恢复 agent 运行
 - **前端 `requestServerAgentInput` + `requestEmptyResponseContinue`**：识别 `empty_response` 类型，展示 reasoning 内容 + 继续按钮
-- **新增 17 个测试**（`TestEmptyPromiseDetection`）：覆盖承诺检测、三分类、完整生命周期（暂停→继续→完成）、异常路径
+- **前端错误分类展示**：`_errorCodeDisplay` 映射表（7 种错误码 → 标签/建议/是否可重试），`_formatAgentError(err)` 替代硬编码 "Request failed:"
+- **agent snapshot 新增 `errorCode` 字段**，前端错误对象携带 `errorCode` 属性
+- **新增 26 个测试**（`TestEmptyPromiseDetection` 17 + 前端 error_code 9）：覆盖承诺检测、三分类、完整生命周期、错误映射表、格式化输出
 
-**涉及文件**：`server.py`、`tests/test_agent_runtime.py`
+**涉及文件**：`server.py`、`app.js`、`tests/test_agent_runtime.py`、`tests/test_frontend_modules.py`
 
 ### batch 更新脚本 f-string %% 转义修复 (v0.5.27)
 

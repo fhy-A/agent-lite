@@ -796,6 +796,7 @@ def _agent_snapshot(run, cursor=0):
             "status": run["status"],
             "permissionProfile": run.get("permission_profile", "read"),
             "error": run.get("error", ""),
+            "errorCode": run.get("error_code", ""),
             "model": str((run.get("request") or {}).get("model") or ""),
             "round": len(run.get("rounds") or []),
             "maxRounds": run["max_rounds"],

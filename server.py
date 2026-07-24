@@ -2961,7 +2961,6 @@ def _build_update_script(target_dir, new_exe, partial_exe, log_path):
     fd, bat_path = _tempfile.mkstemp(suffix=".bat", prefix="code-update-")
     with os.fdopen(fd, "w") as _bat:
         _bat.write(f"""@echo off
-setlocal enabledelayedexpansion
 set "targetDir={target_dir}"
 set "newExe={new_exe}"
 set "partialExe={partial_exe or ''}"

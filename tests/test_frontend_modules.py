@@ -2987,6 +2987,48 @@ process.stdout.write(JSON.stringify({
         self.assertIn("模型未产出回复", I18N_SOURCE)
         self.assertIn("No response generated", I18N_SOURCE)
 
+    # ── Session import UI ──
+
+    def test_import_button_in_html(self):
+        """Import button exists in the toolbar and modal."""
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="importSessions"', html)
+
+    def test_import_modal_in_html(self):
+        """Import modal with source tabs and list exists."""
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="importModal"', html)
+        self.assertIn('id="importList"', html)
+        self.assertIn('id="importDoBtn"', html)
+        self.assertIn('import-source-tab', html)
+
+    def test_import_functions_in_app_js(self):
+        """Import functions are defined in app.js."""
+        self.assertIn("function openImportModal", APP_SOURCE)
+        self.assertIn("function loadImportSessions", APP_SOURCE)
+        self.assertIn("function renderImportList", APP_SOURCE)
+        self.assertIn("function doImport", APP_SOURCE)
+
+    def test_import_els_references(self):
+        """Import DOM element references exist."""
+        self.assertIn("importSessions:", APP_SOURCE)
+        self.assertIn("importModal:", APP_SOURCE)
+        self.assertIn("importList:", APP_SOURCE)
+        self.assertIn("importDoBtn:", APP_SOURCE)
+
+    def test_import_source_switching(self):
+        """Source tab switching updates _importSource."""
+        self.assertIn("_importSource", APP_SOURCE)
+        self.assertIn('dataset.source', APP_SOURCE)
+
+    def test_import_i18n_keys(self):
+        """Import i18n keys exist in both languages."""
+        self.assertIn("importSessions", I18N_SOURCE)
+
+    def test_import_modal_css_exists(self):
+        """Import modal styles are defined."""
+        self.assertIn("import-source-tab", STYLE_SOURCE)
+
 
 if __name__ == "__main__":
     unittest.main()

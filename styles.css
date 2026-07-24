@@ -5150,6 +5150,16 @@ body.theme-dark .syn-fn { color: #61afef; }
   display: flex; align-items: center; justify-content: center;
   backdrop-filter: blur(4px);
 }
+.import-source-tab {
+  padding: 5px 14px; border: 1px solid var(--line); border-radius: 14px;
+  background: var(--panel); color: var(--muted); cursor: pointer; font-size: 13px;
+}
+.import-source-tab.active {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+.modal-panel { background: var(--bg); border-radius: 12px; padding: 20px; min-width: 400px; max-width: 90vw; box-shadow: 0 8px 32px rgba(0,0,0,.3); }
+.modal-header { display: flex; justify-content: space-between; align-items: center; margin: 0 0 12px; font-size: 16px; font-weight: 600; }
+.modal-close-btn { background: none; border: none; font-size: 22px; cursor: pointer; color: var(--muted); padding: 0 4px; line-height: 1; }
 
 /* Lightweight settings pages */
 .settings-section-title { margin: 0 0 14px; font-size: 17px; }

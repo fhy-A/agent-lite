@@ -641,6 +641,13 @@ const els = {
   newChat: document.getElementById("newChat"),
 
   exportChat: document.getElementById("exportChat"),
+  importSessions: document.getElementById("importSessions"),
+  importModal: document.getElementById("importModal"),
+  importClose: document.getElementById("importClose"),
+  importList: document.getElementById("importList"),
+  importSelectAll: document.getElementById("importSelectAll"),
+  importDoBtn: document.getElementById("importDoBtn"),
+  importStatus: document.getElementById("importStatus"),
 
   sessionList: document.getElementById("sessionList"),
 
@@ -10448,6 +10455,132 @@ els.newChat.addEventListener("click", () => {
 
 
 els.exportChat.addEventListener("click", exportMarkdown);
+
+// ── Session Import ──
+
+var _importSource = "claude-code";
+var _importSessions = [];
+
+async function openImportModal() {
+  els.importModal.style.display = "flex";
+  els.importStatus.textContent = "正在加载...";
+  els.importDoBtn.disabled = true;
+  els.importSelectAll.checked = false;
+  _importSessions = [];
+  renderImportList();
+  await loadImportSessions();
+}
+
+function closeImportModal() {
+  els.importModal.style.display = "none";
+}
+
+async function loadImportSessions() {
+  try {
+    var resp = await fetch("/api/import/sessions?source=" + encodeURIComponent(_importSource));
+    var data = await resp.json();
+    if (!Array.isArray(data)) { data = []; }
+    _importSessions = data;
+    els.importStatus.textContent = data.length + " 个会话";
+  } catch (e) {
+    _importSessions = [];
+    els.importStatus.textContent = "加载失败: " + (e.message || "network error");
+  }
+  renderImportList();
+}
+
+function renderImportList() {
+  var list = els.importList;
+  list.innerHTML = "";
+  if (!_importSessions.length) {
+    list.innerHTML = "<div style='padding:16px;color:var(--muted);text-align:center'>暂无会话</div>";
+    return;
+  }
+  _importSessions.forEach(function (s, i) {
+    var row = document.createElement("label");
+    row.style.cssText = "display:flex;align-items:flex-start;gap:8px;padding:6px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--line)";
+    row.onmouseenter = function () { row.style.background = "var(--hover)"; };
+    row.onmouseleave = function () { row.style.background = ""; };
+    var cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.dataset.index = i;
+    cb.addEventListener("change", updateImportButton);
+    row.appendChild(cb);
+    var info = document.createElement("div");
+    info.style.cssText = "overflow:hidden";
+    var title = document.createElement("div");
+    title.style.cssText = "white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
+    title.textContent = s.title || "未命名";
+    info.appendChild(title);
+    var meta = document.createElement("div");
+    meta.style.cssText = "font-size:11px;color:var(--muted)";
+    var date = (s.createdAt || "").slice(0, 10);
+    meta.textContent = date + " · " + s.messageCount + " 条消息";
+    if (s.project) { meta.textContent = s.project + " · " + date + " · " + s.messageCount + " 条消息"; }
+    info.appendChild(meta);
+    row.appendChild(info);
+    list.appendChild(row);
+  });
+  updateImportButton();
+}
+
+function updateImportButton() {
+  var cbs = els.importList.querySelectorAll("input[type=checkbox]");
+  var checked = Array.from(cbs).filter(function (c) { return c.checked; });
+  els.importDoBtn.disabled = checked.length === 0;
+  els.importDoBtn.textContent = checked.length ? "导入到 Code (" + checked.length + ")" : "导入到 Code";
+}
+
+async function doImport() {
+  var cbs = els.importList.querySelectorAll("input[type=checkbox]");
+  var checked = Array.from(cbs).filter(function (c) { return c.checked; });
+  if (!checked.length) return;
+  els.importDoBtn.disabled = true;
+  els.importDoBtn.textContent = "导入中...";
+  var okCount = 0;
+  for (var i = 0; i < checked.length; i++) {
+    var s = _importSessions[Number(checked[i].dataset.index)];
+    if (!s) continue;
+    try {
+      var resp = await fetch("/api/import/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: _importSource, sourcePath: s.sourcePath }),
+      });
+      var data = await resp.json();
+      if (data.ok) { okCount++; }
+    } catch (e) { /* continue */ }
+  }
+  els.importStatus.textContent = "已导入 " + okCount + " / " + checked.length + " 个会话";
+  els.importDoBtn.textContent = "完成";
+  // Refresh session list
+  await loadSessions();
+  renderSessionList();
+}
+
+els.importSessions.addEventListener("click", openImportModal);
+els.importClose.addEventListener("click", closeImportModal);
+els.importModal.addEventListener("click", function (e) {
+  if (e.target === els.importModal) closeImportModal();
+});
+els.importSelectAll.addEventListener("change", function () {
+  var cbs = els.importList.querySelectorAll("input[type=checkbox]");
+  cbs.forEach(function (c) { c.checked = els.importSelectAll.checked; });
+  updateImportButton();
+});
+els.importDoBtn.addEventListener("click", doImport);
+
+// Source tab switching
+document.querySelectorAll(".import-source-tab").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    document.querySelectorAll(".import-source-tab").forEach(function (b) { b.classList.remove("active"); });
+    btn.classList.add("active");
+    _importSource = btn.dataset.source;
+    _importSessions = [];
+    els.importSelectAll.checked = false;
+    loadImportSessions();
+  });
+});
 
 
 async function init() {

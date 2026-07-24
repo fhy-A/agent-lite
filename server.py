@@ -4951,6 +4951,246 @@ def session_summary(session):
     }
 
 
+# ═══════════════════════════════════════════════════════════════
+# Codex session import
+# ═══════════════════════════════════════════════════════════════
+
+CODEX_SESSIONS_DIR = Path.home() / ".codex" / "sessions"
+
+# Codex system messages that should NOT be used as session titles
+_CODEX_SYSTEM_PREFIXES = (
+    "<environment_context>", "<recommended_plugins>", "<skills_instructions>",
+    "<permissions instructions>", "<apps_instructions>", "<plugins_instructions>",
+    "<collaboration_mode>",
+)
+
+
+def _is_system_text(text):
+    """Return True if the text looks like a Codex system/context message."""
+    stripped = text.strip()
+    for prefix in _CODEX_SYSTEM_PREFIXES:
+        if stripped.startswith(prefix):
+            return True
+    return False
+
+
+def list_codex_sessions(query=None):
+    """Scan the Codex sessions directory and return a list of importable sessions.
+
+    Each entry has: id (generated), title (first user message), messageCount,
+    createdAt, sourceId (original filename stem), sourcePath (absolute path).
+
+    If *query* is provided, filters by filename or title (case-insensitive).
+    """
+    if not CODEX_SESSIONS_DIR.exists():
+        return []
+    q = (query or "").strip().lower()
+    sessions = []
+    for jsonl_path in sorted(CODEX_SESSIONS_DIR.rglob("*.jsonl"), reverse=True):
+        try:
+            source_id = jsonl_path.stem
+            if q and q not in source_id.lower() and q not in _read_codex_title(jsonl_path).lower():
+                continue
+            meta = _read_codex_session_meta(jsonl_path)
+            if not meta:
+                continue
+            if meta.get("message_count", 0) == 0:
+                continue
+            sessions.append({
+                "id": _generate_codex_import_id(jsonl_path),
+                "sourceId": source_id,
+                "title": meta.get("title") or "Codex 会话",
+                "messageCount": meta["message_count"],
+                "createdAt": meta.get("created_at", ""),
+                "sourcePath": str(jsonl_path.resolve()),
+            })
+        except Exception:
+            continue
+    return sessions
+
+
+def _generate_codex_import_id(jsonl_path):
+    """Generate a stable, collision-free import ID from the source path."""
+    raw = str(jsonl_path.resolve()).replace("\\", "/")
+    return "codex-" + hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _read_codex_title(jsonl_path):
+    """Quickly extract a readable title from a Codex JSONL without full parse."""
+    try:
+        with open(jsonl_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if record.get("type") != "response_item":
+                    continue
+                payload = record.get("payload") or {}
+                if payload.get("type") != "message" or payload.get("role") != "user":
+                    continue
+                for block in (payload.get("content") or []):
+                    if isinstance(block, dict) and block.get("type") == "input_text":
+                        text = str(block.get("text") or "").strip()
+                        if text and not _is_system_text(text):
+                            return text[:80].replace("\n", " ")
+    except Exception:
+        pass
+    return jsonl_path.stem
+
+
+def _read_codex_session_meta(jsonl_path):
+    """Parse a Codex JSONL to extract metadata without loading all messages.
+
+    Returns dict with title, message_count, created_at, or None on failure.
+    """
+    title = None
+    message_count = 0
+    created_at = ""
+    try:
+        with open(jsonl_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                rtype = record.get("type", "")
+                payload = record.get("payload") or {}
+
+                if rtype == "session_meta":
+                    created_at = str(payload.get("timestamp") or "")[:19]
+
+                if rtype == "response_item" and payload.get("type") == "message":
+                    role = payload.get("role", "")
+                    content_blocks = payload.get("content") or []
+                    text = ""
+                    for block in content_blocks:
+                        if isinstance(block, dict) and block.get("type") == "input_text":
+                            text += str(block.get("text") or "")
+                    if role == "user" and title is None and text.strip() and not _is_system_text(text):
+                        title = text.strip()[:80].replace("\n", " ")
+                    if role in ("user", "assistant"):
+                        # Count system messages for total but don't use them as titles
+                        if not _is_system_text(text):
+                            message_count += 1
+    except Exception:
+        return None
+    if not created_at and jsonl_path.parent.name.isdigit():
+        # Fallback: use directory structure YYYY/MM/DD as date
+        parts = jsonl_path.parts
+        created_at = "-".join(parts[-4:-1]) if len(parts) >= 4 else ""
+    return {
+        "title": title,
+        "message_count": message_count,
+        "created_at": created_at,
+    }
+
+
+def import_codex_session(source_path, target_session_id=None):
+    """Convert a Codex JSONL session to Code format and persist it.
+
+    Returns the new session dict on success, or raises ValueError.
+    """
+    source = Path(source_path).resolve()
+    if not source.is_file():
+        raise ValueError(f"Codex session not found: {source_path}")
+
+    session_id = target_session_id or _generate_codex_import_id(source)
+    safe_id = safe_session_id(session_id)
+    messages = []
+
+    with open(source, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            rtype = record.get("type", "")
+            payload = record.get("payload") or {}
+            if rtype != "response_item" or payload.get("type") != "message":
+                continue
+            role = payload.get("role", "")
+            if role not in ("user", "assistant"):
+                continue
+            content_blocks = payload.get("content") or []
+            text = ""
+            for block in content_blocks:
+                if isinstance(block, dict) and block.get("type") == "input_text":
+                    text += str(block.get("text") or "")
+            if not text.strip():
+                continue
+            ts = str(record.get("timestamp") or "")[:19]
+            msg = {"role": role, "content": text, "meta": {},
+                   "_time": (ts + "Z") if ts and not ts.endswith("Z") else ts,
+                   "_model": ""}
+            messages.append(msg)
+
+    if not messages:
+        raise ValueError("Codex session contains no importable messages")
+
+    # Determine title and timestamps (skip system messages for title)
+    first_user = next((m for m in messages
+                       if m["role"] == "user" and not _is_system_text(m["content"])), None)
+    if first_user is None:
+        first_user = next((m for m in messages if m["role"] == "user"), messages[0])
+    title = first_user["content"][:80].replace("\n", " ")
+    created_at = (messages[0]["_time"] or now_iso())[:19]
+    updated_at = (messages[-1]["_time"] or now_iso())[:19]
+    msg_count = len(messages)
+
+    # Write files
+    date_dir = _session_date_dir(session_id)
+    date_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = date_dir / f"{safe_id}.jsonl"
+    json_path = date_dir / f"{safe_id}.json"
+
+    write_jsonl(jsonl_path, messages)
+    meta = {
+        "id": safe_id,
+        "title": title,
+        "createdAt": created_at,
+        "updatedAt": updated_at,
+        "stats": {"input": 0, "output": 0, "cache": 0},
+        "lastUsage": {},
+        "runState": {},
+        "messageCount": msg_count,
+        "lastMessageTime": updated_at,
+    }
+    json_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2),
+                         encoding="utf-8")
+
+    # Update index
+    append_index(safe_id, title, updated_at, msg_count)
+    return meta
+
+
+def append_index(session_id, title, updated_at, message_count):
+    """Append a session entry to the sessions index."""
+    idx_path = SESSIONS_DIR / "index.jsonl"
+    entry = json.dumps({
+        "id": session_id,
+        "title": title,
+        "updatedAt": updated_at,
+        "messageCount": message_count,
+        "_parentId": None,
+        "_branchDepth": 0,
+    }, ensure_ascii=False)
+    try:
+        with open(idx_path, "a", encoding="utf-8") as f:
+            f.write(entry + "\n")
+    except OSError:
+        pass
+
+
 def resolve_project_path(relative_path=""):
     config = load_config()
     root = Path(config["projectRoot"]).expanduser().resolve()
@@ -7032,6 +7272,10 @@ class CodeHandler(BaseHTTPRequestHandler):
                         "total": state["total"],
                     })
                 return
+            if route == "/api/import/codex":
+                q = query.get("q", [None])[0]
+                self.send_json(list_codex_sessions(query=q))
+                return
             if route == "/api/sessions":
                 self.get_sessions()
                 return
@@ -7082,6 +7326,18 @@ class CodeHandler(BaseHTTPRequestHandler):
 
         try:
             route = parse.urlparse(self.path).path
+            if route.rstrip("/") == "/api/import/codex":
+                body = self.read_body_json()
+                source_path = (body.get("sourcePath") or "").strip()
+                if not source_path:
+                    self.send_json({"error": "Missing sourcePath"}, 400)
+                    return
+                try:
+                    meta = import_codex_session(source_path)
+                    self.send_json({"ok": True, "session": meta})
+                except ValueError as exc:
+                    self.send_json({"error": str(exc)}, 400)
+                return
             if route.rstrip("/") == "/api/agent/runs":
                 body = self.read_body_json()
                 payload = body.get("payload")

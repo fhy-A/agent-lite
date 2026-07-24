@@ -1219,5 +1219,170 @@ class TestLauncherInstall(unittest.TestCase):
         self.assertIn("Shortcut creation failed", log_call_msg)
 
 
+class TestCodexImport(unittest.TestCase):
+    """Tests for Codex session import (list, parse, convert, import)."""
+
+    def _make_codex_jsonl(self, messages, session_id="019f91af-test-session",
+                          created_at="2026-07-24T10:00:00Z"):
+        """Build a Codex-format JSONL string from simplified message tuples.
+
+        Each tuple: (role, text)  e.g. ("user", "hello")
+        """
+        lines = []
+        # session_meta
+        lines.append(json.dumps({
+            "type": "session_meta",
+            "timestamp": created_at,
+            "payload": {"session_id": session_id, "timestamp": created_at,
+                        "cwd": "/home/test", "originator": "codex-tui",
+                        "cli_version": "0.145.0", "source": "cli",
+                        "thread_source": "user", "model_provider": "custom",
+                        "history_mode": "legacy"}
+        }))
+        # messages
+        for role, text in messages:
+            lines.append(json.dumps({
+                "type": "response_item",
+                "timestamp": created_at,
+                "payload": {"type": "message", "role": role,
+                            "content": [{"type": "input_text", "text": text}]}
+            }))
+        return "\n".join(lines) + "\n"
+
+    def test_list_codex_sessions_detects_valid_file(self):
+        """A valid Codex JSONL appears in the session list."""
+        with tempfile.TemporaryDirectory() as td:
+            codex_dir = Path(td) / "2026" / "07" / "24"
+            codex_dir.mkdir(parents=True)
+            jsonl = codex_dir / "test-session.jsonl"
+            jsonl.write_text(self._make_codex_jsonl([
+                ("user", "帮我写一个 Python 脚本"),
+                ("assistant", "好的，这是脚本..."),
+            ]), encoding="utf-8")
+            with mock.patch.object(server, "CODEX_SESSIONS_DIR",
+                                   Path(td)):
+                sessions = server.list_codex_sessions()
+        self.assertGreaterEqual(len(sessions), 1)
+        self.assertIn("Python 脚本", sessions[0]["title"])
+        self.assertEqual(sessions[0]["messageCount"], 2)
+        self.assertEqual(sessions[0]["sourceId"], "test-session")
+        self.assertTrue(sessions[0]["sourcePath"].endswith(".jsonl"))
+
+    def test_list_codex_sessions_search_by_filename(self):
+        """Query parameter filters by filename."""
+        with tempfile.TemporaryDirectory() as td:
+            codex_dir = Path(td) / "2026" / "07" / "24"
+            codex_dir.mkdir(parents=True)
+            jsonl_a = codex_dir / "project-alpha.jsonl"
+            jsonl_a.write_text(self._make_codex_jsonl([
+                ("user", "Alpha project task"),
+                ("assistant", "OK"),
+            ]), encoding="utf-8")
+            jsonl_b = codex_dir / "project-beta.jsonl"
+            jsonl_b.write_text(self._make_codex_jsonl([
+                ("user", "Beta project task"),
+                ("assistant", "OK"),
+            ]), encoding="utf-8")
+            with mock.patch.object(server, "CODEX_SESSIONS_DIR", Path(td)):
+                all_sessions = server.list_codex_sessions()
+                alpha_only = server.list_codex_sessions(query="alpha")
+        self.assertEqual(len(all_sessions), 2)
+        self.assertEqual(len(alpha_only), 1)
+        self.assertIn("Alpha", alpha_only[0]["title"])
+
+    def test_list_codex_sessions_empty_dir(self):
+        """Empty or non-existent directory returns empty list."""
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.object(server, "CODEX_SESSIONS_DIR",
+                                   Path(td) / "nonexistent"):
+                sessions = server.list_codex_sessions()
+        self.assertEqual(sessions, [])
+
+    def test_read_codex_session_meta_extracts_title_and_count(self):
+        """_read_codex_session_meta returns title and message_count."""
+        with tempfile.TemporaryDirectory() as td:
+            jsonl = Path(td) / "test.jsonl"
+            jsonl.write_text(self._make_codex_jsonl([
+                ("user", "项目交接测试"),
+                ("assistant", "收到，开始处理"),
+                ("user", "第二步"),
+                ("assistant", "好的"),
+            ]), encoding="utf-8")
+            meta = server._read_codex_session_meta(jsonl)
+        self.assertEqual(meta["title"], "项目交接测试")
+        self.assertEqual(meta["message_count"], 4)
+
+    def test_import_codex_session_creates_code_files(self):
+        """Import creates .jsonl, .json, and updates index."""
+        with tempfile.TemporaryDirectory() as td:
+            codex_file = Path(td) / "codex-session.jsonl"
+            codex_file.write_text(self._make_codex_jsonl([
+                ("user", "这是第一条消息"),
+                ("assistant", "这是回复"),
+            ]), encoding="utf-8")
+            sessions_dir = Path(td) / "code-sessions"
+            sessions_dir.mkdir()
+            idx = sessions_dir / "index.jsonl"
+            idx.write_text("", encoding="utf-8")
+            date_dir = sessions_dir / "2026" / "07" / "25"
+            with mock.patch.object(server, "SESSIONS_DIR", sessions_dir), \
+                 mock.patch.object(server, "_session_date_dir",
+                                   return_value=date_dir):
+                meta = server.import_codex_session(str(codex_file))
+
+            self.assertEqual(meta["title"], "这是第一条消息")
+            self.assertEqual(meta["messageCount"], 2)
+            self.assertTrue(meta["id"])
+
+            # Verify files exist (must be inside tempdir context)
+            jsonl_files = list(date_dir.glob("*.jsonl"))
+            json_files = list(date_dir.glob("*.json"))
+            self.assertEqual(len(jsonl_files), 1)
+            self.assertEqual(len(json_files), 1)
+
+            # Verify messages are readable
+            msgs = server.read_jsonl(jsonl_files[0])
+            self.assertEqual(len(msgs), 2)
+            self.assertEqual(msgs[0]["role"], "user")
+            self.assertEqual(msgs[0]["content"], "这是第一条消息")
+
+    def test_import_codex_session_rejects_nonexistent_file(self):
+        with self.assertRaises(ValueError):
+            server.import_codex_session("/nonexistent/path.jsonl")
+
+    def test_import_codex_session_rejects_empty(self):
+        """A file with no valid messages raises ValueError."""
+        with tempfile.TemporaryDirectory() as td:
+            empty = Path(td) / "empty.jsonl"
+            empty.write_text(
+                '{"type":"session_meta","payload":{"session_id":"x"}}\n',
+                encoding="utf-8")
+            with self.assertRaises(ValueError):
+                server.import_codex_session(str(empty))
+
+    def test_generate_import_id_is_stable(self):
+        """Same path produces same import ID."""
+        id1 = server._generate_codex_import_id(
+            Path("C:/Users/Admin/.codex/sessions/2026/07/24/test.jsonl"))
+        id2 = server._generate_codex_import_id(
+            Path("C:/Users/Admin/.codex/sessions/2026/07/24/test.jsonl"))
+        self.assertEqual(id1, id2)
+        self.assertTrue(id1.startswith("codex-"))
+
+    def test_list_codex_sessions_skips_empty_files(self):
+        """Session with 0 messages is excluded from the list."""
+        with tempfile.TemporaryDirectory() as td:
+            codex_dir = Path(td) / "2026" / "07" / "24"
+            codex_dir.mkdir(parents=True)
+            jsonl = codex_dir / "empty.jsonl"
+            jsonl.write_text(
+                '{"type":"session_meta","payload":{"session_id":"x"}}\n',
+                encoding="utf-8")
+            with mock.patch.object(server, "CODEX_SESSIONS_DIR",
+                                   Path(td)):
+                sessions = server.list_codex_sessions()
+        self.assertEqual(len(sessions), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

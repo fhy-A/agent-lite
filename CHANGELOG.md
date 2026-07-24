@@ -6,13 +6,19 @@
 
 ---
 
-## 2026-07-24 · workbar 渠道上线 & Code 模型分类修复
+## 2026-07-24 · workbar 渠道上线、更新重启修复 (v0.5.19 ~ v0.5.23)
 
 - **workbar 渠道配置完成**：BoxYing 主力 + ByteCatCode 补充，共 5 条渠道 9 款模型上线。详见 `模型定价/` 目录
 - **渠道类型踩坑**：Claude + tool_choice 时上游 OpenAI → Anthropic 格式转换问题，ByteCatCode 的 Claude 需选 Anthropic 类型。记入 `workbar-channel-type-selection.md`
 - **模型分类修复**：`app.js` 新增 XAI 模式匹配 `grok`，grok-4.5 不再归入「其他」
 - **文档体系**：新增 `模型定价/GUIDE.md` 运维指南、`新用户自动令牌配置.md`；重命名 `竞品数据` → `模型定价`
 - **GENERATE_DEFAULT_TOKEN**：确认环境变量启用新用户自动创建令牌，配合 `QuotaForNewUser` 赠送初始余额
+- **更新重启多次修复 (v0.5.19~0.5.23)**：
+  - v0.5.19：XAI 分类 + workbar 品牌统一
+  - v0.5.20：三层 `.part` 防护（启动/重启/下载），但 PS 脚本本身有 PyInstaller 冲突
+  - v0.5.21：重启改回 batch 文件（`cmd /c` 方式），避免 PS `Start-Process` 干扰 PyInstaller 解压
+  - v0.5.23：修复 batch 中 `setlocal enabledelayedexpansion` 导致 `%logPath%` 不被展开
+  - **待验证**：v0.5.24 端到端更新测试
 
 - 本文件是项目**已完成改动与验证结果**的统一记录；`TODO.md` 是项目**未完成事项、优先级与后续计划**的统一记录。
 - Claude Code、Codex 及人工开发者开始任务前都应先阅读这两个文件，避免重复实现或依据过期信息工作。

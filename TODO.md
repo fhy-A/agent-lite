@@ -8,11 +8,14 @@ _上次更新：2026-07-24_
 
 ## P0 · workbar 上线后收口
 
-- ~~workbar品牌统一为小写字母~~ ✅ Code 部分已完成（i18n/UI/文档/测试/注释），主站（New API 前端）待同步。
-- ~~确定正式 API 上游、模型组合与定价方案。~~ ✅ 已完成：BoxYing + ByteCatCode 双渠道，9 款模型，加权毛利 ~45%。详见 `模型定价/分析结果/workbar采购/`。
+- ~~workbar品牌统一为小写字母~~ ✅ Code 部分已完成
+- ~~确定正式 API 上游、模型组合与定价方案~~ ✅ BoxYing + ByteCatCode，9 款模型
+- ~~更新重启机制修复~~ ✅ v0.5.23 改为 batch 方式，待 v0.5.24 端到端验证
 - 创建令牌时选择模型限制加入供应商级联下拉框
-- 确认 workbar 服务器国内可访问性：用户无需 VPN 直连 workbar，上游渠道（BoxYing/ByteCatCode）由 workbar 服务端代理请求。需验证部署方案（国内服务器需备案 vs 海外+Cloudflare）。
-- 创建令牌时选择模型限制加入供应商级联下拉框
+- 确认 workbar 服务器国内可访问性
+- 开发推送 `GENERATE_DEFAULT_TOKEN` + `QuotaForNewUser` 配置
+- 寻找 Gemini 替代渠道（LinkAI 不可用）
+- `tests/test_new_skills_routing.py` `sys.exit(0)` 导致 pytest 无法收集用例，需加 `__name__ == '__main__'` 守卫
 - 完成 workbar 品牌 Logo、首页内容与用户文档。
 - workbar登录/注册页改造
 - 配置并启用企业域名邮箱。

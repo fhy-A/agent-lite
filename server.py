@@ -5147,8 +5147,8 @@ def import_codex_session(source_path, target_session_id=None):
     updated_at = (messages[-1]["_time"] or now_iso())[:19]
     msg_count = len(messages)
 
-    # Write files
-    date_dir = _session_date_dir(session_id)
+    # Write files under the date derived from the first message timestamp
+    date_dir = SESSIONS_DIR / created_at[:4] / created_at[5:7] / created_at[8:10]
     date_dir.mkdir(parents=True, exist_ok=True)
     jsonl_path = date_dir / f"{safe_id}.jsonl"
     json_path = date_dir / f"{safe_id}.json"
@@ -5189,6 +5189,209 @@ def append_index(session_id, title, updated_at, message_count):
             f.write(entry + "\n")
     except OSError:
         pass
+
+
+# ═══════════════════════════════════════════════════════════════
+# Unified session import (Codex + Claude Code)
+# ═══════════════════════════════════════════════════════════════
+
+CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
+
+# ── Unified API ──
+
+def list_importable_sessions(source, query=None):
+    """List importable sessions from *source* ('codex' or 'claude-code')."""
+    if source == "codex":
+        return list_codex_sessions(query=query)
+    if source == "claude-code":
+        return list_claude_sessions(query=query)
+    raise ValueError(f"Unknown import source: {source}")
+
+
+def import_session(source, source_path):
+    """Import a session from *source* and return the new session metadata."""
+    if source == "codex":
+        return import_codex_session(source_path)
+    if source == "claude-code":
+        return import_claude_session(source_path)
+    raise ValueError(f"Unknown import source: {source}")
+
+
+# ── Claude Code scanner / converter ──
+
+def _claude_content_text(content):
+    """Extract plain text from a Claude Code message content field.
+
+    Claude Code stores user content as a plain string and assistant content
+    as an array of {type: "text", text: "..."} blocks.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(str(block.get("text") or ""))
+        return "".join(parts)
+    return str(content or "")
+
+
+def list_claude_sessions(query=None):
+    """Scan ~/.claude/projects/*/ for .jsonl sessions and return a list."""
+    if not CLAUDE_PROJECTS_DIR.exists():
+        return []
+    q = (query or "").strip().lower()
+    sessions = []
+    for jsonl_path in sorted(CLAUDE_PROJECTS_DIR.rglob("*.jsonl"), reverse=True):
+        try:
+            source_id = jsonl_path.stem
+            title = _read_claude_title(jsonl_path, jsonl_path.parent.name)
+            if q and q not in source_id.lower() and q not in title.lower():
+                continue
+            meta = _read_claude_session_meta(jsonl_path)
+            if not meta:
+                continue
+            if meta.get("message_count", 0) == 0:
+                continue
+            sessions.append({
+                "id": "claude-" + hashlib.sha256(
+                    str(jsonl_path.resolve()).replace("\\", "/").encode()
+                ).hexdigest()[:16],
+                "sourceId": source_id,
+                "title": title or "Claude 会话",
+                "messageCount": meta["message_count"],
+                "createdAt": meta.get("created_at", ""),
+                "sourcePath": str(jsonl_path.resolve()),
+                "project": jsonl_path.parent.name,
+            })
+        except Exception:
+            continue
+    return sessions
+
+
+def _read_claude_title(jsonl_path, project_name=""):
+    """Extract the first user message as title from a Claude Code session."""
+    try:
+        with open(jsonl_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if record.get("type") != "user":
+                    continue
+                msg = record.get("message") or {}
+                text = _claude_content_text(msg.get("content", "")).strip()
+                if text and len(text) > 2:
+                    return text[:80].replace("\n", " ")
+    except Exception:
+        pass
+    return project_name or jsonl_path.stem
+
+
+def _read_claude_session_meta(jsonl_path):
+    """Parse a Claude Code JSONL to extract metadata."""
+    title = None
+    message_count = 0
+    created_at = ""
+    try:
+        with open(jsonl_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                rtype = record.get("type", "")
+                if rtype not in ("user", "assistant"):
+                    continue
+                timestamp = str(record.get("timestamp") or "")
+                if not created_at and timestamp:
+                    created_at = timestamp[:19]
+                msg = record.get("message") or {}
+                role = msg.get("role", "")
+                if role in ("user", "assistant"):
+                    text = _claude_content_text(msg.get("content", "")).strip()
+                    if role == "user" and title is None and text and len(text) > 2:
+                        title = text[:80].replace("\n", " ")
+                    if text:
+                        message_count += 1
+    except Exception:
+        return None
+    if not created_at:
+        created_at = now_iso()[:19]
+    return {"title": title, "message_count": message_count, "created_at": created_at}
+
+
+def import_claude_session(source_path, target_session_id=None):
+    """Convert a Claude Code JSONL session to Code format and persist it."""
+    source = Path(source_path).resolve()
+    if not source.is_file():
+        raise ValueError(f"Claude Code session not found: {source_path}")
+
+    session_id = target_session_id or (
+        "claude-" + hashlib.sha256(
+            str(source).replace("\\", "/").encode()
+        ).hexdigest()[:16])
+    safe_id = safe_session_id(session_id)
+    messages = []
+
+    with open(source, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            rtype = record.get("type", "")
+            if rtype not in ("user", "assistant"):
+                continue
+            msg = record.get("message") or {}
+            role = msg.get("role", "")
+            if role not in ("user", "assistant"):
+                continue
+            text = _claude_content_text(msg.get("content", "")).strip()
+            if not text:
+                continue
+            ts = str(record.get("timestamp") or "")[:19]
+            new_msg = {"role": role, "content": text, "meta": {},
+                       "_time": (ts + "Z") if ts and not ts.endswith("Z") else ts,
+                       "_model": str(msg.get("model") or "")}
+            messages.append(new_msg)
+
+    if not messages:
+        raise ValueError("Claude Code session contains no importable messages")
+
+    first_user = next((m for m in messages if m["role"] == "user"), messages[0])
+    title = first_user["content"][:80].replace("\n", " ")
+    created_at = (messages[0]["_time"] or now_iso())[:19]
+    updated_at = (messages[-1]["_time"] or now_iso())[:19]
+    msg_count = len(messages)
+
+    date_dir = _session_date_dir(session_id)
+    date_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path_out = date_dir / f"{safe_id}.jsonl"
+    json_path_out = date_dir / f"{safe_id}.json"
+
+    write_jsonl(jsonl_path_out, messages)
+    meta = {
+        "id": safe_id, "title": title,
+        "createdAt": created_at, "updatedAt": updated_at,
+        "stats": {"input": 0, "output": 0, "cache": 0},
+        "lastUsage": {}, "runState": {},
+        "messageCount": msg_count, "lastMessageTime": updated_at,
+    }
+    json_path_out.write_text(json.dumps(meta, ensure_ascii=False, indent=2),
+                             encoding="utf-8")
+    append_index(safe_id, title, updated_at, msg_count)
+    return meta
 
 
 def resolve_project_path(relative_path=""):
@@ -7272,9 +7475,13 @@ class CodeHandler(BaseHTTPRequestHandler):
                         "total": state["total"],
                     })
                 return
-            if route == "/api/import/codex":
+            if route == "/api/import/sessions":
+                src = query.get("source", ["codex"])[0]
                 q = query.get("q", [None])[0]
-                self.send_json(list_codex_sessions(query=q))
+                try:
+                    self.send_json(list_importable_sessions(src, query=q))
+                except ValueError as exc:
+                    self.send_json({"error": str(exc)}, 400)
                 return
             if route == "/api/sessions":
                 self.get_sessions()
@@ -7326,14 +7533,15 @@ class CodeHandler(BaseHTTPRequestHandler):
 
         try:
             route = parse.urlparse(self.path).path
-            if route.rstrip("/") == "/api/import/codex":
+            if route.rstrip("/") == "/api/import/sessions":
                 body = self.read_body_json()
+                src = (body.get("source") or "codex").strip()
                 source_path = (body.get("sourcePath") or "").strip()
                 if not source_path:
                     self.send_json({"error": "Missing sourcePath"}, 400)
                     return
                 try:
-                    meta = import_codex_session(source_path)
+                    meta = import_session(src, source_path)
                     self.send_json({"ok": True, "session": meta})
                 except ValueError as exc:
                     self.send_json({"error": str(exc)}, 400)

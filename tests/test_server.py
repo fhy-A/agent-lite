@@ -1324,23 +1324,20 @@ class TestCodexImport(unittest.TestCase):
             sessions_dir.mkdir()
             idx = sessions_dir / "index.jsonl"
             idx.write_text("", encoding="utf-8")
-            date_dir = sessions_dir / "2026" / "07" / "25"
-            with mock.patch.object(server, "SESSIONS_DIR", sessions_dir), \
-                 mock.patch.object(server, "_session_date_dir",
-                                   return_value=date_dir):
+            # import now uses created_at from messages (2026-07-24) for date_dir
+            date_dir = sessions_dir / "2026" / "07" / "24"
+            with mock.patch.object(server, "SESSIONS_DIR", sessions_dir):
                 meta = server.import_codex_session(str(codex_file))
 
             self.assertEqual(meta["title"], "这是第一条消息")
             self.assertEqual(meta["messageCount"], 2)
             self.assertTrue(meta["id"])
 
-            # Verify files exist (must be inside tempdir context)
             jsonl_files = list(date_dir.glob("*.jsonl"))
             json_files = list(date_dir.glob("*.json"))
             self.assertEqual(len(jsonl_files), 1)
             self.assertEqual(len(json_files), 1)
 
-            # Verify messages are readable
             msgs = server.read_jsonl(jsonl_files[0])
             self.assertEqual(len(msgs), 2)
             self.assertEqual(msgs[0]["role"], "user")
@@ -1382,6 +1379,76 @@ class TestCodexImport(unittest.TestCase):
                                    Path(td)):
                 sessions = server.list_codex_sessions()
         self.assertEqual(len(sessions), 0)
+
+    # ── Claude Code import tests ──
+
+    def _make_claude_jsonl(self, messages):
+        """Build a Claude Code-format JSONL from (role, text) tuples."""
+        lines = []
+        for role, text in messages:
+            content = text if role == "user" else [{"type": "text", "text": text}]
+            lines.append(json.dumps({
+                "type": role,
+                "message": {"role": role, "content": content},
+                "timestamp": "2026-07-24T10:00:00.000Z",
+                "sessionId": "test-claude-session",
+                "cwd": "/home/test/project",
+            }))
+        return "\n".join(lines) + "\n"
+
+    def test_list_claude_sessions(self):
+        with tempfile.TemporaryDirectory() as td:
+            proj = Path(td) / "my-project"
+            proj.mkdir(parents=True)
+            jsonl = proj / "abc123.jsonl"
+            jsonl.write_text(self._make_claude_jsonl([
+                ("user", "帮我优化数据库查询"),
+                ("assistant", "好的，先看看现有代码"),
+            ]), encoding="utf-8")
+            with mock.patch.object(server, "CLAUDE_PROJECTS_DIR", Path(td)):
+                sessions = server.list_claude_sessions()
+        self.assertGreaterEqual(len(sessions), 1)
+        self.assertEqual(sessions[0]["title"], "帮我优化数据库查询")
+        self.assertEqual(sessions[0]["messageCount"], 2)
+        self.assertEqual(sessions[0]["project"], "my-project")
+        self.assertTrue(sessions[0]["id"].startswith("claude-"))
+
+    def test_import_claude_session(self):
+        with tempfile.TemporaryDirectory() as td:
+            jsonl = Path(td) / "session.jsonl"
+            jsonl.write_text(self._make_claude_jsonl([
+                ("user", "Claude 导入测试"),
+                ("assistant", "收到，这是回复"),
+                ("user", "继续第二步"),
+                ("assistant", "好的"),
+            ]), encoding="utf-8")
+            sessions_dir = Path(td) / "code-sessions"
+            sessions_dir.mkdir()
+            (sessions_dir / "index.jsonl").write_text("", encoding="utf-8")
+            date_dir = sessions_dir / "2026" / "07" / "24"
+            with mock.patch.object(server, "SESSIONS_DIR", sessions_dir):
+                meta = server.import_claude_session(str(jsonl))
+            self.assertEqual(meta["title"], "Claude 导入测试")
+            self.assertEqual(meta["messageCount"], 4)
+            # Find the created jsonl file (may be in any subdirectory)
+            created = list(sessions_dir.rglob(f"{meta['id']}.jsonl"))
+            self.assertEqual(len(created), 1,
+                            f"Expected 1 jsonl for {meta['id']}, found {len(created)} in {list(sessions_dir.rglob('*'))}")
+
+    def test_unified_list_api(self):
+        """list_importable_sessions dispatches correctly."""
+        with tempfile.TemporaryDirectory() as td:
+            codex_dir = Path(td) / "2026" / "07" / "24"
+            codex_dir.mkdir(parents=True)
+            (codex_dir / "test.jsonl").write_text(self._make_codex_jsonl([
+                ("user", "测试"), ("assistant", "好的")
+            ]), encoding="utf-8")
+            with mock.patch.object(server, "CODEX_SESSIONS_DIR", Path(td)):
+                sessions = server.list_importable_sessions("codex")
+            self.assertGreaterEqual(len(sessions), 1)
+        # Unknown source
+        with self.assertRaises(ValueError):
+            server.list_importable_sessions("unknown-source")
 
 
 if __name__ == "__main__":

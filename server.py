@@ -2941,84 +2941,71 @@ def _powershell_literal(value):
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def _build_update_script(current_exe, new_exe, log_path):
-    """Build the detached PowerShell updater used after the app exits.
+def _build_update_script(target_dir, new_exe, partial_exe, log_path):
+    """Build a batch-file updater that runs detached after the app exits.
 
-    Both *current_exe* and *new_exe* are versioned Code-vX.Y.Z.exe files
-    inside the same installation directory.  The script kills every old
-    instance, removes stale versioned files, and launches the new build.
+    Returns the path to a temporary .bat file.  The caller spawns it via
+    ``cmd /c`` and then exits.
+
+    Uses only built-in Windows commands (taskkill, move, start) so the
+    relaunched process sees the same environment as an Explorer double-click.
+    PowerShell's Start-Process / CreateProcess interferes with PyInstaller's
+    bootloader extraction at %%TEMP%%.
     """
-    target_dir = Path(current_exe).resolve().parent
-    current_exe = Path(current_exe).resolve()
+    target_dir = Path(target_dir).resolve()
     new_exe = Path(new_exe).resolve()
+    partial_exe = Path(partial_exe).resolve() if partial_exe else None
     log_path = Path(log_path).resolve()
-    return f"""
-$ErrorActionPreference = 'Stop'
-$targetDir = {_powershell_literal(target_dir)}
-$currentExe = {_powershell_literal(current_exe)}
-$newExe = {_powershell_literal(new_exe)}
-$logPath = {_powershell_literal(log_path)}
 
-function Write-UpdateLog([string]$message) {{
-    $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $message"
-    Add-Content -LiteralPath $logPath -Value $line -Encoding UTF8
-}}
+    import tempfile as _tempfile
+    fd, bat_path = _tempfile.mkstemp(suffix=".bat", prefix="code-update-")
+    with os.fdopen(fd, "w") as _bat:
+        _bat.write(f"""@echo off
+setlocal enabledelayedexpansion
+set "targetDir={target_dir}"
+set "newExe={new_exe}"
+set "partialExe={partial_exe or ''}"
+set "logPath={log_path}"
+echo %%date%% %%time%% update started >> "%%logPath%%"
+timeout /t 2 /nobreak >nul
 
-try {{
-    Write-UpdateLog "update started: $currentExe -> $newExe"
-    Start-Sleep -Seconds 1
+:: Kill all old Code-v*.exe processes.
+for /l %%%%i in (1,1,40) do (
+    set "found="
+    for /f "tokens=2" %%%%p in ('tasklist /fi "IMAGENAME eq Code.exe" /fo csv /nh 2^>nul') do (
+        set "pid=%%%%~p"
+        if defined pid (
+            taskkill /pid !pid! /f >nul 2>&1
+            set "found=1"
+        )
+    )
+    if not defined found goto :replace
+    timeout /t 1 /nobreak >nul
+)
 
-    $deadline = (Get-Date).AddSeconds(20)
-    do {{
-        $agents = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {{
-            $_.ExecutablePath -and
-            ([IO.Path]::GetDirectoryName($_.ExecutablePath) -ieq $targetDir) -and
-            ($_.Name -match '^Code-v[0-9.]+[.]exe$')
-        }})
-        foreach ($agent in $agents) {{
-            Stop-Process -Id $agent.ProcessId -Force -ErrorAction SilentlyContinue
-        }}
-        if ($agents.Count -eq 0) {{ break }}
-        Start-Sleep -Milliseconds 500
-    }} while ((Get-Date) -lt $deadline)
+:replace
+if exist "%%partialExe%%" (
+    move /y "%%partialExe%%" "%%newExe%%" >nul 2>&1
+    echo %%date%% %%time%% completed .part rename >> "%%logPath%%"
+)
+if not exist "%%newExe%%" (
+    echo %%date%% %%time%% executable not found >> "%%logPath%%"
+    exit /b 1
+)
 
-    # If the target .exe is missing but a valid .exe.part exists, complete the rename.
-    if (-not (Test-Path -LiteralPath $newExe -PathType Leaf)) {{
-        $partial = "$newExe.part"
-        if ((Test-Path -LiteralPath $partial -PathType Leaf) -and ((Get-Item -LiteralPath $partial).Length -gt 1048576)) {{
-            Write-UpdateLog "completing partial rename: $partial -> $newExe"
-            Move-Item -LiteralPath $partial -Destination $newExe -Force
-        }}
-    }}
-    if (-not (Test-Path -LiteralPath $newExe -PathType Leaf)) {{
-        throw "downloaded executable does not exist: $newExe"
-    }}
+:: Clean up older versioned builds, keep only the new one.
+for %%%%f in ("%%targetDir%%\Code-v*.exe") do (
+    if /i not "%%%%f"=="%%newExe%%" (
+        del /f "%%%%f" >nul 2>&1
+        if not errorlevel 1 echo %%date%% %%time%% cleaned up: %%%%~nxf >> "%%logPath%%"
+    )
+)
 
-    $oldFiles = @(Get-ChildItem -LiteralPath $targetDir -Filter 'Code-v*.exe' -File | Where-Object {{
-        $_.FullName -ine $newExe
-    }})
-    foreach ($oldFile in $oldFiles) {{
-        $deleted = $false
-        for ($attempt = 0; $attempt -lt 10; $attempt++) {{
-            try {{
-                Remove-Item -LiteralPath $oldFile.FullName -Force -ErrorAction Stop
-                $deleted = $true
-                break
-            }} catch {{
-                Start-Sleep -Milliseconds 500
-            }}
-        }}
-        if (-not $deleted) {{ throw "failed to delete old executable: $($oldFile.FullName)" }}
-    }}
-
-    Start-Process -FilePath $newExe -ArgumentList '--reuse-browser' -WorkingDirectory $targetDir
-    Write-UpdateLog "update completed and new version started: $newExe"
-}} catch {{
-    Write-UpdateLog "update failed: $($_.Exception.Message)"
-    exit 1
-}}
-""".strip()
-
+start "" "%%newExe%%" --reuse-browser
+echo %%date%% %%time%% update completed >> "%%logPath%%"
+del "%%~f0" & exit
+""")
+    return bat_path
 
 def _load_tray_icon():
     """Load tray icon image. Try data dir first, then APP_DIR, fall back to generated."""
@@ -8180,16 +8167,22 @@ class CodeHandler(BaseHTTPRequestHandler):
                     # Last resort: the PS updater can also handle the .part
                     pass
         if not _is_valid_windows_executable(new_exe):
-            self.send_json({"error": "Update file not found or invalid"}, 400)
-            return
+            partial_exe = new_exe.with_suffix(new_exe.suffix + ".part")
+            if partial_exe.is_file() and _is_valid_windows_executable(partial_exe):
+                new_exe = partial_exe  # batch updater will rename it
+            else:
+                self.send_json({"error": "Update file not found or invalid"}, 400)
+                return
+        else:
+            partial_exe = None
         log_path = DATA_DIR / "update.log"
-        ps_script = _build_update_script(current_exe, new_exe, log_path)
-        encoded = base64.b64encode(ps_script.encode("utf-16-le")).decode("ascii")
+        bat_path = _build_update_script(target_dir, new_exe, partial_exe, log_path)
         self.send_json({"ok": True, "nextExecutable": str(new_exe)})
         subprocess.Popen(
-            ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-            creationflags=0x08000000,
+            ["cmd", "/c", str(bat_path)],
+            creationflags=0x08000000,  # CREATE_NO_WINDOW
             close_fds=True,
+            cwd=str(target_dir),
         )
         os._exit(0)
 

@@ -8679,6 +8679,9 @@ async function projectAgentEvent(ctx, event) {
 }
 
 async function requestServerAgentInput(ctx, pendingInput) {
+  if (pendingInput && pendingInput.type === "empty_response") {
+    return requestEmptyResponseContinue(ctx, pendingInput);
+  }
   if (!pendingInput || !Array.isArray(pendingInput.questions)) {
     throw new Error("Server Agent is waiting for user input without a valid questionnaire");
   }
@@ -8688,6 +8691,42 @@ async function requestServerAgentInput(ctx, pendingInput) {
     _toolCallId: String(pendingInput.toolCallId || ""),
     _agentRunId: ctx.agentRunId,
   }, ctx);
+}
+
+async function requestEmptyResponseContinue(ctx, pendingInput) {
+  const reasoning = String(pendingInput.reasoning || "").trim();
+  if (reasoning) {
+    ctx.messages.push({
+      role: "assistant",
+      content: reasoning,
+      meta: { reasoningAsContent: true },
+    });
+    renderConversation();
+  }
+  return new Promise(function (resolve) {
+    const btn = document.createElement("button");
+    btn.className = "empty-response-continue-btn";
+    btn.textContent = "模型未生成正式回复，点击继续";
+    btn.onclick = async function () {
+      btn.disabled = true;
+      btn.textContent = "正在继续...";
+      try {
+        if (!window.AgentRuntime || !window.AgentRuntime.submitAgentInput) {
+          throw new Error("Agent input runtime unavailable");
+        }
+        await window.AgentRuntime.submitAgentInput(ctx.agentRunId, { answers: {} });
+        resolve({ ok: true });
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = "继续失败，点击重试";
+        console.error("empty_response continue failed:", e);
+      }
+    };
+    const container = document.getElementById("composerInputBar");
+    if (container) {
+      container.appendChild(btn);
+    }
+  });
 }
 
 function ensureServerAuthorizationProjection(ctx, pendingAuthorization) {

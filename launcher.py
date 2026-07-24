@@ -74,7 +74,7 @@ def create_desktop_shortcut(target_exe):
     """Create or update a desktop shortcut pointing to *target_exe*.
 
     Uses PowerShell + WScript.Shell to produce a proper .lnk file.
-    Failures are non-fatal.
+    Failures are non-fatal but logged to install.log.
     """
     if os.name != "nt":
         return False
@@ -96,6 +96,9 @@ def create_desktop_shortcut(target_exe):
         workdir=str(target_dir).replace("'", "''"),
         icon=str(target_exe).replace("'", "''"),
     )
+    log_dir = Path.home() / ".code"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "install.log"
     try:
         result = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
@@ -104,9 +107,26 @@ def create_desktop_shortcut(target_exe):
             timeout=15,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-        return result.returncode == 0 and "ok" in result.stdout
-    except Exception:
+        ok = result.returncode == 0 and "ok" in result.stdout
+        if not ok:
+            _append_log(log_path,
+                f"Shortcut creation failed: rc={result.returncode} "
+                f"stdout={result.stdout.strip()!r} stderr={result.stderr.strip()!r}")
+        return ok
+    except Exception as exc:
+        _append_log(log_path, f"Shortcut creation exception: {exc}")
         return False
+
+
+def _append_log(log_path, message):
+    """Append a timestamped line to the install log."""
+    import datetime as _dt
+    try:
+        ts = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] {message}\n")
+    except Exception:
+        pass
 
 
 def ensure_installed():
@@ -137,7 +157,8 @@ def ensure_installed():
             print(f"  Copy failed: {exc}")
             print("  Please move the file manually to: " + str(target_exe))
             return
-        create_desktop_shortcut(target_exe)
+        if not create_desktop_shortcut(target_exe):
+            print("  Shortcut creation failed — see install.log for details.")
         subprocess.Popen(
             [str(target_exe), "--reuse-browser"],
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),

@@ -861,7 +861,38 @@ def _redact_agent_secrets(run, value):
     return text
 
 
-def _finish_agent_run(run, status, error_message=""):
+_EMPTY_PROMISE_PATTERNS = [
+    # Chinese: "我来...", "让我...", "先...", "马上...", "正在..."
+    re.compile(r"^(我来|让我|我先|我先来|马上|正在|这就|立即|立刻)"),
+    # Chinese: "检查一下", "看一下", "确认一下", "试一下"
+    re.compile(r"^(检查|查看|确认|验证|试|试试|尝试).{0,4}(一下|看看|下)"),
+    # English: "I'll", "Let me", "I will", "Let's"
+    re.compile(r"^(I'?ll|Let me|I will|Let'?s)\b", re.IGNORECASE),
+    # English: "First,", "First I'll"
+    re.compile(r"^(First,?\s|To start)"),
+]
+
+
+def _is_empty_promise(content):
+    """Detect model responses that make promises but take no action.
+
+    Returns True if the content reads like a commitment to do something
+    rather than an actual answer or result.  Used to prevent agent runs
+    from being marked 'completed' when the model only said "I'll check..."
+    """
+    text = (content or "").strip()
+    if not text:
+        return False
+    # Content too short to be a real answer AND matches a promise pattern
+    if len(text) > 200:
+        return False
+    for pat in _EMPTY_PROMISE_PATTERNS:
+        if pat.search(text):
+            return True
+    return False
+
+
+def _finish_agent_run(run, status, error_message="", error_code=""):
     if status not in _AGENT_RUN_TERMINAL:
         raise ValueError("invalid terminal Agent status")
     with run["condition"]:
@@ -870,13 +901,19 @@ def _finish_agent_run(run, status, error_message=""):
         run["status"] = status
         run["resume_status"] = ""
         run["error"] = _redact_agent_secrets(run, error_message)[:2000]
+        run["error_code"] = str(error_code)[:64] if error_code else ""
         run["active_runtime_id"] = ""
         run["keys"] = []
         run["updated_at"] = now_iso()
+        event_data = {}
+        if run["error"]:
+            event_data["error"] = run["error"]
+        if run["error_code"]:
+            event_data["errorCode"] = run["error_code"]
         event = {
             "seq": run["next_seq"],
             "type": status,
-            "data": {"error": run["error"]} if run["error"] else {},
+            "data": event_data,
             "createdAt": run["updated_at"],
         }
         run["next_seq"] += 1
@@ -1364,6 +1401,20 @@ def _submit_agent_input(run, answers):
         pending_input = _json_clone(run.get("pending_input"))
     if not isinstance(pending_input, dict):
         raise ValueError("Agent run has no pending user input")
+
+    # Handle empty_response type: model produced reasoning but no content.
+    # The user chooses to continue — no tool execution to update.
+    if pending_input.get("type") == "empty_response":
+        with run["condition"]:
+            run["pending_input"] = None
+            run["messages"].append({"role": "user", "content": "请继续"})
+            run["status"] = "waiting_credentials"
+            run["resume_status"] = "model"
+            run["updated_at"] = now_iso()
+            run["condition"].notify_all()
+        _persist_agent_run(run)
+        return {"ok": True}
+
     result = _normalize_agent_input_result(pending_input, answers)
     call_id = str(pending_input.get("toolCallId") or "")
 
@@ -2607,16 +2658,53 @@ def _agent_run_worker(run):
                 _set_agent_status(run, "tools")
                 continue
 
+            # ── No tool calls: classify the model's output ──
+            content = str(model_result.get("content") or "").strip()
+            reasoning = str(model_result.get("reasoning") or "").strip()
+
+            if not content:
+                if reasoning:
+                    # Case 2: model produced thinking but no text / no tools.
+                    # Pause and let the user decide — the reasoning may contain
+                    # the actual response (channel mismatch) or be half-done.
+                    run["empty_promise_count"] = 0
+                    run["pending_input"] = {
+                        "type": "empty_response",
+                        "reasoning": reasoning,
+                        "requestId": str(uuid.uuid4()),
+                    }
+                    _append_agent_event(run, "user_input_required",
+                        run["pending_input"])
+                    _set_agent_status(run, "waiting_user_input")
+                    return
+                # Hard error: completely empty response with no reasoning.
+                _finish_agent_run(run, "failed",
+                    "模型返回空响应，请重试", error_code="empty_response")
+                return
+
+            if _is_empty_promise(content):
+                run["empty_promise_count"] += 1
+                if run["empty_promise_count"] >= 2:
+                    _finish_agent_run(run, "failed",
+                        "模型连续两次未执行操作，请尝试重新描述任务",
+                        error_code="empty_response")
+                    return
+                # Case 3: model made a promise but took no action — auto-continue.
+                run["messages"].append({"role": "user", "content": "请直接执行，不要只是描述计划"})
+                continue
+
+            # Case 1 completion: model produced substantive content with no tools.
+            run["empty_promise_count"] = 0
             run["result"] = {
-                "content": round_record["content"],
-                "reasoning": round_record["reasoning"],
-                "finishReason": round_record["finishReason"],
+                "content": content,
+                "reasoning": reasoning,
+                "finishReason": str(model_result.get("finishReason") or ""),
                 "usage": _json_clone(run["usage"]),
             }
             _finish_agent_run(run, "completed")
             return
     except Exception as exc:
-        _finish_agent_run(run, "failed", str(exc))
+        _finish_agent_run(run, "failed", str(exc), error_code="internal_error")
     finally:
         with run["condition"]:
             if run.get("worker") is current_worker:
@@ -2694,6 +2782,8 @@ def _create_agent_run(
         "resume_status": "",
         "permission_profile": permission_profile,
         "error": "",
+        "error_code": "",
+        "empty_promise_count": 0,
         "base_url": _agent_base_url(base_url),
         "request": request_options,
         "messages": _json_clone(messages),
@@ -2965,44 +3055,41 @@ set "targetDir={target_dir}"
 set "newExe={new_exe}"
 set "partialExe={partial_exe or ''}"
 set "logPath={log_path}"
-echo %%date%% %%time%% update started >> "%%logPath%%"
+echo %date% %time% update started >> "%logPath%"
 timeout /t 2 /nobreak >nul
 
 :: Kill all old Code-v*.exe processes.
-for /l %%%%i in (1,1,40) do (
+for /l %%i in (1,1,40) do (
     set "found="
-    for /f "tokens=2" %%%%p in ('tasklist /fi "IMAGENAME eq Code.exe" /fo csv /nh 2^>nul') do (
-        set "pid=%%%%~p"
-        if defined pid (
-            taskkill /pid !pid! /f >nul 2>&1
-            set "found=1"
-        )
+    for /f "tokens=2 delims=," %%p in ('tasklist /fo csv /nh 2^>nul ^| findstr /i Code-') do (
+        taskkill /pid %%~p /f >nul 2>&1
+        set "found=1"
     )
     if not defined found goto :replace
     timeout /t 1 /nobreak >nul
 )
 
 :replace
-if exist "%%partialExe%%" (
-    move /y "%%partialExe%%" "%%newExe%%" >nul 2>&1
-    echo %%date%% %%time%% completed .part rename >> "%%logPath%%"
+if exist "%partialExe%" (
+    move /y "%partialExe%" "%newExe%" >nul 2>&1
+    echo %date% %time% completed .part rename >> "%logPath%"
 )
-if not exist "%%newExe%%" (
-    echo %%date%% %%time%% executable not found >> "%%logPath%%"
+if not exist "%newExe%" (
+    echo %date% %time% executable not found >> "%logPath%"
     exit /b 1
 )
 
 :: Clean up older versioned builds, keep only the new one.
-for %%%%f in ("%%targetDir%%\Code-v*.exe") do (
-    if /i not "%%%%f"=="%%newExe%%" (
-        del /f "%%%%f" >nul 2>&1
-        if not errorlevel 1 echo %%date%% %%time%% cleaned up: %%%%~nxf >> "%%logPath%%"
+for %%f in ("%targetDir%\Code-v*.exe") do (
+    if /i not "%%f"=="%newExe%" (
+        del /f "%%f" >nul 2>&1
+        if not errorlevel 1 echo %date% %time% cleaned up: %%~nxf >> "%logPath%"
     )
 )
 
-start "" "%%newExe%%" --reuse-browser
-echo %%date%% %%time%% update completed >> "%%logPath%%"
-del "%%~f0" & exit
+start "" "%newExe%" --reuse-browser
+echo %date% %time% update completed >> "%logPath%"
+del "%~f0" & exit
 """)
     return bat_path
 

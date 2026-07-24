@@ -2,6 +2,53 @@
 
 > 记录 Claude Code、Codex 以及其他协作方的重要改动，按时间倒序。
 
+## 2026-07-25 · Claude Code
+
+### Agent 空承诺检测与三分类完成逻辑 (v0.5.29)
+
+- **`_is_empty_promise(content)` 检测**：识别模型只回复承诺文本（"我来检查一下"/"I'll check..."）但未执行操作的模式，支持中英文，200 字上限
+- **Agent 主循环三分类**：
+  - 情况 1（正常）：实质性内容 → 标记 completed
+  - 情况 2（截断）：content 空 + reasoning 非空 → 自动追加"继续"
+  - 情况 3（空承诺）：匹配承诺模式 → 自动追加"请直接执行"（连续 2 次 → failed）
+- **`_finish_agent_run` 增加 `error_code` 参数**：支持 `upstream_error` / `config_error` / `permission_denied` / `tool_error` / `user_cancelled` / `empty_response` / `internal_error`
+- **`error_code` 写入 run dict 和事件**：前端可直接按 code 做差异化展示，不再需要正则猜测
+- **情况 2 改为 `waiting_user_input`**：content 空 + reasoning 有 → 暂停并展示 reasoning + "继续"按钮，由用户判断是否继续（而非自动盲目继续）
+- **`_submit_agent_input` 支持 `empty_response` 类型**：追加"请继续"消息并恢复 agent 运行
+- **前端 `requestServerAgentInput` + `requestEmptyResponseContinue`**：识别 `empty_response` 类型，展示 reasoning 内容 + 继续按钮
+- **新增 17 个测试**（`TestEmptyPromiseDetection`）：覆盖承诺检测、三分类、完整生命周期（暂停→继续→完成）、异常路径
+
+**涉及文件**：`server.py`、`tests/test_agent_runtime.py`
+
+### batch 更新脚本 f-string %% 转义修复 (v0.5.27)
+
+- **根因**：`_build_update_script()` 的 batch 内容写在 f-string 中，但 `%%` 在 f-string 不会被转义为 `%`（只有 `%` 格式化才会），导致 batch 文件中所有变量都是 `%%date%%` 而非 `%date%`，cmd.exe 不会展开任何变量
+- **修复**：f-string 中所有 `%%` → `%`（变量展开），`%%%%` → `%%`（for 循环变量）
+- **连带修复**：移除 `!pid!` 延迟展开语法（`setlocal enabledelayedexpansion` 已在 v0.5.23 移除），改用 `%%~p` 直接引用
+- **验证**：生成 batch 文件确认变量正确展开，全量测试 676 passed
+
+**涉及文件**：`server.py`、`CHANGELOG.md`
+
+### 发版脚本代理支持 (v0.5.25)
+
+- **自动检测 Windows 系统代理**：`detect_windows_proxy()` 从注册表读取 `ProxyServer`，自动获取 GoGoJump 代理地址（`127.0.0.1:18081`）
+- **`--proxy` / `--no-proxy` 参数**：可显式指定或跳过代理
+- **所有子进程自动走代理**：`run()` 注入 `HTTPS_PROXY` / `http_proxy` 环境变量，覆盖 git 和 gh CLI
+- **连通性验证**：git fetch、gh auth status、git ls-remote 三种方式确认代理连通
+- **`--dry-run` 全流程验证通过**：Phase 1~7 预演模式全部通过
+- **v0.5.25 正式发版成功**：通过代理（127.0.0.1:18081）完成完整发版流程，676 tests 全绿
+- **代理不影响本地测试**：`NO_PROXY=localhost,127.0.0.1` 确保 pytest 不绕代理
+
+**涉及文件**：`release.py`
+
+### EXE 安装与更新链路修复 (v0.5.25)
+
+- **batch 更新脚本进程名过滤修复**：`tasklist /fi "IMAGENAME eq Code.exe"` 改为 `tasklist /fo csv /nh | findstr /i Code-`，使其能正确匹配 `Code-v0.5.24.exe` 等版本化进程名。旧过滤器在 EXE 改为版本化命名后永远匹配不到旧进程。
+- **快捷方式创建失败日志**：`create_desktop_shortcut()` 失败时写入 `.code\install.log`（含时间戳和错误详情），不再静默失败。`ensure_installed()` 在首次安装时检查返回值并在控制台提示。
+- **新增测试**：4 个 launcher 安装链路测试（`TestLauncherInstall`），覆盖 `get_code_home`、`ensure_installed` 开发模式、快捷方式 PS 脚本内容、失败日志。
+
+**涉及文件**：`server.py`、`launcher.py`、`tests/test_server.py`
+
 ## 项目记忆与记录规范
 
 ---

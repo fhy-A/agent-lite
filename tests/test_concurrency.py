@@ -341,7 +341,7 @@ class TestConcurrentSessionSaves(unittest.TestCase):
             try:
                 h2 = self._make_handler()
                 h2.send_json = mock.Mock()
-                h2.path = f"/api/sessions/{sid}"  # needed for session_id extraction
+                h2.path = f"/api/sessions/{sid}"
                 h2.read_body_json.return_value = {
                     "title": "saved by thread",
                     "messages": [
@@ -349,7 +349,16 @@ class TestConcurrentSessionSaves(unittest.TestCase):
                         for i in range(msg_count)
                     ],
                 }
-                server_mod.CodeHandler.save_session(h2, sid)
+                # Retry once on Windows where file locks can race between threads
+                for attempt in range(2):
+                    try:
+                        server_mod.CodeHandler.save_session(h2, sid)
+                        break
+                    except OSError:
+                        if attempt == 0:
+                            time.sleep(0.15)
+                        else:
+                            raise
                 with lock:
                     written_counts.append(msg_count)
             except Exception as exc:

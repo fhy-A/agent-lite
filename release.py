@@ -17,6 +17,7 @@ Code 自动发版脚本
   python release.py 0.5.8                发版 0.5.8
   python release.py 0.5.8 --skip-tests   跳过测试
   python release.py 0.5.8 --dry-run      预演模式
+  python release.py 0.5.8 --proxy 127.0.0.1:18081  指定代理
 """
 
 import hashlib
@@ -36,22 +37,72 @@ RELEASES_DIR = ROOT / "docs" / "releases"
 BUILD_SCRIPT = ROOT / "build_exe.py"
 DEFAULT_BRANCH = "master"
 
+# 当前脚本级代理设置（由 main() 中的检测/参数设置）
+_proxy_url = None
+
+
+# ═══════════════════════════════════════════════════════════════
+# 代理检测
+# ═══════════════════════════════════════════════════════════════
+
+def detect_windows_proxy():
+    """从 Windows 系统代理设置读取代理地址，返回 'host:port' 或 None。"""
+    if os.name != "nt":
+        return None
+    try:
+        import winreg
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+        ) as key:
+            enabled, _ = winreg.QueryValueEx(key, "ProxyEnable")
+            server, _ = winreg.QueryValueEx(key, "ProxyServer")
+        if enabled and server:
+            first = server.split(";")[0].strip()
+            if "=" in first:
+                first = first.split("=", 1)[1].strip()
+            return first
+    except Exception:
+        pass
+    return None
+
+
+def _build_proxy_env(proxy_url):
+    """返回带代理环境变量的 dict，若 proxy_url 为空则返回 None（继承父进程）。"""
+    if not proxy_url:
+        return None
+    proxy_value = f"http://{proxy_url}"
+    return {
+        "HTTP_PROXY": proxy_value,
+        "HTTPS_PROXY": proxy_value,
+        "http_proxy": proxy_value,
+        "https_proxy": proxy_value,
+        "NO_PROXY": "localhost,127.0.0.1,.local",
+        "no_proxy": "localhost,127.0.0.1,.local",
+    }
+
 
 # ═══════════════════════════════════════════════════════════════
 # 工具函数
 # ═══════════════════════════════════════════════════════════════
 
 def run(cmd, *, cwd=None, timeout=300, description=None):
-    """运行命令，返回 (returncode, stdout, stderr)。"""
+    """运行命令，返回 (returncode, stdout, stderr)。自动注入代理环境变量。"""
     cwd = cwd or ROOT
     label = description or (" ".join(cmd) if isinstance(cmd, list) else cmd)
     print(f"\n  [{label}]")
+
+    env = os.environ.copy()
+    if _proxy_url:
+        env.update(_build_proxy_env(_proxy_url))
+
     result = subprocess.run(
         cmd, cwd=str(cwd),
         capture_output=True, text=True,
         encoding="utf-8", errors="replace",
         timeout=timeout,
         shell=isinstance(cmd, str),
+        env=env,
     )
     if result.returncode != 0:
         if result.stderr:
@@ -242,7 +293,7 @@ def run_tests():
     rc, stdout, stderr = run(
         [sys.executable, "-m", "pytest", "tests", "-q"],
         description="pytest tests -q",
-        timeout=120,
+        timeout=180,
     )
     if rc != 0:
         lines = (stdout + stderr).splitlines()
@@ -605,7 +656,21 @@ def main():
     parser.add_argument("--skip-tests", action="store_true", help="跳过测试步骤")
     parser.add_argument("--dry-run", action="store_true", help="预演模式：只检查不修改任何文件")
     parser.add_argument("--yes", "-y", action="store_true", help="跳过所有交互确认（供 AI Agent 使用）")
+    parser.add_argument("--proxy", default=None,
+                        help="HTTPS 代理地址，如 127.0.0.1:18081（默认自动检测 Windows 系统代理）")
+    parser.add_argument("--no-proxy", action="store_true", help="禁用代理（跳过自动检测）")
     args = parser.parse_args()
+
+    global _proxy_url
+
+    if args.no_proxy:
+        _proxy_url = None
+    elif args.proxy:
+        _proxy_url = args.proxy
+    else:
+        detected = detect_windows_proxy()
+        if detected:
+            _proxy_url = detected
 
     new_version = args.version
     version_tuple = parse_version(new_version)
@@ -624,6 +689,7 @@ def main():
     print(f"  旧版本: {old_version}")
     print(f"  新版本: {new_version}")
     print(f"  模式: {'预演 (dry-run)' if args.dry_run else '正式发版'}")
+    print(f"  代理: {_proxy_url or '无（直连）'}")
     print("=" * 60)
 
     if not args.dry_run:

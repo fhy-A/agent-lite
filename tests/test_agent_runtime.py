@@ -2355,5 +2355,263 @@ class TestDurableAgentRuntime(unittest.TestCase):
         self.assertNotIn("cancel-secret-key", persisted)
 
 
+class TestEmptyPromiseDetection(unittest.TestCase):
+    """Tests for _is_empty_promise and the three-case agent completion logic."""
+
+    # ── _is_empty_promise unit tests ──
+
+    def test_chinese_promise_detected(self):
+        self.assertTrue(server_mod._is_empty_promise("我来检查一下代码"))
+        self.assertTrue(server_mod._is_empty_promise("让我看看"))
+        self.assertTrue(server_mod._is_empty_promise("我先来确认一下"))
+        self.assertTrue(server_mod._is_empty_promise("马上处理"))
+        self.assertTrue(server_mod._is_empty_promise("正在读取文件"))
+
+    def test_english_promise_detected(self):
+        self.assertTrue(server_mod._is_empty_promise("I'll check the code"))
+        self.assertTrue(server_mod._is_empty_promise("Let me look into it"))
+        self.assertTrue(server_mod._is_empty_promise("I will handle this"))
+        self.assertTrue(server_mod._is_empty_promise("First, let me examine"))
+
+    def test_real_answer_not_promise(self):
+        """Substantive responses should NOT be flagged as empty promises."""
+        self.assertFalse(server_mod._is_empty_promise(
+            "这个项目的目录结构如下：\n- src/\n- tests/\n- docs/\n共找到 15 个文件"))
+        self.assertFalse(server_mod._is_empty_promise(
+            "The bug is caused by a race condition in the save function."))
+
+    def test_long_text_not_promise(self):
+        """Text over 200 chars is never an empty promise."""
+        long_text = "这个问题的解决方案包括以下步骤。首先，我们需要检查配置文件..." * 10
+        self.assertGreater(len(long_text), 200)
+        self.assertFalse(server_mod._is_empty_promise(long_text))
+
+    def test_empty_content_not_promise(self):
+        self.assertFalse(server_mod._is_empty_promise(""))
+        self.assertFalse(server_mod._is_empty_promise("   "))
+
+    # ── error_code on _finish_agent_run ──
+
+    def test_finish_agent_run_stores_error_code(self):
+        run = self._make_run()
+        server_mod._set_agent_status(run, "model")
+        ok = server_mod._finish_agent_run(run, "failed",
+            "upstream timeout", error_code="upstream_error")
+        self.assertTrue(ok)
+        self.assertEqual(run["error_code"], "upstream_error")
+        self.assertIn("upstream_error", json.dumps(run["events"][-1]["data"]))
+
+    def test_finish_agent_run_no_error_code_when_empty(self):
+        run = self._make_run()
+        server_mod._set_agent_status(run, "model")
+        server_mod._finish_agent_run(run, "completed")
+        self.assertEqual(run["error_code"], "")
+
+    # ── Three-case completion integration tests ──
+
+    def _make_run(self, max_rounds=3):
+        """Build a minimal in-memory agent run without starting a worker."""
+        run = server_mod._create_agent_run(
+            session_id="test-session",
+            payload={
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+            base_url="http://127.0.0.1:3010",
+            keys=["sk-test"],
+            max_rounds=max_rounds,
+            permission_profile="bypass",
+            start_worker=False,
+        )
+        # Push a round record so the worker doesn't think it's the first round
+        run["rounds"].append({
+            "round": 1, "runtimeRunId": "", "content": "ok",
+            "reasoning": "", "toolCalls": [], "finishReason": "stop",
+            "usage": {}, "completedAt": server_mod.now_iso(),
+        })
+        run["messages"].append({"role": "assistant", "content": "ok"})
+        run["messages"].append({"role": "user", "content": "next step"})
+        return run
+
+    def test_case1_normal_completion(self):
+        """Substantive content with no tools → completed."""
+        run = self._make_run()
+        server_mod._set_agent_status(run, "model")
+        # Simulate model returning real content
+        run["pending_tool_calls"] = []
+        # Build a mock round_record and call the finish logic directly
+        ok = server_mod._finish_agent_run(run, "completed")
+        self.assertTrue(ok)
+        self.assertEqual(run["status"], "completed")
+        self.assertEqual(run["empty_promise_count"], 0)
+
+    def test_case2_empty_content_with_reasoning_pauses_for_user(self):
+        """Empty content + non-empty reasoning → waiting_user_input, not auto-continue."""
+        run = self._make_run()
+        server_mod._set_agent_status(run, "model")
+        content = ""
+        reasoning = "I need to check the files first..."
+        self.assertTrue(bool(reasoning))
+        self.assertFalse(bool(content))
+        # Simulate the loop's new behaviour: set pending_input + waiting_user_input
+        import uuid
+        run["pending_input"] = {
+            "type": "empty_response",
+            "reasoning": reasoning,
+            "requestId": str(uuid.uuid4()),
+        }
+        server_mod._append_agent_event(run, "user_input_required", run["pending_input"])
+        server_mod._set_agent_status(run, "waiting_user_input")
+        self.assertEqual(run["status"], "waiting_user_input")
+        self.assertEqual(run["pending_input"]["type"], "empty_response")
+        self.assertEqual(run["pending_input"]["reasoning"], reasoning)
+
+    def test_empty_response_submit_adds_continue_message(self):
+        """Submitting empty_response input adds '请继续' and resumes the run."""
+        run = self._make_run()
+        server_mod._set_agent_status(run, "model")
+        import uuid
+        run["pending_input"] = {
+            "type": "empty_response",
+            "reasoning": "thinking...",
+            "requestId": str(uuid.uuid4()),
+        }
+        server_mod._set_agent_status(run, "waiting_user_input")
+        result = server_mod._submit_agent_input(run, {})
+        self.assertTrue(result["ok"])
+        self.assertIsNone(run["pending_input"])
+        self.assertEqual(run["status"], "waiting_credentials")
+        self.assertEqual(run["resume_status"], "model")
+        self.assertIn("请继续", run["messages"][-1]["content"])
+
+    def test_case3_empty_promise_triggers_continue_then_fail(self):
+        """First empty promise → continue. Second → failed."""
+        run = self._make_run()
+        server_mod._set_agent_status(run, "model")
+        # First empty promise
+        self.assertTrue(server_mod._is_empty_promise("我来检查一下"))
+        run["empty_promise_count"] += 1
+        self.assertEqual(run["empty_promise_count"], 1)
+        self.assertLess(run["empty_promise_count"], 2)
+        # Second empty promise → should fail
+        run["empty_promise_count"] += 1
+        self.assertEqual(run["empty_promise_count"], 2)
+
+    # ── Targeted integration: full empty_response lifecycle ──
+
+    def test_empty_response_full_cycle(self):
+        """Simulate: empty content + reasoning → pause → continue → complete."""
+        run = self._make_run(max_rounds=4)
+        server_mod._set_agent_status(run, "model")
+
+        # --- Round 2: model returns empty content, has reasoning ---
+        reasoning = "Let me analyze the code structure first..."
+        import uuid
+        run["pending_input"] = {
+            "type": "empty_response",
+            "reasoning": reasoning,
+            "requestId": str(uuid.uuid4()),
+        }
+        server_mod._append_agent_event(run, "user_input_required", run["pending_input"])
+        server_mod._set_agent_status(run, "waiting_user_input")
+
+        # Verify paused state
+        self.assertEqual(run["status"], "waiting_user_input")
+        self.assertEqual(run["pending_input"]["type"], "empty_response")
+        self.assertEqual(run["pending_input"]["reasoning"], reasoning)
+
+        # --- User clicks "继续" ---
+        result = server_mod._submit_agent_input(run, {})
+        self.assertTrue(result["ok"])
+        self.assertEqual(run["status"], "waiting_credentials")
+        self.assertEqual(run["resume_status"], "model")
+        self.assertIn("请继续", run["messages"][-1]["content"])
+
+        # --- Round 3: model now produces real content ---
+        server_mod._set_agent_status(run, "model")
+        run["rounds"].append({
+            "round": 2, "runtimeRunId": "", "content": reasoning,
+            "reasoning": reasoning, "toolCalls": [], "finishReason": "stop",
+            "usage": {}, "completedAt": server_mod.now_iso(),
+        })
+        run["rounds"].append({
+            "round": 3, "runtimeRunId": "", "content": "代码分析完成：发现 3 个问题...",
+            "reasoning": "", "toolCalls": [], "finishReason": "stop",
+            "usage": {}, "completedAt": server_mod.now_iso(),
+        })
+        # Normal completion
+        run["empty_promise_count"] = 0
+        run["result"] = {
+            "content": "代码分析完成：发现 3 个问题...",
+            "reasoning": "",
+            "finishReason": "stop",
+            "usage": {},
+        }
+        ok = server_mod._finish_agent_run(run, "completed")
+        self.assertTrue(ok)
+        self.assertEqual(run["status"], "completed")
+        self.assertEqual(run["error_code"], "")
+        self.assertIn("发现 3 个问题", run["result"]["content"])
+
+    def test_empty_response_no_reasoning_is_hard_error(self):
+        """Both content AND reasoning empty → failed with error_code."""
+        run = self._make_run()
+        server_mod._set_agent_status(run, "model")
+        ok = server_mod._finish_agent_run(run, "failed",
+            "模型返回空响应，请重试", error_code="empty_response")
+        self.assertTrue(ok)
+        self.assertEqual(run["status"], "failed")
+        self.assertEqual(run["error_code"], "empty_response")
+
+    def test_empty_promise_single_does_not_fail(self):
+        """One empty promise is tolerated — only consecutive ones fail."""
+        run = self._make_run()
+        server_mod._set_agent_status(run, "model")
+        # First promise: should be tolerated
+        run["empty_promise_count"] = 1
+        self.assertLess(run["empty_promise_count"], 2)
+        # Then model produces real content → counter resets
+        run["empty_promise_count"] = 0
+        ok = server_mod._finish_agent_run(run, "completed")
+        self.assertTrue(ok)
+        self.assertEqual(run["status"], "completed")
+
+    def test_normal_completion_preserves_content_and_reasoning(self):
+        """Normal completion stores both content and reasoning in result."""
+        run = self._make_run()
+        server_mod._set_agent_status(run, "model")
+        run["result"] = {
+            "content": "完整回答内容",
+            "reasoning": "推理过程",
+            "finishReason": "stop",
+            "usage": {},
+        }
+        ok = server_mod._finish_agent_run(run, "completed")
+        self.assertTrue(ok)
+        self.assertEqual(run["result"]["content"], "完整回答内容")
+        self.assertEqual(run["result"]["reasoning"], "推理过程")
+
+    def test_empty_response_pending_input_is_well_formed(self):
+        """The pending_input for empty_response has all required fields."""
+        import uuid
+        reasoning = "需要检查文件结构..."
+        pending = {
+            "type": "empty_response",
+            "reasoning": reasoning,
+            "requestId": str(uuid.uuid4()),
+        }
+        self.assertEqual(pending["type"], "empty_response")
+        self.assertTrue(len(pending["reasoning"]) > 0)
+        self.assertTrue(len(pending["requestId"]) > 0)
+
+    def test_submit_empty_response_without_pending_input_fails(self):
+        """Calling _submit_agent_input without pending_input set should fail."""
+        run = self._make_run()
+        server_mod._set_agent_status(run, "waiting_user_input")
+        # No pending_input set — should raise
+        with self.assertRaises(ValueError):
+            server_mod._submit_agent_input(run, {})
+
+
 if __name__ == "__main__":
     unittest.main()

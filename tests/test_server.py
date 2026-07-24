@@ -17,6 +17,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import server
+import launcher
 
 
 class TestSkillDependencyOperations(unittest.TestCase):
@@ -179,17 +180,30 @@ class TestUpdaterHelpers(unittest.TestCase):
             self.assertFalse(server._is_valid_windows_executable(bad))
 
     def test_update_script_keeps_new_version_and_removes_old_ones(self):
-        root = Path(r"C:\Code")
-        old_exe = root / "Code-v1.2.2.exe"
-        new_exe = root / "Code-v1.2.3.exe"
-        script = server._build_update_script(old_exe, new_exe, root / "update.log")
-        self.assertIn("Get-CimInstance Win32_Process", script)
-        self.assertIn("Stop-Process", script)
-        self.assertIn("Get-ChildItem", script)
-        self.assertIn("Remove-Item", script)
-        self.assertIn("Start-Process -FilePath $newExe", script)
-        self.assertIn("-ArgumentList '--reuse-browser'", script)
-        self.assertNotIn("Copy-Item", script)
+        target_dir = Path(r"C:\Code")
+        new_exe = target_dir / "Code-v1.2.3.exe"
+        partial_exe = target_dir / "Code-v1.2.3.exe.part"
+        log_path = target_dir / "update.log"
+        bat_path = server._build_update_script(target_dir, new_exe, partial_exe, log_path)
+        script = Path(bat_path).read_text(encoding="utf-8")
+        # Batch-file updater — uses findstr to match versioned Code-v*.exe processes
+        self.assertIn("findstr /i Code-", script)
+        self.assertIn("taskkill", script)
+        self.assertIn("move /y", script)
+        self.assertIn("del /f", script)
+        self.assertIn('start "" "', script)
+        self.assertIn("--reuse-browser", script)
+
+    def test_update_script_findstr_matches_versioned_process(self):
+        """The batch updater must find versioned names like Code-v0.5.24.exe."""
+        target_dir = Path(r"C:\Code")
+        new_exe = target_dir / "Code-v2.0.0.exe"
+        bat_path = server._build_update_script(target_dir, new_exe, None, target_dir / "update.log")
+        script = Path(bat_path).read_text(encoding="utf-8")
+        # findstr /i Code- catches "Code-v0.5.24.exe", "Code-v1.0.0.exe", etc.
+        self.assertIn("findstr /i Code-", script)
+        # Must NOT use the old exact-match filter that only caught "Code.exe"
+        self.assertNotIn("IMAGENAME eq Code.exe", script)
 
     def test_check_update_detects_newer_release(self):
         handler = object.__new__(server.CodeHandler)
@@ -1158,6 +1172,51 @@ class TestSafeCommandPrefixes(unittest.TestCase):
     def test_min_count(self):
         self.assertGreater(len(server.SAFE_COMMAND_PREFIXES), 100,
                            f"Only {len(server.SAFE_COMMAND_PREFIXES)} prefixes, expected 100+")
+
+
+class TestLauncherInstall(unittest.TestCase):
+    """Tests for launcher.py install and shortcut logic."""
+
+    def test_get_code_home(self):
+        result = launcher.get_code_home()
+        self.assertEqual(result, Path.home() / ".code")
+
+    def test_ensure_installed_noop_in_dev(self):
+        """ensure_installed is a no-op when sys.frozen is False (dev mode)."""
+        self.assertFalse(getattr(sys, "frozen", False),
+                         "Test must run in dev mode for this assertion")
+        # Should return immediately without raising
+        launcher.ensure_installed()
+
+    def test_create_desktop_shortcut_ps_script(self):
+        """The PowerShell script embeds the correct target path."""
+        exe = Path(r"C:\Users\Test\.code\Code-v9.9.9.exe")
+        with mock.patch("subprocess.run") as mock_run, \
+             mock.patch("launcher._append_log"):
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "ok"
+            ok = launcher.create_desktop_shortcut(exe)
+        self.assertTrue(ok)
+        args = mock_run.call_args[0][0]
+        self.assertEqual(args[0], "powershell")
+        ps_script = args[4]
+        self.assertIn(str(exe).replace("'", "''"), ps_script)
+        self.assertIn("Code.lnk", ps_script)
+        self.assertIn("WScript.Shell", ps_script)
+
+    def test_create_desktop_shortcut_logs_on_failure(self):
+        """Non-zero exit code or missing 'ok' result is logged."""
+        exe = Path(r"C:\Users\Test\.code\Code-v9.9.9.exe")
+        with mock.patch("subprocess.run") as mock_run, \
+             mock.patch("launcher._append_log") as mock_log:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "error"
+            ok = launcher.create_desktop_shortcut(exe)
+        self.assertFalse(ok)
+        # Verify _append_log was called with an error message
+        self.assertTrue(mock_log.called)
+        log_call_msg = mock_log.call_args[0][1]
+        self.assertIn("Shortcut creation failed", log_call_msg)
 
 
 if __name__ == "__main__":
